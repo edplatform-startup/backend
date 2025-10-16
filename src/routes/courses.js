@@ -10,23 +10,22 @@ router.get('/', async (req, res) => {
     return res.status(400).json({ error: 'Missing required query parameter: query' });
   }
 
-  // Basic sanitation: limit length
-  const term = q.slice(0, 100);
+  // Basic sanitation: limit length and strip spaces to match DB format (CSE 123 -> CSE123)
+  const term = q.replace(/\s+/g, '').slice(0, 100);
 
   // Strategy:
   // - Use ilike for case-insensitive matching on code and title
   // - Support partial matches anywhere using %term%
   // - Select only needed columns
   try {
-    // Courses table resides in the 'api' schema
-    const supabase = getSupabase().schema('api');
+    // Courses table resides in the 'public' schema
+    const supabase = getSupabase();
     const pattern = `%${term}%`;
     const { data, error } = await supabase
-      .from('courses')
+      .from('uw_courses')
       .select('code,title')
       .or(`code.ilike.${pattern},title.ilike.${pattern}`)
       .limit(50);
-
     if (error) {
       console.error('Supabase error:', error);
       return res.status(500).json({ error: 'Failed to fetch courses' });
