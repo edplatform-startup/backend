@@ -3,6 +3,7 @@ services:
     name: edtech-backend-api
     env: node
     plan: free
+    region: oregon
     buildCommand: npm install
     startCommand: npm start
     autoDeploy: true
