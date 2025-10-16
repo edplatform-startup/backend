@@ -28,28 +28,9 @@ npm run dev
 
 Server will start at http://localhost:3000
 
-## Endpoints
+## API
 
-- GET `/health`
-  - Returns `{ ok: true, ts: ISO_STRING }`
-
-- GET `/courses?query=<string>`
-  - Query parameters:
-    - `query` (required): String that may be a course code or title fragment.
-  - Behavior:
-    - Case-insensitive partial match on `code` OR `title`.
-    - Returns up to 50 matches.
-  - Response:
-```
-{
-  "query": "cs",
-  "count": 2,
-  "items": [
-    { "code": "CS101", "title": "Intro to CS" },
-    { "code": "CS50", "title": "Computer Science" }
-  ]
-}
-```
+For a concise, comprehensive spec of the current API, see `docs/api.md`.
 
 ## Notes
 - The API only selects `code` and `title` fields to minimize payloads.
