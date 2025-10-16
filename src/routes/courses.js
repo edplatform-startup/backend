@@ -18,7 +18,8 @@ router.get('/', async (req, res) => {
   // - Support partial matches anywhere using %term%
   // - Select only needed columns
   try {
-    const supabase = getSupabase();
+    // Courses table resides in the 'api' schema
+    const supabase = getSupabase().schema('api');
     const pattern = `%${term}%`;
     const { data, error } = await supabase
       .from('courses')
