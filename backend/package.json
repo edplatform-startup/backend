@@ -1,0 +1,23 @@
+{
+  "name": "edtech-backend-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Node.js API for reading courses from Supabase",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "smoke": "node -e \"import('./src/app.js').then(()=>console.log('OK')).catch(e=>{console.error(e?.message||e);process.exit(1)})\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0"
+  }
+}
