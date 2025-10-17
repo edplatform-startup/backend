@@ -9,7 +9,7 @@ Minimal Node.js API that reads courses from a Supabase database.
 ## Setup
 1. Copy environment file and fill in values:
    - `SUPABASE_URL`: Your Supabase project URL (https://xxxx.supabase.co)
-   - `SUPABASE_ANON_KEY`: Your Supabase anon public key
+   - `SUPABASE_SERVICE_KEY`: Your Supabase anon public key
    - `PORT` (optional): Port to run the API (default 3000)
 
 ```
@@ -48,7 +48,7 @@ Option A: One-click Blueprint (render.yaml)
   - Node version: 20
 4. Add environment variables on the service:
   - `SUPABASE_URL`: https://<project>.supabase.co
-  - `SUPABASE_ANON_KEY`: your anon key
+  - `SUPABASE_SERVICE_KEY`: your anon key
   - `PORT` is provided in the blueprint (3000). Render sets PORT automatically; this app respects it.
 5. Deploy. Your service will be available at the provided Render URL.
 
@@ -59,5 +59,5 @@ Option B: Manual Web Service
   - Runtime: Node
   - Build Command: `npm install`
   - Start Command: `npm start`
-  - Add env vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY`
+  - Add env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
 3. Deploy.

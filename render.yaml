@@ -14,5 +14,5 @@ services:
         value: 3000
       - key: SUPABASE_URL
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: SUPABASE_SERVICE_KEY
         sync: false
