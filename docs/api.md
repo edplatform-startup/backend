@@ -33,8 +33,8 @@ Base URL (production): https://edtech-backend-api.onrender.com
         "ts": "2025-01-01T12:34:56.789Z"
       }
 
-### GET /courses
-- Purpose: Search for courses by code or title (case-insensitive, partial match).
+### GET /college-courses
+- Purpose: Search for college courses by code or title (case-insensitive, partial match).
 - Query parameters:
   - query (string, required)
     - Will be trimmed, spaces removed (e.g., "CSE 123" -> "CSE123"), and truncated to max 100 chars.
@@ -63,7 +63,58 @@ Base URL (production): https://edtech-backend-api.onrender.com
     - Body: { "error": "Failed to fetch courses" } when upstream DB request fails, or
             { "error": "Internal server error" } for unexpected errors.
 
-### POST /generate-course
+### GET /courses
+- Purpose: Retrieve generated courses for a user, or a specific course.
+- Authentication: None (userId must be provided in query parameters)
+- Query parameters (at least one required):
+  - userId (string, optional but required if courseId not provided): Valid UUID of the user
+  - courseId (string, optional): Valid UUID of a specific course. If provided, userId is required.
+- Behavior:
+  - **Case 1**: Only `userId` provided → Returns all courses associated with that user, ordered by creation date (newest first)
+  - **Case 2**: Both `userId` and `courseId` provided → Returns the specific course ONLY if it belongs to that user
+- Responses:
+  - 200 OK (single course):
+    - Body:
+      {
+        "success": true,
+        "course": {
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
+          "course_json": { /* course content */ },
+          "created_at": "2025-10-17T12:34:56.789Z"
+        }
+      }
+  - 200 OK (multiple courses):
+    - Body:
+      {
+        "success": true,
+        "count": 3,
+        "courses": [
+          {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
+            "course_json": { /* course content */ },
+            "created_at": "2025-10-17T12:34:56.789Z"
+          },
+          ...
+        ]
+      }
+  - 400 Bad Request
+    - Missing parameters:
+      { "error": "Missing required query parameters. Provide at least userId or both userId and courseId." }
+    - courseId without userId:
+      { "error": "userId is required when courseId is provided." }
+    - Invalid UUID format:
+      { "error": "Invalid userId format. Must be a valid UUID." } or
+      { "error": "Invalid courseId format. Must be a valid UUID." }
+  - 404 Not Found
+    - Course not found or doesn't belong to user:
+      { "error": "Course not found or does not belong to this user." }
+  - 500 Internal Server Error
+    - Body: { "error": "Failed to fetch course(s)", "details": "<error message>" } when DB query fails, or
+            { "error": "Internal server error", "details": "<error message>" } for unexpected errors.
+
+### POST /courses
 - Purpose: Upload a generated course to the database for a specific user.
 - Authentication: None (userId must be provided in request body)
 - Request:
@@ -134,11 +185,17 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Health check:
   - GET https://edtech-backend-api.onrender.com/health
   - 200 OK → { "ok": true, "ts": "<ISO8601>" }
-- Course search:
-  - GET https://edtech-backend-api.onrender.com/courses?query=cs
+- College course search:
+  - GET https://edtech-backend-api.onrender.com/college-courses?query=cs
   - 200 OK → { "query": "cs", "count": <n>, "items": [ { "code": "CS101", "title": "..." }, ... ] }
-- Generate course:
-  - POST https://edtech-backend-api.onrender.com/generate-course
+- Create a course:
+  - POST https://edtech-backend-api.onrender.com/courses
   - Headers: Content-Type: application/json
   - Body: { "userId": "550e8400-e29b-41d4-a716-446655440000" }
   - 201 Created → { "success": true, "message": "Course created successfully", "course": { "id": "...", "user_uuid": "...", "created_at": "..." } }
+- Get all user's courses:
+  - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000
+  - 200 OK → { "success": true, "count": 3, "courses": [ { "id": "...", "user_uuid": "...", "course_json": {...}, "created_at": "..." }, ... ] }
+- Get specific course for user:
+  - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000&courseId=123e4567-e89b-12d3-a456-426614174000
+  - 200 OK → { "success": true, "course": { "id": "...", "user_uuid": "...", "course_json": {...}, "created_at": "..." } }
