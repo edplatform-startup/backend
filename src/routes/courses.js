@@ -140,7 +140,7 @@ router.get('/', async (req, res) => {
 
     // Case 1: Both userId and courseId provided - get specific course if it belongs to user
     if (userId && courseId) {
-      query = query.eq('user_uuid', userId).eq('id', courseId).single();
+      query = query.eq('user_id', userId).eq('id', courseId).single();
       
       const { data, error } = await query;
 
@@ -159,7 +159,7 @@ router.get('/', async (req, res) => {
         success: true,
         course: {
           id: data.id,
-          user_uuid: data.user_uuid,
+          user_id: data.user_id,
           course_data: data.course_data,
           created_at: data.created_at
         }
@@ -168,7 +168,7 @@ router.get('/', async (req, res) => {
 
     // Case 2: Only userId provided - get all courses for this user
     if (userId) {
-      query = query.eq('user_uuid', userId).order('created_at', { ascending: false });
+      query = query.eq('user_id', userId).order('created_at', { ascending: false });
       
       const { data, error } = await query;
 
@@ -182,7 +182,7 @@ router.get('/', async (req, res) => {
         count: data.length,
         courses: data.map(course => ({
           id: course.id,
-          user_uuid: course.user_uuid,
+          user_id: course.user_id,
           course_data: course.course_data,
           created_at: course.created_at
         }))
@@ -229,7 +229,7 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabase.schema('api')
       .from('courses')
       .insert({
-        user_uuid: userId,
+        user_id: userId,
         course_data: courseJson
       })
       .select()
@@ -245,7 +245,7 @@ router.post('/', async (req, res) => {
       message: 'Course created successfully',
       course: {
         id: data.id,
-        user_uuid: data.user_uuid,
+        user_id: data.user_id,
         created_at: data.created_at
       }
     });

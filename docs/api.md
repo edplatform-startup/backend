@@ -79,7 +79,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
         "success": true,
         "course": {
           "id": "123e4567-e89b-12d3-a456-426614174000",
-          "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
+          "user_id": "550e8400-e29b-41d4-a716-446655440000",
           "course_data": { /* course content */ },
           "created_at": "2025-10-17T12:34:56.789Z"
         }
@@ -92,7 +92,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
         "courses": [
           {
             "id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
+            "user_id": "550e8400-e29b-41d4-a716-446655440000",
             "course_data": { /* course content */ },
             "created_at": "2025-10-17T12:34:56.789Z"
           },
@@ -144,7 +144,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
         "message": "Course created successfully",
         "course": {
           "id": "123e4567-e89b-12d3-a456-426614174000",
-          "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
+          "user_id": "550e8400-e29b-41d4-a716-446655440000",
           "created_at": "2025-10-17T12:34:56.789Z"
         }
       }
@@ -153,7 +153,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
       - message: string (confirmation message)
       - course: object
         - id: string (UUID of the created course record)
-        - user_uuid: string (UUID of the associated user)
+        - user_id: string (UUID of the associated user)
         - created_at: string (ISO 8601 timestamp)
   - 400 Bad Request
     - Missing userId:
@@ -192,10 +192,10 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - POST https://edtech-backend-api.onrender.com/courses
   - Headers: Content-Type: application/json
   - Body: { "userId": "550e8400-e29b-41d4-a716-446655440000" }
-  - 201 Created → { "success": true, "message": "Course created successfully", "course": { "id": "...", "user_uuid": "...", "created_at": "..." } }
+  - 201 Created → { "success": true, "message": "Course created successfully", "course": { "id": "...", "user_id": "...", "created_at": "..." } }
 - Get all user's courses:
   - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000
-  - 200 OK → { "success": true, "count": 3, "courses": [ { "id": "...", "user_uuid": "...", "course_data": {...}, "created_at": "..." }, ... ] }
+  - 200 OK → { "success": true, "count": 3, "courses": [ { "id": "...", "user_id": "...", "course_data": {...}, "created_at": "..." }, ... ] }
 - Get specific course for user:
   - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000&courseId=123e4567-e89b-12d3-a456-426614174000
-  - 200 OK → { "success": true, "course": { "id": "...", "user_uuid": "...", "course_data": {...}, "created_at": "..." } }
+  - 200 OK → { "success": true, "course": { "id": "...", "user_id": "...", "course_data": {...}, "created_at": "..." } }
