@@ -1,0 +1,254 @@
+{
+  "Introduction/Basics": [
+    {
+      "Format": "video",
+      "content": "Create a 10-minute introductory video explaining what machine learning is, its types like supervised and unsupervised, and real-world applications; focus on defining key terms and showing simple examples to build foundational understanding."
+    },
+    {
+      "Format": "reading",
+      "content": "Generate a 500-word article on the basics of machine learning, highlighting differences from traditional programming and importance of data; emphasize core concepts like models, training, and prediction for easy comprehension."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Design a 5-question multiple-choice quiz testing knowledge of ML definitions, types, and basic applications; include explanations for answers to reinforce learning."
+    }
+  ],
+  "Introduction/History": [
+    {
+      "Format": "reading",
+      "content": "Write a timeline-based article on the history of machine learning from Turing to modern deep learning; stress key milestones and figures to contextualize evolution."
+    },
+    {
+      "Format": "video",
+      "content": "Produce a short animated video covering major historical events in ML, focusing on breakthroughs like neural networks and AI winters; highlight impacts on current technology."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Create 10 flashcards with historical facts, inventors, and dates on one side, definitions or explanations on the other; prioritize memorization of pivotal moments."
+    }
+  ],
+  "SupervisedLearning/Regression": [
+    {
+      "Format": "video",
+      "content": "Make an explanatory video on linear regression, including equations, assumptions, and fitting process; demonstrate with a simple dataset to show prediction mechanics."
+    },
+    {
+      "Format": "reading",
+      "content": "Compose a guide on regression techniques, covering linear, polynomial, and logistic; underline evaluation metrics like MSE and when to use each type."
+    },
+    {
+      "Format": "practice exam",
+      "content": "Develop a set of 3 problems requiring calculation of regression parameters and predictions; provide step-by-step solutions focusing on error minimization."
+    }
+  ],
+  "SupervisedLearning/Classification": [
+    {
+      "Format": "video",
+      "content": "Create a tutorial video on classification algorithms like KNN and SVM, explaining decision boundaries and class separation; use visuals for binary and multi-class examples."
+    },
+    {
+      "Format": "reading",
+      "content": "Write an in-depth piece on classification methods, including naive Bayes and decision trees; emphasize accuracy, precision, recall, and confusion matrices as key metrics."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Build a quiz with 7 questions on classification concepts, algorithms, and evaluation; ensure questions test understanding of overfitting and underfitting."
+    }
+  ],
+  "UnsupervisedLearning/Clustering": [
+    {
+      "Format": "video",
+      "content": "Produce a video demonstrating K-means clustering, including initialization, assignment, and update steps; show applications in customer segmentation."
+    },
+    {
+      "Format": "reading",
+      "content": "Generate an article on clustering techniques like hierarchical and DBSCAN; focus on silhouette score and choosing optimal clusters."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Design flashcards for clustering algorithms, pros/cons, and metrics; highlight differences between partitioning and density-based methods."
+    }
+  ],
+  "UnsupervisedLearning/DimensionalityReduction": [
+    {
+      "Format": "reading",
+      "content": "Write a tutorial on PCA and t-SNE, explaining variance preservation and visualization; stress curse of dimensionality and feature selection importance."
+    },
+    {
+      "Format": "video",
+      "content": "Create an animated video on dimensionality reduction, walking through PCA eigenvectors and projections; illustrate with high-dimensional data examples."
+    },
+    {
+      "Format": "practice exam",
+      "content": "Craft problems involving PCA computation on small matrices; include interpretations of principal components for variance explanation."
+    }
+  ],
+  "NeuralNetworks/Perceptron": [
+    {
+      "Format": "video",
+      "content": "Make a simple video on single-layer perceptrons, covering linear separability and learning rule; use diagrams to show weight updates."
+    },
+    {
+      "Format": "reading",
+      "content": "Compose an introduction to perceptrons, limitations like XOR problem; emphasize as building block for neural networks."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Develop quiz questions on perceptron convergence and applications; test knowledge of activation functions."
+    }
+  ],
+  "NeuralNetworks/MLP": [
+    {
+      "Format": "reading",
+      "content": "Generate a detailed guide on multi-layer perceptrons, layers, and forward pass; focus on universal approximation theorem."
+    },
+    {
+      "Format": "video",
+      "content": "Create a step-by-step video on MLP architecture, including hidden layers and non-linearity; demonstrate with a classification task."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Build flashcards for MLP terms like neurons, synapses, and biases; prioritize recall of structure and function."
+    }
+  ],
+  "NeuralNetworks/ActivationFunctions": [
+    {
+      "Format": "video",
+      "content": "Produce a comparison video of sigmoid, ReLU, tanh functions, gradients, and vanishing issues; show plots for intuition."
+    },
+    {
+      "Format": "reading",
+      "content": "Write an article on activation functions' roles in introducing non-linearity; highlight choices for different network types."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Design quiz on function derivatives and suitability; ensure understanding of pros/cons."
+    }
+  ],
+  "NeuralNetworks/WeightsAndBiases": [
+    {
+      "Format": "reading",
+      "content": "Compose explanation of weights and biases in neural nets, initialization techniques; stress impact on convergence."
+    },
+    {
+      "Format": "video",
+      "content": "Make a visual video on how weights connect layers and biases shift activations; include random initialization examples."
+    },
+    {
+      "Format": "practice exam",
+      "content": "Create problems calculating output with given weights/biases; focus on matrix multiplication."
+    }
+  ],
+  "Training/Backpropagation": [
+    {
+      "Format": "video",
+      "content": "Create an in-depth video on backprop algorithm, chain rule, and error gradients; walkthrough with a small network."
+    },
+    {
+      "Format": "reading",
+      "content": "Generate a mathematical guide to backpropagation, derivations, and common pitfalls; emphasize efficiency in training."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Build questions on partial derivatives and update rules; test computational graph understanding."
+    }
+  ],
+  "Training/Optimization": [
+    {
+      "Format": "reading",
+      "content": "Write on optimizers like SGD, Adam, RMSprop; compare learning rates and momentum effects."
+    },
+    {
+      "Format": "video",
+      "content": "Produce animation showing gradient descent variants converging on loss surfaces; highlight adaptive methods."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Design cards for optimizer parameters and formulas; focus on when to use each."
+    }
+  ],
+  "Training/Tokenization": [
+    {
+      "Format": "video",
+      "content": "Make a tutorial video on text tokenization methods like word, subword, BPE; show preprocessing for NLP models."
+    },
+    {
+      "Format": "reading",
+      "content": "Compose guide on tokenization importance in language models, handling OOV words; emphasize vocabulary size."
+    },
+    {
+      "Format": "practice exam",
+      "content": "Develop exercises tokenizing sentences and building vocabularies; include edge cases like punctuation."
+    }
+  ],
+  "Training/Pretraining": [
+    {
+      "Format": "reading",
+      "content": "Generate article on pretraining techniques like masked LM in BERT; discuss transfer learning benefits."
+    },
+    {
+      "Format": "video",
+      "content": "Create explanation video on self-supervised pretraining, objectives, and fine-tuning; use Transformer examples."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Design quiz on pretraining tasks and advantages over from-scratch training."
+    }
+  ],
+  "DeepLearning/CNN": [
+    {
+      "Format": "video",
+      "content": "Produce a video on convolutional networks, kernels, pooling, and feature extraction; demonstrate image classification."
+    },
+    {
+      "Format": "reading",
+      "content": "Write on CNN architectures like LeNet, AlexNet; focus on spatial hierarchies and parameter sharing."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Build cards for CNN layers, strides, padding; prioritize visual processing concepts."
+    }
+  ],
+  "DeepLearning/RNN": [
+    {
+      "Format": "reading",
+      "content": "Compose guide to recurrent networks, vanishing gradients, LSTM/GRU solutions; emphasize sequential data handling."
+    },
+    {
+      "Format": "video",
+      "content": "Make an animated video on RNN unrolling, backprop through time; show applications in time series."
+    },
+    {
+      "Format": "practice exam",
+      "content": "Create problems computing RNN states and predictions; include gating mechanisms."
+    }
+  ],
+  "AdvancedTopics/ReinforcementLearning": [
+    {
+      "Format": "video",
+      "content": "Create introductory video on RL, agents, environments, rewards; explain Q-learning basics."
+    },
+    {
+      "Format": "reading",
+      "content": "Generate overview of RL frameworks like MDP, policy gradients; highlight exploration vs exploitation."
+    },
+    {
+      "Format": "mini quiz",
+      "content": "Design questions on value functions and Bellman equations."
+    }
+  ],
+  "AdvancedTopics/GenerativeModels": [
+    {
+      "Format": "reading",
+      "content": "Write on GANs, VAEs, diffusion models; focus on adversarial training and latent spaces."
+    },
+    {
+      "Format": "video",
+      "content": "Produce video demonstrating GAN generator/discriminator interplay; show generated samples."
+    },
+    {
+      "Format": "flashcards",
+      "content": "Build cards for model components and loss functions."
+    }
+  ]
+}
