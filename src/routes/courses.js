@@ -160,7 +160,7 @@ router.get('/', async (req, res) => {
         course: {
           id: data.id,
           user_uuid: data.user_uuid,
-          course_json: data.course_json,
+          course_data: data.course_data,
           created_at: data.created_at
         }
       });
@@ -183,7 +183,7 @@ router.get('/', async (req, res) => {
         courses: data.map(course => ({
           id: course.id,
           user_uuid: course.user_uuid,
-          course_json: course.course_json,
+          course_data: course.course_data,
           created_at: course.created_at
         }))
       });
@@ -230,7 +230,7 @@ router.post('/', async (req, res) => {
       .from('courses')
       .insert({
         user_uuid: userId,
-        course_json: courseJson
+        course_data: courseJson
       })
       .select()
       .single();
