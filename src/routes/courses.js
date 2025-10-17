@@ -136,7 +136,7 @@ router.get('/', async (req, res) => {
 
   try {
     const supabase = getSupabase();
-    let query = supabase.from('courses').select('*');
+    let query = supabase.schema('api').from('courses').select('*');
 
     // Case 1: Both userId and courseId provided - get specific course if it belongs to user
     if (userId && courseId) {
@@ -226,7 +226,7 @@ router.post('/', async (req, res) => {
 
     // Insert into the courses table in the api schema
     const supabase = getSupabase();
-    const { data, error } = await supabase
+    const { data, error } = await supabase.schema('api')
       .from('courses')
       .insert({
         user_uuid: userId,
