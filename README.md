@@ -32,6 +32,11 @@ Server will start at http://localhost:3000
 
 For a concise, comprehensive spec of the current API, see `docs/api.md`.
 
+## Testing
+
+- Install dependencies: `npm install`
+- Run the automated suite: `npm test`
+
 ## Notes
 - The API only selects `code` and `title` fields to minimize payloads.
 - Increase/adjust limits, columns, or sorting in `src/routes/courses.js`.
