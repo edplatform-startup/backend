@@ -79,7 +79,11 @@ function buildPrompt({
   return lines.join('\n');
 }
 
-async function callChatCompletion({ apiKey, model, messages }) {
+function supportsReasoning(modelName) {
+  return typeof modelName === 'string' && modelName.startsWith('openai/');
+}
+
+async function callChatCompletion({ apiKey, model, messages, reasoningEffort }) {
   const response = await fetch(OPENROUTER_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -95,7 +99,9 @@ async function callChatCompletion({ apiKey, model, messages }) {
       temperature: 0.4,
       tools: [{ type: 'web_search' }],
       tool_choice: { type: 'auto' },
-      reasoning: { effort: 'high' },
+      ...(supportsReasoning(model) && reasoningEffort
+        ? { reasoning: { effort: reasoningEffort } }
+        : {}),
     }),
   });
 
@@ -176,7 +182,12 @@ export async function generateStudyTopics(input) {
 
   while (iterations < MAX_TOOL_ITERATIONS) {
     iterations += 1;
-    lastPayload = await callChatCompletion({ apiKey, model, messages });
+    lastPayload = await callChatCompletion({
+      apiKey,
+      model,
+      messages,
+      reasoningEffort: 'high',
+    });
     const choice = lastPayload?.choices?.[0];
     const message = choice?.message;
 
