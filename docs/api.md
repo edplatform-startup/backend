@@ -71,7 +71,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - `type` (string, optional) – MIME type.
 
 ### POST /courses
-- Purpose: Persist a generated course plan for a user alongside intake metadata.
+- Purpose: Generate study topics with Grok 4 Fast Reasoning (via OpenRouter) and store metadata for the user.
 - Request body (JSON):
   ```json
   {
@@ -93,9 +93,9 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examFormatDetails` (string, optional).
   - `examFiles` (FileMeta[], optional).
 - Behavior:
-  - Loads the template at `resources/ml_course.json`.
-  - Validates the template structure.
-  - Inserts a new row into `api.courses` with `course_json` set to the template and metadata stored in dedicated columns.
+  - Sends the provided context to the Grok 4 Fast Reasoning model via OpenRouter, enabling the `web_search` tool so the model can research missing course information before answering.
+  - Parses the model result into a normalized topics array.
+  - Stores metadata and the generated topic list in `api.courses`.
 - Responses:
   - 201 Created →
     ```json
@@ -107,6 +107,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
   - 500 Internal Server Error → Insert failure or unexpected exception.
+  - 502 Bad Gateway → Model call failed or returned no topics.
 
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.

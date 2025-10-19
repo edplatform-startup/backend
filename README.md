@@ -11,6 +11,7 @@ Minimal Node.js API that reads courses from a Supabase database.
    - `SUPABASE_URL`: Your Supabase project URL (https://xxxx.supabase.co)
    - `SUPABASE_SERVICE_KEY`: Your Supabase anon public key
    - `PORT` (optional): Port to run the API (default 3000)
+    - `OPENROUTER_GROK_4_FAST_KEY`: API key for OpenRouter (Grok 4 Fast Reasoning with web search)
 
 ```
 cp .env.example .env

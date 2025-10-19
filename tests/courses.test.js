@@ -4,13 +4,27 @@ import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
+import {
+  setStudyTopicsGenerator,
+  clearStudyTopicsGenerator,
+} from '../src/services/grokClient.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
 const sampleCourseRow = {
   id: '11111111-1111-1111-1111-111111111111',
   user_uuid: '22222222-2222-2222-2222-222222222222',
-  course_json: { sample: true },
+  course_json: {
+    recommended_topics: ['Topic A', 'Topic B', 'Topic C'],
+    raw_topics_text: 'Topic A, Topic B, Topic C',
+    generated_at: '2025-10-17T12:34:56.789Z',
+    model: 'openrouter/grok-4-fast',
+    input_snapshot: {
+      finish_by_date: '2025-12-01T00:00:00.000Z',
+      course_selection: { code: 'CSE142', title: 'Foundations of CS' },
+      time_remaining_days: 45,
+    },
+  },
   created_at: '2025-10-17T12:34:56.789Z',
   finish_by_date: '2025-12-01T00:00:00.000Z',
   course_selection: { code: 'CSE142', title: 'Foundations of CS' },
@@ -23,6 +37,7 @@ const sampleCourseRow = {
 test('courses route validations and behaviors', async (t) => {
   t.afterEach(() => {
     clearSupabaseClient();
+    clearStudyTopicsGenerator();
   });
 
   await t.test('rejects missing query parameters', async () => {
@@ -127,6 +142,8 @@ test('courses route validations and behaviors', async (t) => {
     let capturedInsert;
     const insertRow = { ...sampleCourseRow };
 
+    setStudyTopicsGenerator(() => 'Topic A, Topic B, Topic C');
+
     setSupabaseClient(
       createSupabaseStub({
         insertResponses: [
@@ -161,8 +178,8 @@ test('courses route validations and behaviors', async (t) => {
     assert.deepEqual(res.body.course, sampleCourseRow);
 
     assert.equal(capturedInsert.user_uuid, sampleCourseRow.user_uuid);
-  assert.ok(typeof capturedInsert.course_json === 'object');
-  assert.ok('Introduction/Basics' in capturedInsert.course_json);
+    assert.ok(Array.isArray(capturedInsert.course_json.recommended_topics));
+    assert.deepEqual(capturedInsert.course_json.recommended_topics, ['Topic A', 'Topic B', 'Topic C']);
     assert.equal(capturedInsert.finish_by_date, sampleCourseRow.finish_by_date);
     assert.deepEqual(capturedInsert.course_selection, sampleCourseRow.course_selection);
     assert.deepEqual(capturedInsert.syllabus_files, sampleCourseRow.syllabus_files);

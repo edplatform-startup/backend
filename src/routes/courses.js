@@ -1,108 +1,10 @@
 import { Router } from 'express';
 import { getSupabase } from '../supabaseClient.js';
-import { readFile } from 'fs/promises';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { generateStudyTopics } from '../services/grokClient.js';
 
 const router = Router();
 
-/**
- * Validates that the course JSON matches the expected schema structure
- * Expected format:
- * {
- *   "Topic/Subtopic": [
- *     { "Format": "video|reading|mini quiz|flashcards|practice exam", "content": "string" },
- *     ...
- *   ],
- *   ...
- * }
- */
-function validateCourseSchema(courseJson) {
-  // Check if courseJson is an object
-  if (!courseJson || typeof courseJson !== 'object' || Array.isArray(courseJson)) {
-    return { valid: false, error: 'Course must be an object with topic keys' };
-  }
-
-  // Check if there's at least one topic
-  const topics = Object.keys(courseJson);
-  if (topics.length === 0) {
-    return { valid: false, error: 'Course must contain at least one topic' };
-  }
-
-  // Valid content formats
-  const validFormats = ['video', 'reading', 'mini quiz', 'flashcards', 'practice exam'];
-
-  // Validate each topic
-  for (const topic of topics) {
-    // Topic key should be a non-empty string with format "Topic/Subtopic"
-    if (typeof topic !== 'string' || !topic.includes('/')) {
-      return { 
-        valid: false, 
-        error: `Invalid topic key: "${topic}". Expected format: "Topic/Subtopic"` 
-      };
-    }
-
-    const content = courseJson[topic];
-
-    // Each topic should map to an array
-    if (!Array.isArray(content)) {
-      return { 
-        valid: false, 
-        error: `Topic "${topic}" must contain an array of content items` 
-      };
-    }
-
-    // Each topic should have at least one content item
-    if (content.length === 0) {
-      return { 
-        valid: false, 
-        error: `Topic "${topic}" must contain at least one content item` 
-      };
-    }
-
-    // Validate each content item
-    for (let i = 0; i < content.length; i++) {
-      const item = content[i];
-
-      // Each item must be an object
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        return { 
-          valid: false, 
-          error: `Topic "${topic}": item ${i} must be an object` 
-        };
-      }
-
-      // Each item must have Format and content fields
-      if (!item.Format || !item.content) {
-        return { 
-          valid: false, 
-          error: `Topic "${topic}": item ${i} missing required fields "Format" or "content"` 
-        };
-      }
-
-      // Format must be a valid type
-      if (!validFormats.includes(item.Format)) {
-        return { 
-          valid: false, 
-          error: `Topic "${topic}": item ${i} has invalid Format "${item.Format}". Must be one of: ${validFormats.join(', ')}` 
-        };
-      }
-
-      // Content must be a non-empty string
-      if (typeof item.content !== 'string' || item.content.trim().length === 0) {
-        return { 
-          valid: false, 
-          error: `Topic "${topic}": item ${i} must have non-empty string content` 
-        };
-      }
-    }
-  }
-
-  return { valid: true };
-}
+const MODEL_NAME = 'openrouter/grok-4-fast';
 
 function isValidIsoDate(value) {
   if (typeof value !== 'string') return false;
@@ -278,11 +180,17 @@ router.post('/', async (req, res) => {
   }
 
   let normalizedFinishByDate = null;
+  let timeRemainingDays = null;
   if (finishByDate != null) {
     if (!isValidIsoDate(finishByDate)) {
       return res.status(400).json({ error: 'finishByDate must be a valid ISO 8601 date string' });
     }
     normalizedFinishByDate = new Date(finishByDate).toISOString();
+    const finishDateMs = new Date(normalizedFinishByDate).getTime();
+    const nowMs = Date.now();
+    if (!Number.isNaN(finishDateMs)) {
+      timeRemainingDays = Math.max(0, Math.round((finishDateMs - nowMs) / (1000 * 60 * 60 * 24)));
+    }
   }
 
   let normalizedCourseSelection = null;
@@ -327,19 +235,41 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Read the ml_course.json file
-    const coursePath = join(__dirname, '../../resources/ml_course.json');
-    const courseData = await readFile(coursePath, 'utf-8');
-    const courseJson = JSON.parse(courseData);
+    const topicsResponse = await generateStudyTopics({
+      finishByDate: normalizedFinishByDate,
+      timeRemainingDays,
+      courseSelection: normalizedCourseSelection,
+      syllabusText: normalizedSyllabusText,
+      syllabusFiles: syllabusFilesValidation.value,
+      examFormatDetails: normalizedExamFormatDetails,
+      examFiles: examFilesValidation.value,
+      model: MODEL_NAME,
+    });
 
-    // Validate the course schema
-    const validation = validateCourseSchema(courseJson);
-    if (!validation.valid) {
-      return res.status(400).json({ 
-        error: 'Invalid course format', 
-        details: validation.error 
+    const normalizedOutput = topicsResponse
+      .replace(/\r?\n+/g, ',')
+      .replace(/\s+-\s+/g, ',')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (normalizedOutput.length === 0) {
+      return res.status(502).json({
+        error: 'Model did not return any study topics',
       });
     }
+
+    const courseJson = {
+      recommended_topics: normalizedOutput,
+      raw_topics_text: topicsResponse,
+      generated_at: new Date().toISOString(),
+      model: MODEL_NAME,
+      input_snapshot: {
+        finish_by_date: normalizedFinishByDate,
+        course_selection: normalizedCourseSelection,
+        time_remaining_days: timeRemainingDays,
+      },
+    };
 
     // Insert into the courses table in the api schema
     const supabase = getSupabase();
@@ -370,6 +300,9 @@ router.post('/', async (req, res) => {
     });
   } catch (e) {
     console.error('Unhandled error creating course:', e);
+    if (e && e.name === 'FetchError') {
+      return res.status(502).json({ error: 'Failed to reach study planner model', details: e.message });
+    }
     return res.status(500).json({ error: 'Internal server error', details: e.message });
   }
 });
