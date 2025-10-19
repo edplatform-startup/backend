@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import re
 import time
 import os
+import unicodedata
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -35,8 +36,15 @@ for a in main_soup.find_all('a'):
 print(f"Found {len(departments)} departments.")
 
 # Regex pattern to parse course header
-# Example: "ANTH 100 Introduction to Anthropology (5) SSc"
-header_pattern = re.compile(r'^(?P<code>[A-Z]+ \d+[A-Z]?) (?P<title>.*?) \((?P<credits>[\d-]*\,? ?max\. ?\d+|\d+)\)( ?(?P<tags>.*))?$')
+# Example headers to match:
+#   "ANTH 100 Introduction to Anthropology (5) SSc"
+#   "L ARCH 300 Advanced Landscape Topics (5) I&S"
+#   "B E 200 Built Environment Foundations (5)"
+# Allow department codes with internal spaces: e.g., "L ARCH", "B E".
+# Capture the entire subject+number (e.g., "L ARCH 300") as 'code'.
+header_pattern = re.compile(
+    r'^(?P<code>[A-Z]+(?:\s+[A-Z]+)*\s+\d+[A-Z]?)\s+(?P<title>.+?)\s*\((?P<credits>[^)]*)\)\s*(?P<tags>.*)?$'
+)
 
 # Iterate over each department
 for dep_abbrev, dep_name, dep_url in departments:
@@ -57,10 +65,14 @@ for dep_abbrev, dep_name, dep_url in departments:
                 continue
             
             header = lines[0]
-            match = header_pattern.match(header)
+            # Normalize unicode and whitespace to make regex matching robust
+            header_norm = unicodedata.normalize('NFKC', header).replace('\xa0', ' ')
+            header_norm = re.sub(r'\s+', ' ', header_norm).strip()
+            match = header_pattern.match(header_norm)
             if match:
+                code_clean = match.group('code').replace(' ', '')
                 course_data = {
-                    'code': match.group('code'),
+                    'code': code_clean,
                     'title': match.group('title'),
                     'credits': match.group('credits')
                 }
