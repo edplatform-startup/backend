@@ -94,8 +94,8 @@ async function callChatCompletion({ apiKey, model, messages }) {
       max_tokens: 600,
       temperature: 0.4,
       tools: [{ type: 'web_search' }],
-      tool_choice: 'auto',
-      reasoning: true,
+      tool_choice: { type: 'auto' },
+      reasoning: { effort: 'high' },
     }),
   });
 
