@@ -104,6 +104,68 @@ function validateCourseSchema(courseJson) {
   return { valid: true };
 }
 
+function isValidIsoDate(value) {
+  if (typeof value !== 'string') return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime());
+}
+
+function validateFileArray(files, fieldName) {
+  if (files == null) return { valid: true, value: [] };
+  if (!Array.isArray(files)) {
+    return { valid: false, error: `${fieldName} must be an array of file metadata objects` };
+  }
+
+  const sanitized = [];
+  for (let i = 0; i < files.length; i++) {
+    const entry = files[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { valid: false, error: `${fieldName}[${i}] must be an object` };
+    }
+
+    const { name, url, size, type } = entry;
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return { valid: false, error: `${fieldName}[${i}] must include a non-empty "name" string` };
+    }
+
+    if (url != null && (typeof url !== 'string' || !url.trim())) {
+      return { valid: false, error: `${fieldName}[${i}] "url" must be a non-empty string when provided` };
+    }
+
+    if (size != null && (typeof size !== 'number' || Number.isNaN(size) || size < 0)) {
+      return { valid: false, error: `${fieldName}[${i}] "size" must be a non-negative number when provided` };
+    }
+
+    if (type != null && typeof type !== 'string') {
+      return { valid: false, error: `${fieldName}[${i}] "type" must be a string when provided` };
+    }
+
+    const sanitizedEntry = { name: name.trim() };
+    if (url != null) sanitizedEntry.url = url.trim();
+    if (size != null) sanitizedEntry.size = size;
+    if (type != null) sanitizedEntry.type = type;
+    sanitized.push(sanitizedEntry);
+  }
+
+  return { valid: true, value: sanitized };
+}
+
+function normalizeCourseRow(row) {
+  return {
+    id: row.id,
+    user_uuid: row.user_uuid,
+    course_json: row.course_json,
+    created_at: row.created_at,
+    finish_by_date: row.finish_by_date ?? null,
+    course_selection: row.course_selection ?? null,
+    syllabus_text: row.syllabus_text ?? null,
+    syllabus_files: Array.isArray(row.syllabus_files) ? row.syllabus_files : [],
+    exam_format_details: row.exam_format_details ?? null,
+    exam_files: Array.isArray(row.exam_files) ? row.exam_files : [],
+  };
+}
+
 // GET /courses?userId=xxx OR /courses?userId=xxx&courseId=yyy
 // Query parameters: userId (required if courseId not provided), courseId (optional, requires userId)
 router.get('/', async (req, res) => {
@@ -140,7 +202,7 @@ router.get('/', async (req, res) => {
 
     // Case 1: Both userId and courseId provided - get specific course if it belongs to user
     if (userId && courseId) {
-      query = query.eq('user_id', userId).eq('id', courseId).single();
+      query = query.eq('user_uuid', userId).eq('id', courseId).single();
       
       const { data, error } = await query;
 
@@ -157,18 +219,13 @@ router.get('/', async (req, res) => {
 
       return res.json({
         success: true,
-        course: {
-          id: data.id,
-          user_id: data.user_id,
-          course_data: data.course_data,
-          created_at: data.created_at
-        }
+        course: normalizeCourseRow(data)
       });
     }
 
     // Case 2: Only userId provided - get all courses for this user
     if (userId) {
-      query = query.eq('user_id', userId).order('created_at', { ascending: false });
+      query = query.eq('user_uuid', userId).order('created_at', { ascending: false });
       
       const { data, error } = await query;
 
@@ -180,12 +237,7 @@ router.get('/', async (req, res) => {
       return res.json({
         success: true,
         count: data.length,
-        courses: data.map(course => ({
-          id: course.id,
-          user_id: course.user_id,
-          course_data: course.course_data,
-          created_at: course.created_at
-        }))
+        courses: data.map(normalizeCourseRow)
       });
     }
   } catch (e) {
@@ -195,9 +247,25 @@ router.get('/', async (req, res) => {
 });
 
 // POST /courses
-// Body: { userId: "user-uuid-string" }
+// Body: {
+//   userId: "user-uuid-string",
+//   finishByDate?: string,
+//   courseSelection?: { code: string, title: string } | null,
+//   syllabusText?: string,
+//   syllabusFiles?: FileMeta[],
+//   examFormatDetails?: string,
+//   examFiles?: FileMeta[]
+// }
 router.post('/', async (req, res) => {
-  const { userId } = req.body;
+  const {
+    userId,
+    finishByDate,
+    courseSelection,
+    syllabusText,
+    syllabusFiles,
+    examFormatDetails,
+    examFiles,
+  } = req.body || {};
   
   if (!userId) {
     return res.status(400).json({ error: 'Missing required field: userId' });
@@ -207,6 +275,55 @@ router.post('/', async (req, res) => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(userId)) {
     return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
+  }
+
+  let normalizedFinishByDate = null;
+  if (finishByDate != null) {
+    if (!isValidIsoDate(finishByDate)) {
+      return res.status(400).json({ error: 'finishByDate must be a valid ISO 8601 date string' });
+    }
+    normalizedFinishByDate = new Date(finishByDate).toISOString();
+  }
+
+  let normalizedCourseSelection = null;
+  if (courseSelection != null) {
+    if (typeof courseSelection !== 'object' || Array.isArray(courseSelection)) {
+      return res.status(400).json({ error: 'courseSelection must be an object with code and title or null' });
+    }
+    const { code, title } = courseSelection;
+    if (typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'courseSelection.code must be a non-empty string' });
+    }
+    if (typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: 'courseSelection.title must be a non-empty string' });
+    }
+    normalizedCourseSelection = { code: code.trim(), title: title.trim() };
+  }
+
+  let normalizedSyllabusText = null;
+  if (syllabusText != null) {
+    if (typeof syllabusText !== 'string') {
+      return res.status(400).json({ error: 'syllabusText must be a string when provided' });
+    }
+    normalizedSyllabusText = syllabusText;
+  }
+
+  let normalizedExamFormatDetails = null;
+  if (examFormatDetails != null) {
+    if (typeof examFormatDetails !== 'string') {
+      return res.status(400).json({ error: 'examFormatDetails must be a string when provided' });
+    }
+    normalizedExamFormatDetails = examFormatDetails;
+  }
+
+  const syllabusFilesValidation = validateFileArray(syllabusFiles, 'syllabusFiles');
+  if (!syllabusFilesValidation.valid) {
+    return res.status(400).json({ error: syllabusFilesValidation.error });
+  }
+
+  const examFilesValidation = validateFileArray(examFiles, 'examFiles');
+  if (!examFilesValidation.valid) {
+    return res.status(400).json({ error: examFilesValidation.error });
   }
 
   try {
@@ -229,8 +346,14 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabase.schema('api')
       .from('courses')
       .insert({
-        user_id: userId,
-        course_data: courseJson
+        user_uuid: userId,
+        course_json: courseJson,
+        finish_by_date: normalizedFinishByDate,
+        course_selection: normalizedCourseSelection,
+        syllabus_text: normalizedSyllabusText,
+        syllabus_files: syllabusFilesValidation.value,
+        exam_format_details: normalizedExamFormatDetails,
+        exam_files: examFilesValidation.value
       })
       .select()
       .single();
@@ -243,11 +366,7 @@ router.post('/', async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Course created successfully',
-      course: {
-        id: data.id,
-        user_id: data.user_id,
-        created_at: data.created_at
-      }
+      course: normalizeCourseRow(data)
     });
   } catch (e) {
     console.error('Unhandled error creating course:', e);

@@ -15,187 +15,115 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Purpose: Basic service info.
 - Request: No params.
 - Responses:
-  - 200 OK
-    - Body:
-      {
-        "name": "edtech-backend-api",
-        "ok": true
-      }
+  - 200 OK → `{ "name": "edtech-backend-api", "ok": true }`
 
 ### GET /health
 - Purpose: Liveness check.
 - Request: No params.
 - Responses:
-  - 200 OK
-    - Body:
-      {
-        "ok": true,
-        "ts": "2025-01-01T12:34:56.789Z"
-      }
-
-### GET /college-courses
-- Purpose: Search for college courses by code or title (case-insensitive, partial match).
-- Query parameters:
-  - query (string, required)
-    - Will be trimmed, spaces removed (e.g., "CSE 123" -> "CSE123"), and truncated to max 100 chars.
-- Behavior:
-  - Matches if course code OR title contains the term (case-insensitive).
-  - Returns up to 50 results.
-- Responses:
-  - 200 OK
-    - Body:
-      {
-        "query": "cs",
-        "count": 2,
-        "items": [
-          { "code": "CS101", "title": "Intro to Computer Science" },
-          { "code": "CS50",  "title": "Computer Science" }
-        ]
-      }
-    - Schema:
-      - query: string (the sanitized search term used)
-      - count: integer (number of items returned)
-      - items: Course[]
-      - Course: { code: string, title: string }
-  - 400 Bad Request
-    - Body: { "error": "Missing required query parameter: query" }
-  - 500 Internal Server Error
-    - Body: { "error": "Failed to fetch courses" } when upstream DB request fails, or
-            { "error": "Internal server error" } for unexpected errors.
+  - 200 OK → `{ "ok": true, "ts": "2025-01-01T12:34:56.789Z" }`
 
 ### GET /courses
-- Purpose: Retrieve generated courses for a user, or a specific course.
-- Authentication: None (userId must be provided in query parameters)
-- Query parameters (at least one required):
-  - userId (string, optional but required if courseId not provided): Valid UUID of the user
-  - courseId (string, optional): Valid UUID of a specific course. If provided, userId is required.
+- Purpose: Retrieve generated study plans saved for a user or fetch a specific plan.
+- Query parameters (at least `userId` or both `userId` and `courseId`):
+  - `userId` (string, required unless `courseId` supplied but still required when `courseId` is present): UUID identifying the owner.
+  - `courseId` (string, optional): UUID of a specific course. Must belong to the same `userId`.
 - Behavior:
-  - **Case 1**: Only `userId` provided → Returns all courses associated with that user, ordered by creation date (newest first)
-  - **Case 2**: Both `userId` and `courseId` provided → Returns the specific course ONLY if it belongs to that user
-- Responses:
-  - 200 OK (single course):
-    - Body:
-      {
-        "success": true,
-        "course": {
-          "id": "123e4567-e89b-12d3-a456-426614174000",
-          "user_id": "550e8400-e29b-41d4-a716-446655440000",
-          "course_data": { /* course content */ },
-          "created_at": "2025-10-17T12:34:56.789Z"
-        }
-      }
-  - 200 OK (multiple courses):
-    - Body:
-      {
-        "success": true,
-        "count": 3,
-        "courses": [
-          {
-            "id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_id": "550e8400-e29b-41d4-a716-446655440000",
-            "course_data": { /* course content */ },
-            "created_at": "2025-10-17T12:34:56.789Z"
-          },
-          ...
-        ]
-      }
-  - 400 Bad Request
-    - Missing parameters:
-      { "error": "Missing required query parameters. Provide at least userId or both userId and courseId." }
-    - courseId without userId:
-      { "error": "userId is required when courseId is provided." }
-    - Invalid UUID format:
-      { "error": "Invalid userId format. Must be a valid UUID." } or
-      { "error": "Invalid courseId format. Must be a valid UUID." }
-  - 404 Not Found
-    - Course not found or doesn't belong to user:
-      { "error": "Course not found or does not belong to this user." }
-  - 500 Internal Server Error
-    - Body: { "error": "Failed to fetch course(s)", "details": "<error message>" } when DB query fails, or
-            { "error": "Internal server error", "details": "<error message>" } for unexpected errors.
+  - When only `userId` is supplied, returns all of that user's courses ordered by `created_at` descending.
+  - When both `userId` and `courseId` are supplied, returns that single course if it belongs to the user; otherwise 404.
+- Success responses share the `Course` shape below.
+  - 200 OK (collection)
+    ```json
+    {
+      "success": true,
+      "count": 2,
+      "courses": [Course, Course]
+    }
+    ```
+  - 200 OK (single)
+    ```json
+    {
+      "success": true,
+      "course": Course
+    }
+    ```
+- Error responses:
+  - 400 Bad Request → Missing params, invalid UUID formats, or `courseId` without `userId`.
+  - 404 Not Found → Course not found for that user.
+  - 500 Internal Server Error → Database read failure or unexpected exception.
+
+`Course` object fields
+- `id` (string) – Course record UUID.
+- `user_uuid` (string) – Owner UUID.
+- `course_json` (object) – Structured course syllabus stored from `ml_course.json`.
+- `created_at` (string) – ISO timestamp when the record was created.
+- `finish_by_date` (string|null) – Optional target completion date (ISO 8601).
+- `course_selection` (object|null) – Selected source course `{ code, title }`.
+- `syllabus_text` (string|null) – Raw syllabus text provided by the user.
+- `syllabus_files` (FileMeta[]) – Uploaded syllabus file metadata.
+- `exam_format_details` (string|null) – Free-form exam format notes.
+- `exam_files` (FileMeta[]) – Uploaded exam reference files.
+
+`FileMeta` object fields
+- `name` (string) – File display name.
+- `url` (string, optional) – Location where the file can be fetched.
+- `size` (number, optional) – File size in bytes.
+- `type` (string, optional) – MIME type.
 
 ### POST /courses
-- Purpose: Upload a generated course to the database for a specific user.
-- Authentication: None (userId must be provided in request body)
-- Request:
-  - Method: POST
-  - Content-Type: application/json
-  - Body:
-    {
-      "userId": "550e8400-e29b-41d4-a716-446655440000"
-    }
-    - userId (string, required): Must be a valid UUID (RFC 4122 format) representing the user
+- Purpose: Persist a generated course plan for a user alongside intake metadata.
+- Request body (JSON):
+  ```json
+  {
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "finishByDate": "2025-12-01T00:00:00.000Z",
+    "courseSelection": { "code": "CSE142", "title": "Foundations of CS" },
+    "syllabusText": "Optional syllabus text...",
+    "syllabusFiles": [ { "name": "syllabus.pdf", "url": "https://...", "size": 12345, "type": "application/pdf" } ],
+    "examFormatDetails": "2 midterms + 1 final",
+    "examFiles": []
+  }
+  ```
+- Field requirements:
+  - `userId` (string, required) – UUID; rejects non-UUID values.
+  - `finishByDate` (string, optional) – ISO 8601 date/time.
+  - `courseSelection` (object|null, optional) – Must include non-empty `code` and `title` strings.
+  - `syllabusText` (string, optional).
+  - `syllabusFiles` (FileMeta[], optional) – Each entry validated as above.
+  - `examFormatDetails` (string, optional).
+  - `examFiles` (FileMeta[], optional).
 - Behavior:
-  - Reads the ml_course.json file from the resources directory
-  - Validates the course JSON structure against the expected schema
-  - Inserts the course into the api.courses table with the user's UUID
-  - Returns the created course metadata
-- Course Schema Validation:
-  - Must be an object with topic keys in "Topic/Subtopic" format
-  - Each topic must contain an array of content items
-  - Each content item must have:
-    - Format (string): One of "video", "reading", "mini quiz", "flashcards", "practice exam"
-    - content (string): Non-empty description of the content
+  - Loads the template at `resources/ml_course.json`.
+  - Validates the template structure.
+  - Inserts a new row into `api.courses` with `course_json` set to the template and metadata stored in dedicated columns.
 - Responses:
-  - 201 Created
-    - Body:
-      {
-        "success": true,
-        "message": "Course created successfully",
-        "course": {
-          "id": "123e4567-e89b-12d3-a456-426614174000",
-          "user_id": "550e8400-e29b-41d4-a716-446655440000",
-          "created_at": "2025-10-17T12:34:56.789Z"
-        }
-      }
-    - Schema:
-      - success: boolean (always true on success)
-      - message: string (confirmation message)
-      - course: object
-        - id: string (UUID of the created course record)
-        - user_id: string (UUID of the associated user)
-        - created_at: string (ISO 8601 timestamp)
-  - 400 Bad Request
-    - Missing userId:
-      { "error": "Missing required field: userId" }
-    - Invalid UUID format:
-      { "error": "Invalid userId format. Must be a valid UUID." }
-    - Invalid course schema:
-      { 
-        "error": "Invalid course format", 
-        "details": "<specific validation error message>" 
-      }
-  - 500 Internal Server Error
-    - Body: { "error": "Failed to insert course", "details": "<error message>" } when DB insert fails, or
-            { "error": "Internal server error", "details": "<error message>" } for unexpected errors.
+  - 201 Created →
+    ```json
+    {
+      "success": true,
+      "message": "Course created successfully",
+      "course": Course
+    }
+    ```
+  - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
+  - 500 Internal Server Error → Insert failure or unexpected exception.
 
 ## Errors (generic)
-- 404 Not Found (unknown route or unsupported method)
-  - Body: { "error": "Not Found" }
-- 500 Internal Server Error (unhandled)
-  - Body: { "error": "Internal Server Error: <message>" }
+- 404 Not Found → Unknown route or unsupported HTTP verb.
+- 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
 
 ## Notes
-- Data source: Supabase table selecting only code and title fields.
-- Ordering: Not specified by the API (database default).
-- Pagination: Not implemented (hard limit 50). Clients should handle fewer results by refining the search term.
-- Stability: This is a minimal API; response shapes are stable but may evolve as features are added.
+- Every response uses JSON and includes `success` for happy-path course endpoints.
+- Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
+- Supabase schema: reads and writes target `api.courses`; `course_json` currently seeded from a static template but can be swapped for dynamic generation later.
 
 ## Examples
-- Health check:
-  - GET https://edtech-backend-api.onrender.com/health
-  - 200 OK → { "ok": true, "ts": "<ISO8601>" }
-- College course search:
-  - GET https://edtech-backend-api.onrender.com/college-courses?query=cs
-  - 200 OK → { "query": "cs", "count": <n>, "items": [ { "code": "CS101", "title": "..." }, ... ] }
-- Create a course:
-  - POST https://edtech-backend-api.onrender.com/courses
-  - Headers: Content-Type: application/json
-  - Body: { "userId": "550e8400-e29b-41d4-a716-446655440000" }
-  - 201 Created → { "success": true, "message": "Course created successfully", "course": { "id": "...", "user_id": "...", "created_at": "..." } }
-- Get all user's courses:
-  - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000
-  - 200 OK → { "success": true, "count": 3, "courses": [ { "id": "...", "user_id": "...", "course_data": {...}, "created_at": "..." }, ... ] }
-- Get specific course for user:
-  - GET https://edtech-backend-api.onrender.com/courses?userId=550e8400-e29b-41d4-a716-446655440000&courseId=123e4567-e89b-12d3-a456-426614174000
-  - 200 OK → { "success": true, "course": { "id": "...", "user_id": "...", "course_data": {...}, "created_at": "..." } }
+- Health check → `GET https://edtech-backend-api.onrender.com/health`
+  - Response: `{ "ok": true, "ts": "<ISO8601>" }`
+- List user courses → `GET https://edtech-backend-api.onrender.com/courses?userId=...`
+  - Response: `{ "success": true, "count": 1, "courses": [Course] }`
+- Fetch specific course → `GET https://edtech-backend-api.onrender.com/courses?userId=...&courseId=...`
+  - Response: `{ "success": true, "course": Course }`
+- Create course → `POST https://edtech-backend-api.onrender.com/courses`
+  - Body: see example above.
+  - Response: `{ "success": true, "message": "Course created successfully", "course": Course }`
