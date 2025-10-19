@@ -37,7 +37,8 @@ function buildPrompt({
   lines.push('1. Analyze the provided materials about the course and exam.');
   lines.push('2. Use the web_search tool when helpful to supplement course knowledge and best study practices.');
   lines.push('3. Determine the most important topics to learn given the time remaining.');
-  lines.push('4. Respond with only the comma-separated list of topics (no numbering, no explanations).');
+  lines.push('4. Ensure coverage of every concept the learner must master for maximal success.');
+  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations).');
   lines.push('');
   lines.push('Provided context:');
   if (courseSelection) {
