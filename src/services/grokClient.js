@@ -225,6 +225,7 @@ export async function generateStudyTopics(input) {
     for (const call of toolCalls) {
       const callId = call?.id || `tool_call_${iterations}`;
       let argsStr = call?.function?.arguments || '{}';
+      let query = '';
       try {
         // Clean potential markdown wrappers around JSON
         argsStr = argsStr.trim().replace(/^```json\s*|\s*```$/g, '');
@@ -232,7 +233,6 @@ export async function generateStudyTopics(input) {
         query = parsed?.query || parsed?.q || parsed?.search || '';
       } catch (err) {
         console.warn('Failed to parse tool arguments:', err);
-        query = ''; // Fallback to empty query if parsing fails
       }
 
       let toolContent;
