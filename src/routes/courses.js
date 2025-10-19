@@ -4,7 +4,7 @@ import { generateStudyTopics } from '../services/grokClient.js';
 
 const router = Router();
 
-const MODEL_NAME = 'openrouter/grok-4-fast';
+const MODEL_NAME = 'x-ai/grok-4-fast-reasoning';
 
 function isValidIsoDate(value) {
   if (typeof value !== 'string') return false;
@@ -259,44 +259,11 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const courseJson = {
-      recommended_topics: normalizedOutput,
-      raw_topics_text: topicsResponse,
-      generated_at: new Date().toISOString(),
-      model: MODEL_NAME,
-      input_snapshot: {
-        finish_by_date: normalizedFinishByDate,
-        course_selection: normalizedCourseSelection,
-        time_remaining_days: timeRemainingDays,
-      },
-    };
-
-    // Insert into the courses table in the api schema
-    const supabase = getSupabase();
-    const { data, error } = await supabase.schema('api')
-      .from('courses')
-      .insert({
-        user_uuid: userId,
-        course_json: courseJson,
-        finish_by_date: normalizedFinishByDate,
-        course_selection: normalizedCourseSelection,
-        syllabus_text: normalizedSyllabusText,
-        syllabus_files: syllabusFilesValidation.value,
-        exam_format_details: normalizedExamFormatDetails,
-        exam_files: examFilesValidation.value
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase error inserting course:', error);
-      return res.status(500).json({ error: 'Failed to insert course', details: error.message });
-    }
-
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
-      message: 'Course created successfully',
-      course: normalizeCourseRow(data)
+      topics: normalizedOutput,
+      rawTopicsText: topicsResponse,
+      model: MODEL_NAME,
     });
   } catch (e) {
     console.error('Unhandled error creating course:', e);

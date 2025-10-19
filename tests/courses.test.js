@@ -138,25 +138,8 @@ test('courses route validations and behaviors', async (t) => {
     assert.match(res.body.error, /must include a non-empty "name"/);
   });
 
-  await t.test('creates course with metadata', async () => {
-    let capturedInsert;
-    const insertRow = { ...sampleCourseRow };
-
+  await t.test('returns generated topics list without persistence', async () => {
     setStudyTopicsGenerator(() => 'Topic A, Topic B, Topic C');
-
-    setSupabaseClient(
-      createSupabaseStub({
-        insertResponses: [
-          {
-            data: insertRow,
-            error: null,
-            onInsert: (payload) => {
-              capturedInsert = payload;
-            },
-          },
-        ],
-      })
-    );
 
     const reqBody = {
       userId: sampleCourseRow.user_uuid,
@@ -173,15 +156,10 @@ test('courses route validations and behaviors', async (t) => {
       .set('Content-Type', 'application/json')
       .send(reqBody);
 
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.deepEqual(res.body.course, sampleCourseRow);
-
-    assert.equal(capturedInsert.user_uuid, sampleCourseRow.user_uuid);
-    assert.ok(Array.isArray(capturedInsert.course_json.recommended_topics));
-    assert.deepEqual(capturedInsert.course_json.recommended_topics, ['Topic A', 'Topic B', 'Topic C']);
-    assert.equal(capturedInsert.finish_by_date, sampleCourseRow.finish_by_date);
-    assert.deepEqual(capturedInsert.course_selection, sampleCourseRow.course_selection);
-    assert.deepEqual(capturedInsert.syllabus_files, sampleCourseRow.syllabus_files);
+    assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C']);
+    assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C');
+    assert.equal(res.body.model, 'x-ai/grok-4-fast-reasoning');
   });
 });

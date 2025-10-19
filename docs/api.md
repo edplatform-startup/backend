@@ -71,7 +71,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - `type` (string, optional) – MIME type.
 
 ### POST /courses
-- Purpose: Generate study topics with Grok 4 Fast Reasoning (via OpenRouter) and store metadata for the user.
+- Purpose: Generate study topics with Grok 4 Fast Reasoning (via OpenRouter) and return them to the caller (no persistence yet).
 - Request body (JSON):
   ```json
   {
@@ -95,18 +95,19 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Behavior:
   - Sends the provided context to the Grok 4 Fast Reasoning model via OpenRouter, enabling the `web_search` tool so the model can research missing course information before answering.
   - Parses the model result into a normalized topics array.
-  - Stores metadata and the generated topic list in `api.courses`.
+  - Responds with the generated topics; data is not yet saved to Supabase.
 - Responses:
-  - 201 Created →
+  - 200 OK →
     ```json
     {
       "success": true,
-      "message": "Course created successfully",
-      "course": Course
+      "topics": ["Topic A", "Topic B", "Topic C"],
+      "rawTopicsText": "Topic A, Topic B, Topic C",
+      "model": "x-ai/grok-4-fast-reasoning"
     }
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
-  - 500 Internal Server Error → Insert failure or unexpected exception.
+  - 500 Internal Server Error → Unexpected exception calling OpenRouter.
   - 502 Bad Gateway → Model call failed or returned no topics.
 
 ## Errors (generic)
@@ -116,7 +117,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 ## Notes
 - Every response uses JSON and includes `success` for happy-path course endpoints.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
-- Supabase schema: reads and writes target `api.courses`; `course_json` currently seeded from a static template but can be swapped for dynamic generation later.
+- Supabase schema: reads from `api.courses` for GET requests; POST currently does not persist data.
 
 ## Examples
 - Health check → `GET https://edtech-backend-api.onrender.com/health`
@@ -125,6 +126,6 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
 - Fetch specific course → `GET https://edtech-backend-api.onrender.com/courses?userId=...&courseId=...`
   - Response: `{ "success": true, "course": Course }`
-- Create course → `POST https://edtech-backend-api.onrender.com/courses`
+- Create topics → `POST https://edtech-backend-api.onrender.com/courses`
   - Body: see example above.
-  - Response: `{ "success": true, "message": "Course created successfully", "course": Course }`
+  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "x-ai/grok-4-fast-reasoning" }`
