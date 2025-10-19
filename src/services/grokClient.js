@@ -1,6 +1,6 @@
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const WEB_SEARCH_ENDPOINT = 'https://openrouter.ai/api/v1/tools/web_search';
-const MODEL_FALLBACK = 'x-ai/grok-4-fast-reasoning';
+const MODEL_FALLBACK = 'x-ai/grok-4-fast';
 const MAX_TOOL_ITERATIONS = 3;
 
 let customGenerator = null;
@@ -95,6 +95,7 @@ async function callChatCompletion({ apiKey, model, messages }) {
       temperature: 0.4,
       tools: [{ type: 'web_search' }],
       tool_choice: 'auto',
+      reasoning: true,
     }),
   });
 
