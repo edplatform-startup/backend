@@ -79,11 +79,37 @@ function buildPrompt({
   return lines.join('\n');
 }
 
-function supportsReasoning(modelName) {
-  return typeof modelName === 'string' && modelName.startsWith('openai/');
-}
-
 async function callChatCompletion({ apiKey, model, messages, reasoningEffort }) {
+  const body = {
+    model,
+    messages,
+    max_tokens: 600,
+    temperature: 0.4,
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'web_search',
+          description: 'Perform a web search to gather additional information.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'The search query.'
+              }
+            },
+            required: ['query']
+          }
+        }
+      }
+    ],
+    tool_choice: 'auto',
+  };
+
+  // Enable high reasoning for Grok-4-Fast
+  body.reasoning = { enabled: true, effort: reasoningEffort || 'high' };
+
   const response = await fetch(OPENROUTER_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -92,17 +118,7 @@ async function callChatCompletion({ apiKey, model, messages, reasoningEffort }) 
       'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
       'X-Title': 'EdTech Study Planner',
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: 600,
-      temperature: 0.4,
-      tools: [{ type: 'web_search' }],
-      tool_choice: { type: 'auto' },
-      ...(supportsReasoning(model) && reasoningEffort
-        ? { reasoning: { effort: reasoningEffort } }
-        : {}),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -208,13 +224,15 @@ export async function generateStudyTopics(input) {
 
     for (const call of toolCalls) {
       const callId = call?.id || `tool_call_${iterations}`;
-      const argsStr = call?.function?.arguments || call?.web_search?.arguments || '{}';
-      let query = '';
+      let argsStr = call?.function?.arguments || '{}';
       try {
+        // Clean potential markdown wrappers around JSON
+        argsStr = argsStr.trim().replace(/^```json\s*|\s*```$/g, '');
         const parsed = JSON.parse(argsStr);
         query = parsed?.query || parsed?.q || parsed?.search || '';
       } catch (err) {
         console.warn('Failed to parse tool arguments:', err);
+        query = ''; // Fallback to empty query if parsing fails
       }
 
       let toolContent;
