@@ -4,7 +4,7 @@ import { generateStudyTopics } from '../services/grokClient.js';
 
 const router = Router();
 
-const MODEL_NAME = 'x-ai/grok-4-fast-reasoning';
+const MODEL_NAME = 'x-ai/grok-4-fast';
 
 function isValidIsoDate(value) {
   if (typeof value !== 'string') return false;

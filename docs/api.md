@@ -103,7 +103,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
       "success": true,
       "topics": ["Topic A", "Topic B", "Topic C"],
       "rawTopicsText": "Topic A, Topic B, Topic C",
-      "model": "x-ai/grok-4-fast-reasoning"
+      "model": "x-ai/grok-4-fast"
     }
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
@@ -128,4 +128,4 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - Response: `{ "success": true, "course": Course }`
 - Create topics → `POST https://edtech-backend-api.onrender.com/courses`
   - Body: see example above.
-  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "x-ai/grok-4-fast-reasoning" }`
+  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "x-ai/grok-4-fast" }`

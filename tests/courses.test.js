@@ -160,6 +160,6 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(res.body.success, true);
     assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C']);
     assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C');
-    assert.equal(res.body.model, 'x-ai/grok-4-fast-reasoning');
+    assert.equal(res.body.model, 'x-ai/grok-4-fast');
   });
 });
