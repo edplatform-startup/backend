@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import {
   isValidIsoDate,
   validateFileArray,
+  validateUuid,
 } from '../utils/validation.js';
 import { generateCourseStructure } from '../services/courseGenerator.js';
+import { getSupabase } from '../supabaseClient.js';
 
 const router = Router();
 
@@ -100,11 +103,21 @@ router.post('/', async (req, res) => {
     className,
     startDate,
     endDate,
+    userId,
     syllabusText,
     syllabusFiles,
     examStructureText,
     examStructureFiles,
   } = req.body || {};
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userIdValidation = validateUuid(userId, 'userId');
+  if (!userIdValidation.valid) {
+    return res.status(400).json({ error: userIdValidation.error });
+  }
 
   const normalizedTopics = normalizeTopics(topics);
   if (!normalizedTopics.valid) {
@@ -180,12 +193,34 @@ router.post('/', async (req, res) => {
       });
     }
 
-    return res.status(200).json({
-      success: true,
-      model: result.model,
-      courseStructure: result.courseStructure,
-      raw: result.raw,
-    });
+    const supabase = getSupabase();
+    const courseId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const record = {
+      id: courseId,
+      user_id: userId,
+      user_uuid: userId,
+      created_at: createdAt,
+      course_data: result.courseStructure,
+    };
+
+    const { data, error: insertError } = await supabase
+      .schema('api')
+      .from('courses')
+      .insert([record])
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('Failed to persist course structure:', insertError);
+      return res.status(502).json({
+        error: 'Failed to save course structure',
+        details: insertError.message || insertError,
+      });
+    }
+
+    const persistedId = data?.id ?? courseId;
+    return res.status(201).json({ courseId: persistedId });
   } catch (error) {
     const status = error.statusCode && Number.isInteger(error.statusCode) ? error.statusCode : 500;
     console.error('Course structure generation failed:', error);

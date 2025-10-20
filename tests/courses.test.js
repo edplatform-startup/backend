@@ -11,20 +11,24 @@ import {
 
 const baseHeaders = { Accept: 'application/json' };
 
+const courseData = {
+  recommended_topics: ['Topic A', 'Topic B', 'Topic C'],
+  raw_topics_text: 'Topic A, Topic B, Topic C',
+  generated_at: '2025-10-17T12:34:56.789Z',
+  model: 'openrouter/grok-4-fast',
+  input_snapshot: {
+    finish_by_date: '2025-12-01T00:00:00.000Z',
+    course_selection: { code: 'CSE142', title: 'Foundations of CS' },
+    time_remaining_days: 45,
+  },
+};
+
 const sampleCourseRow = {
   id: '11111111-1111-1111-1111-111111111111',
+  user_id: '22222222-2222-2222-2222-222222222222',
   user_uuid: '22222222-2222-2222-2222-222222222222',
-  course_json: {
-    recommended_topics: ['Topic A', 'Topic B', 'Topic C'],
-    raw_topics_text: 'Topic A, Topic B, Topic C',
-    generated_at: '2025-10-17T12:34:56.789Z',
-    model: 'openrouter/grok-4-fast',
-    input_snapshot: {
-      finish_by_date: '2025-12-01T00:00:00.000Z',
-      course_selection: { code: 'CSE142', title: 'Foundations of CS' },
-      time_remaining_days: 45,
-    },
-  },
+  course_data: courseData,
+  course_json: courseData,
   created_at: '2025-10-17T12:34:56.789Z',
   finish_by_date: '2025-12-01T00:00:00.000Z',
   course_selection: { code: 'CSE142', title: 'Foundations of CS' },

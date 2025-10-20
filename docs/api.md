@@ -54,8 +54,10 @@ Base URL (production): https://edtech-backend-api.onrender.com
 
 `Course` object fields
 - `id` (string) – Course record UUID.
-- `user_uuid` (string) – Owner UUID.
-- `course_json` (object) – Structured course syllabus stored from `ml_course.json`.
+- `user_id` (string) – Owner UUID stored for new records.
+- `user_uuid` (string) – Legacy owner UUID column (still populated for compatibility).
+- `course_data` (object|null) – Structured course syllabus stored from `ml_course.json` (preferred).
+- `course_json` (object|null) – Alias of `course_data` retained for backward compatibility.
 - `created_at` (string) – ISO timestamp when the record was created.
 - `finish_by_date` (string|null) – Optional target completion date (ISO 8601).
 - `course_selection` (object|null) – Selected source course `{ code, title }`.
@@ -112,7 +114,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 502 Bad Gateway → Model call failed or returned no topics.
 
 ### POST /course-structure
-- Purpose: Generate a full course learning plan leveraging OpenAI GPT-5 via OpenRouter.
+- Purpose: Generate and persist a full course learning plan leveraging OpenAI GPT-5 via OpenRouter.
 - Request body (JSON):
   ```json
   {
@@ -120,6 +122,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
     "className": "Machine Learning Final",
     "startDate": "2025-10-01T00:00:00.000Z",
     "endDate": "2025-12-15T00:00:00.000Z",
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
     "syllabusText": "Optional free-form syllabus overview",
     "syllabusFiles": [
       { "name": "syllabus.pdf", "url": "https://example.com/syllabus.pdf", "type": "application/pdf" }
@@ -134,6 +137,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `topics` (string[], required) – Non-empty array of topic names.
   - `className` (string, required) – Name of the class or exam being prepared for.
   - `startDate` & `endDate` (string, required) – ISO 8601 timestamps; `startDate` must be before `endDate`.
+  - `userId` (string, required) – UUID of the learner the course belongs to.
   - `syllabusText` (string, optional) – Additional syllabus description.
   - `syllabusFiles` (FileMetaWithContent[], optional) – Uploaded syllabus documents. Each file may include either a `url` or `content` (base64 payload).
   - `examStructureText` (string, optional) – Description of the exam format.
@@ -141,23 +145,11 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Behavior:
   - Validates inputs and forwards contextual data, including file attachments, to GPT-5 with high reasoning and optional web search.
   - Expects strict JSON response matching the `ml_course.json` schema: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }` pairs.
-  - Validates the returned schema before responding.
+  - Validates the returned schema, then saves it to `api.courses.course_data` with a generated UUID, the provided `userId`, and a `created_at` timestamp.
 - Responses:
-  - 200 OK →
-    ```json
-    {
-      "success": true,
-      "model": "openai/gpt-5",
-      "courseStructure": {
-        "Module 1/Basics": [
-          { "Format": "video", "content": "..." }
-        ]
-      },
-      "raw": "{\n  \"Module 1/Basics\": ... }"
-    }
-    ```
-  - 400 Bad Request → Invalid inputs (missing topics, bad dates, malformed file metadata, etc.).
-  - 502 Bad Gateway → Model returned empty/invalid JSON structure.
+  - 201 Created → `{ "courseId": "<uuid>" }`
+  - 400 Bad Request → Invalid inputs (missing topics/userId, bad dates, malformed file metadata, etc.).
+  - 502 Bad Gateway → Model returned empty/invalid JSON structure or persistence failed.
   - 500 Internal Server Error → Unexpected failure calling OpenRouter.
 
 ### POST /flashcards
@@ -206,9 +198,9 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
 
 ## Notes
-- Every response uses JSON and includes `success` for happy-path course endpoints.
+- Every response uses JSON. Successful `POST /course-structure` requests return only the persisted `courseId`.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
-- Supabase schema: reads from `api.courses` for GET requests; POST currently does not persist data.
+- Supabase schema: reads from and writes to `api.courses`. `course_data` is the canonical JSON column for stored syllabi.
 
 ## Examples
 - List user courses → `GET https://edtech-backend-api.onrender.com/courses?userId=...`
