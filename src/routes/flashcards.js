@@ -104,8 +104,6 @@ router.post('/', async (req, res) => {
       reasoning: { enabled: true, effort: 'low' },
       temperature: 0.3,
       maxTokens: 900,
-      toolChoice: 'none',
-      tools: [],
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
