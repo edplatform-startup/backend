@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import collegeCoursesRouter from './routes/college-courses.js';
 import coursesRouter from './routes/courses.js';
 import flashcardsRouter from './routes/flashcards.js';
+import courseStructureRouter from './routes/course-structure.js';
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.get('/healthz', (req, res) => {
 app.use('/college-courses', collegeCoursesRouter);
 app.use('/courses', coursesRouter);
 app.use('/flashcards', flashcardsRouter);
+app.use('/course-structure', courseStructureRouter);
 
 // 404 handler
 app.use((req, res) => {

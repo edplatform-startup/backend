@@ -69,6 +69,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - `url` (string, optional) – Location where the file can be fetched.
 - `size` (number, optional) – File size in bytes.
 - `type` (string, optional) – MIME type.
+- `content` (string, optional) – Base64-encoded file payload when the file is uploaded inline.
 
 ### POST /courses
 - Purpose: Generate study topics with Grok 4 Fast Reasoning (via OpenRouter) and return them to the caller (no persistence yet).
@@ -109,6 +110,55 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
   - 500 Internal Server Error → Unexpected exception calling OpenRouter.
   - 502 Bad Gateway → Model call failed or returned no topics.
+
+### POST /course-structure
+- Purpose: Generate a full course learning plan leveraging OpenAI GPT-5 via OpenRouter.
+- Request body (JSON):
+  ```json
+  {
+    "topics": ["Supervised Learning", "Optimization"],
+    "className": "Machine Learning Final",
+    "startDate": "2025-10-01T00:00:00.000Z",
+    "endDate": "2025-12-15T00:00:00.000Z",
+    "syllabusText": "Optional free-form syllabus overview",
+    "syllabusFiles": [
+      { "name": "syllabus.pdf", "url": "https://example.com/syllabus.pdf", "type": "application/pdf" }
+    ],
+    "examStructureText": "Optional description of exam structure",
+    "examStructureFiles": [
+      { "name": "exam-guide.pdf", "content": "<base64>", "type": "application/pdf" }
+    ]
+  }
+  ```
+- Field requirements:
+  - `topics` (string[], required) – Non-empty array of topic names.
+  - `className` (string, required) – Name of the class or exam being prepared for.
+  - `startDate` & `endDate` (string, required) – ISO 8601 timestamps; `startDate` must be before `endDate`.
+  - `syllabusText` (string, optional) – Additional syllabus description.
+  - `syllabusFiles` (FileMetaWithContent[], optional) – Uploaded syllabus documents. Each file may include either a `url` or `content` (base64 payload).
+  - `examStructureText` (string, optional) – Description of the exam format.
+  - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
+- Behavior:
+  - Validates inputs and forwards contextual data, including file attachments, to GPT-5 with high reasoning and optional web search.
+  - Expects strict JSON response matching the `ml_course.json` schema: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }` pairs.
+  - Validates the returned schema before responding.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "model": "openai/gpt-5",
+      "courseStructure": {
+        "Module 1/Basics": [
+          { "Format": "video", "content": "..." }
+        ]
+      },
+      "raw": "{\n  \"Module 1/Basics\": ... }"
+    }
+    ```
+  - 400 Bad Request → Invalid inputs (missing topics, bad dates, malformed file metadata, etc.).
+  - 502 Bad Gateway → Model returned empty/invalid JSON structure.
+  - 500 Internal Server Error → Unexpected failure calling OpenRouter.
 
 ### POST /flashcards
 - Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).

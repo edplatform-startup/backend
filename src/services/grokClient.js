@@ -244,6 +244,8 @@ export async function executeOpenRouterChat(options = {}) {
     endpoint = DEFAULT_CHAT_ENDPOINT,
     apiKey: explicitApiKey,
     signal,
+    attachments = [],
+    responseFormat,
   } = options;
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -252,6 +254,9 @@ export async function executeOpenRouterChat(options = {}) {
 
   const apiKey = resolveApiKey(explicitApiKey);
   const conversation = messages.map((msg) => ({ ...msg }));
+  const validatedAttachments = Array.isArray(attachments)
+    ? attachments.filter((att) => att && typeof att === 'object')
+    : [];
   const { definitions: toolDefinitions, handlers: toolHandlers } = formatToolDefinitions(tools);
   const reasoningPayload = sanitizeReasoning(reasoning);
 
@@ -269,10 +274,26 @@ export async function executeOpenRouterChat(options = {}) {
     if (typeof frequencyPenalty === 'number') requestBody.frequency_penalty = frequencyPenalty;
     if (typeof presencePenalty === 'number') requestBody.presence_penalty = presencePenalty;
     if (reasoningPayload !== undefined) requestBody.reasoning = reasoningPayload;
+    if (responseFormat && typeof responseFormat === 'object') {
+      requestBody.response_format = responseFormat;
+    }
 
     if (toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
+    }
+
+    if (validatedAttachments.length > 0) {
+      requestBody.attachments = validatedAttachments.map((attachment, index) => {
+        const { type, mimeType, data, url, name } = attachment;
+        const normalized = { type: type || 'file' };
+        if (mimeType) normalized.mime_type = mimeType;
+        if (name) normalized.name = name;
+        if (url) normalized.url = url;
+        if (data) normalized.data = data;
+        normalized.id = attachment.id || `attachment_${index + 1}`;
+        return normalized;
+      });
     }
 
     const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });

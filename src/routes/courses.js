@@ -1,57 +1,15 @@
 import { Router } from 'express';
 import { getSupabase } from '../supabaseClient.js';
 import { generateStudyTopics } from '../services/grokClient.js';
+import {
+  isValidIsoDate,
+  validateFileArray,
+  validateUuid,
+} from '../utils/validation.js';
 
 const router = Router();
 
 const MODEL_NAME = 'x-ai/grok-4-fast';
-
-function isValidIsoDate(value) {
-  if (typeof value !== 'string') return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime());
-}
-
-function validateFileArray(files, fieldName) {
-  if (files == null) return { valid: true, value: [] };
-  if (!Array.isArray(files)) {
-    return { valid: false, error: `${fieldName} must be an array of file metadata objects` };
-  }
-
-  const sanitized = [];
-  for (let i = 0; i < files.length; i++) {
-    const entry = files[i];
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      return { valid: false, error: `${fieldName}[${i}] must be an object` };
-    }
-
-    const { name, url, size, type } = entry;
-
-    if (typeof name !== 'string' || !name.trim()) {
-      return { valid: false, error: `${fieldName}[${i}] must include a non-empty "name" string` };
-    }
-
-    if (url != null && (typeof url !== 'string' || !url.trim())) {
-      return { valid: false, error: `${fieldName}[${i}] "url" must be a non-empty string when provided` };
-    }
-
-    if (size != null && (typeof size !== 'number' || Number.isNaN(size) || size < 0)) {
-      return { valid: false, error: `${fieldName}[${i}] "size" must be a non-negative number when provided` };
-    }
-
-    if (type != null && typeof type !== 'string') {
-      return { valid: false, error: `${fieldName}[${i}] "type" must be a string when provided` };
-    }
-
-    const sanitizedEntry = { name: name.trim() };
-    if (url != null) sanitizedEntry.url = url.trim();
-    if (size != null) sanitizedEntry.size = size;
-    if (type != null) sanitizedEntry.type = type;
-    sanitized.push(sanitizedEntry);
-  }
-
-  return { valid: true, value: sanitized };
-}
 
 function normalizeCourseRow(row) {
   return {
@@ -88,14 +46,18 @@ router.get('/', async (req, res) => {
   }
 
   // Validate UUID format
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  
-  if (userId && !uuidRegex.test(userId)) {
-    return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
+  if (userId) {
+    const validation = validateUuid(userId, 'userId');
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
+    }
   }
 
-  if (courseId && !uuidRegex.test(courseId)) {
-    return res.status(400).json({ error: 'Invalid courseId format. Must be a valid UUID.' });
+  if (courseId) {
+    const validation = validateUuid(courseId, 'courseId');
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Invalid courseId format. Must be a valid UUID.' });
+    }
   }
 
   try {
@@ -174,8 +136,8 @@ router.post('/', async (req, res) => {
   }
 
   // Validate UUID format (basic validation)
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(userId)) {
+  const uuidValidation = validateUuid(userId, 'userId');
+  if (!uuidValidation.valid) {
     return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
   }
 
