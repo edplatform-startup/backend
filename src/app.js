@@ -19,6 +19,10 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 app.use('/college-courses', collegeCoursesRouter);
 app.use('/courses', coursesRouter);
 app.use('/flashcards', flashcardsRouter);
