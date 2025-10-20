@@ -17,6 +17,12 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Responses:
   - 200 OK → `{ "name": "edtech-backend-api", "ok": true }`
 
+### GET /healthz
+- Purpose: Health check endpoint for monitoring and deployment systems.
+- Request: No params.
+- Responses:
+  - 200 OK → `{ "status": "ok" }`
+
 ### GET /courses
 - Purpose: Retrieve generated study plans saved for a user or fetch a specific plan.
 - Query parameters (at least `userId` or both `userId` and `courseId`):

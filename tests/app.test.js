@@ -13,3 +13,9 @@ test('GET / returns service metadata', async () => {
   assert.deepEqual(res.body, { name: 'edtech-backend-api', ok: true });
 });
 
+test('GET /healthz returns health check status', async () => {
+  const res = await request(app).get('/healthz').set(baseHeaders);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { status: 'ok' });
+});
+

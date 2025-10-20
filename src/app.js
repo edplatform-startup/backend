@@ -15,6 +15,10 @@ app.get('/', (req, res) => {
   res.json({ name: 'edtech-backend-api', ok: true });
 });
 
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 app.use('/college-courses', collegeCoursesRouter);
 app.use('/courses', coursesRouter);
 app.use('/flashcards', flashcardsRouter);
