@@ -6,13 +6,19 @@
   "description": "Minimal Node.js API for reading courses from Supabase",
   "main": "src/server.js",
   "scripts": {
+    "prebuild": "node -e \"console.log('prebuild ok')\"",
+    "build": "node -e \"console.log('No build step required for Express')\"",
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "smoke": "node -e \"import('./src/app.js').then(()=>console.log('OK')).catch(e=>{console.error(e?.message||e);process.exit(1)})\"",
-    "test": "node --test"
+    "test": "node --test",
+    "render-build": "npm ci --include=dev --prefer-online --no-audit --no-fund --progress=false --foreground-scripts=false && npm run build",
+    "render-start": "npm run start",
+    "postdeploy": "node scripts/postdeploy.js || node -e \"console.log('no postdeploy')\""
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x",
+    "npm": "10.x"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
