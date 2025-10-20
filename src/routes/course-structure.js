@@ -339,6 +339,7 @@ router.post('/', async (req, res) => {
       error: error.message || 'Failed to generate course structure',
       details: error.details,
       raw: error.rawResponse,
+      debug: error.debug,
     });
   }
 });

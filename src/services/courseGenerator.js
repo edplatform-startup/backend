@@ -174,6 +174,29 @@ function buildCourseSystemPrompt() {
   ].join('\n');
 }
 
+function summarizeMessageForDebug(message, response) {
+  if (!message || typeof message !== 'object') {
+    return undefined;
+  }
+
+  const finishReason = response?.choices?.[0]?.finish_reason || message.finish_reason;
+  const preview = normalizeContentParts(message.content || '')?.slice(0, 280) || undefined;
+
+  const toolCalls = Array.isArray(message.tool_calls)
+    ? message.tool_calls.map((call) => ({
+        id: call?.id,
+        name: call?.function?.name,
+      }))
+    : undefined;
+
+  return {
+    role: message.role,
+    finishReason,
+    preview,
+    toolCalls,
+  };
+}
+
 export async function generateCourseStructure({
   topics,
   className,
@@ -220,7 +243,7 @@ export async function generateCourseStructure({
     topicFamiliarity,
   });
 
-  const { content, message } = await executeOpenRouterChat({
+  const { content, message, response } = await executeOpenRouterChat({
     apiKey,
     model: COURSE_MODEL_NAME,
     temperature: 0.3,
@@ -250,9 +273,16 @@ export async function generateCourseStructure({
   }
 
   if (!raw) {
-    throw Object.assign(new Error('Course generator returned empty content'), {
-      statusCode: 502,
-    });
+    const debug = summarizeMessageForDebug(message, response);
+    const err = new Error('Course generator returned empty content');
+    err.statusCode = 502;
+    err.details = {
+      finishReason: debug?.finishReason || 'unknown',
+      responseId: response?.id,
+      usage: response?.usage,
+    };
+    err.debug = debug;
+    throw err;
   }
 
   let parsed;
