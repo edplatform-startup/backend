@@ -273,8 +273,6 @@ export async function executeOpenRouterChat(options = {}) {
     if (toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
-    } else if (toolChoice && toolChoice !== 'none') {
-      requestBody.tool_choice = toolChoice;
     }
 
     const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });
