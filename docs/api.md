@@ -17,12 +17,6 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Responses:
   - 200 OK → `{ "name": "edtech-backend-api", "ok": true }`
 
-### GET /health
-- Purpose: Liveness check.
-- Request: No params.
-- Responses:
-  - 200 OK → `{ "ok": true, "ts": "2025-01-01T12:34:56.789Z" }`
-
 ### GET /courses
 - Purpose: Retrieve generated study plans saved for a user or fetch a specific plan.
 - Query parameters (at least `userId` or both `userId` and `courseId`):
@@ -161,8 +155,6 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Supabase schema: reads from `api.courses` for GET requests; POST currently does not persist data.
 
 ## Examples
-- Health check → `GET https://edtech-backend-api.onrender.com/health`
-  - Response: `{ "ok": true, "ts": "<ISO8601>" }`
 - List user courses → `GET https://edtech-backend-api.onrender.com/courses?userId=...`
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
 - Fetch specific course → `GET https://edtech-backend-api.onrender.com/courses?userId=...&courseId=...`

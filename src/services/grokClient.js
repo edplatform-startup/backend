@@ -273,13 +273,11 @@ export async function executeOpenRouterChat(options = {}) {
     if (toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
-    } else if (toolChoice) {
+    } else if (toolChoice && toolChoice !== 'none') {
       requestBody.tool_choice = toolChoice;
-    } else {
-      requestBody.tool_choice = 'none';
     }
 
-  const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });
+    const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });
     const message = payload?.choices?.[0]?.message;
 
     if (!message) {
