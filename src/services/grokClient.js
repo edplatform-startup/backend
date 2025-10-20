@@ -1,28 +1,342 @@
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const WEB_SEARCH_ENDPOINT = 'https://openrouter.ai/api/v1/tools/web_search';
-const MODEL_FALLBACK = 'x-ai/grok-4-fast';
-const MAX_TOOL_ITERATIONS = 3;
+const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
+const DEFAULT_WEB_SEARCH_ENDPOINT = process.env.OPENROUTER_WEB_SEARCH_URL || 'https://openrouter.ai/api/v1/tools/web_search';
+const DEFAULT_MODEL = 'x-ai/grok-4-fast';
+const DEFAULT_MAX_TOOL_ITERATIONS = 3;
 
-let customGenerator = null;
-let customSearchExecutor = null;
+let customStudyTopicsGenerator = null;
+let customWebSearchExecutor = null;
+let customChatExecutor = null;
 
 export function setStudyTopicsGenerator(fn) {
-  customGenerator = typeof fn === 'function' ? fn : null;
+  customStudyTopicsGenerator = typeof fn === 'function' ? fn : null;
 }
 
 export function clearStudyTopicsGenerator() {
-  customGenerator = null;
+  customStudyTopicsGenerator = null;
 }
 
 export function setWebSearchExecutor(fn) {
-  customSearchExecutor = typeof fn === 'function' ? fn : null;
+  customWebSearchExecutor = typeof fn === 'function' ? fn : null;
 }
 
 export function clearWebSearchExecutor() {
-  customSearchExecutor = null;
+  customWebSearchExecutor = null;
 }
 
-function buildPrompt({
+export function setOpenRouterChatExecutor(fn) {
+  customChatExecutor = typeof fn === 'function' ? fn : null;
+}
+
+export function clearOpenRouterChatExecutor() {
+  customChatExecutor = null;
+}
+
+function resolveApiKey(explicitKey) {
+  const apiKey = explicitKey || process.env.OPENROUTER_GROK_4_FAST_KEY || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing OpenRouter API key (set OPENROUTER_GROK_4_FAST_KEY or OPENROUTER_API_KEY)');
+  }
+  return apiKey;
+}
+
+function sanitizeReasoning(reasoning) {
+  if (reasoning == null) return undefined;
+
+  if (typeof reasoning === 'boolean') {
+    return { enabled: reasoning };
+  }
+
+  if (typeof reasoning === 'string') {
+    return { enabled: true, effort: reasoning };
+  }
+
+  if (typeof reasoning === 'object') {
+    const result = {};
+    if (Object.prototype.hasOwnProperty.call(reasoning, 'enabled')) {
+      result.enabled = Boolean(reasoning.enabled);
+    } else {
+      result.enabled = true;
+    }
+    if (reasoning.effort) {
+      result.effort = reasoning.effort;
+    }
+    if (reasoning.limits) {
+      result.limits = reasoning.limits;
+    }
+    return result;
+  }
+
+  return undefined;
+}
+
+function formatToolDefinitions(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return { definitions: [], handlers: new Map() };
+  }
+
+  const definitions = [];
+  const handlers = new Map();
+
+  for (const tool of tools) {
+    if (!tool || typeof tool !== 'object') continue;
+    const {
+      name,
+      description = '',
+      parameters = { type: 'object', properties: {}, required: [] },
+      handler,
+    } = tool;
+
+    if (!name) continue;
+
+    definitions.push({
+      type: 'function',
+      function: {
+        name,
+        description,
+        parameters,
+      },
+    });
+
+    if (typeof handler === 'function') {
+      handlers.set(name, handler);
+    }
+  }
+
+  return { definitions, handlers };
+}
+
+function stripCodeFences(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+}
+
+function parseToolArguments(rawArgs) {
+  if (rawArgs == null) return {};
+
+  let source = rawArgs;
+  if (typeof rawArgs === 'string') {
+    source = stripCodeFences(rawArgs);
+  }
+
+  if (typeof source === 'string') {
+    const trimmed = source.trim();
+    if (!trimmed) {
+      return {};
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch (error) {
+      console.warn('Failed to parse tool arguments:', error);
+      return {};
+    }
+  }
+
+  if (typeof source === 'object') {
+    return source;
+  }
+
+  return {};
+}
+
+async function defaultWebSearch(query, apiKey) {
+  if (customWebSearchExecutor) {
+    return await customWebSearchExecutor(query);
+  }
+
+  const normalizedQuery = (query || '').toString().trim();
+  if (!normalizedQuery) {
+    return 'No search performed: empty query.';
+  }
+
+  const response = await fetch(DEFAULT_WEB_SEARCH_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ query: normalizedQuery }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`Web search failed: ${response.status} ${response.statusText} ${errorText}`);
+  }
+
+  const data = await response.json();
+  if (Array.isArray(data?.results) && data.results.length > 0) {
+    return data.results
+      .map((item, index) => {
+        const snippet = item.snippet || item.description || '';
+        return `${index + 1}. ${item.title}${snippet ? ` - ${snippet}` : ''}`;
+      })
+      .join('\n');
+  }
+
+  return JSON.stringify(data);
+}
+
+export function createWebSearchTool() {
+  return {
+    name: 'web_search',
+    description: 'Perform a web search to gather additional information.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query.'
+        }
+      },
+      required: ['query']
+    },
+    handler: async (args, context) => {
+      const query = args?.query || '';
+      return defaultWebSearch(query, context.apiKey);
+    },
+  };
+}
+
+async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
+      'X-Title': 'EdTech Study Planner',
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    const err = new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
+    err.details = errorText;
+    throw err;
+  }
+
+  return response.json();
+}
+
+export async function executeOpenRouterChat(options = {}) {
+  if (customChatExecutor) {
+    return await customChatExecutor(options);
+  }
+
+  const {
+    messages,
+    model = DEFAULT_MODEL,
+    temperature = 0.5,
+    topP,
+    frequencyPenalty,
+    presencePenalty,
+    maxTokens = 600,
+    reasoning,
+    tools = [],
+    toolChoice,
+    maxToolIterations = DEFAULT_MAX_TOOL_ITERATIONS,
+    endpoint = DEFAULT_CHAT_ENDPOINT,
+    apiKey: explicitApiKey,
+    signal,
+  } = options;
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error('messages array is required');
+  }
+
+  const apiKey = resolveApiKey(explicitApiKey);
+  const conversation = messages.map((msg) => ({ ...msg }));
+  const { definitions: toolDefinitions, handlers: toolHandlers } = formatToolDefinitions(tools);
+  const reasoningPayload = sanitizeReasoning(reasoning);
+
+  let iterations = 0;
+
+  while (true) {
+    const requestBody = {
+      model,
+      max_tokens: maxTokens,
+      temperature,
+      messages: conversation,
+    };
+
+    if (typeof topP === 'number') requestBody.top_p = topP;
+    if (typeof frequencyPenalty === 'number') requestBody.frequency_penalty = frequencyPenalty;
+    if (typeof presencePenalty === 'number') requestBody.presence_penalty = presencePenalty;
+    if (reasoningPayload !== undefined) requestBody.reasoning = reasoningPayload;
+
+    if (toolDefinitions.length > 0) {
+      requestBody.tools = toolDefinitions;
+      requestBody.tool_choice = toolChoice || 'auto';
+    } else if (toolChoice) {
+      requestBody.tool_choice = toolChoice;
+    } else {
+      requestBody.tool_choice = 'none';
+    }
+
+  const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });
+    const message = payload?.choices?.[0]?.message;
+
+    if (!message) {
+      throw new Error('OpenRouter response missing message');
+    }
+
+    conversation.push(message);
+    const toolCalls = message.tool_calls;
+
+    if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+      return {
+        content: message.content,
+        message,
+        response: payload,
+      };
+    }
+
+    if (iterations >= maxToolIterations) {
+      throw new Error('Exceeded maximum tool iterations without final answer');
+    }
+
+    iterations += 1;
+
+    for (const call of toolCalls) {
+      const toolName = call?.function?.name;
+      const handler = toolHandlers.get(toolName);
+      const args = parseToolArguments(call?.function?.arguments);
+
+      let toolResult;
+      try {
+        if (handler) {
+          toolResult = await handler(args, {
+            apiKey,
+            tool: toolName,
+            iteration: iterations,
+            messages: conversation,
+          });
+        } else if (toolName === 'web_search') {
+          toolResult = await defaultWebSearch(args?.query, apiKey);
+        } else {
+          toolResult = `Tool "${toolName}" not supported.`;
+        }
+      } catch (error) {
+        toolResult = `Tool ${toolName || 'unknown'} threw an error: ${error.message}`;
+      }
+
+      conversation.push({
+        role: 'tool',
+        tool_call_id: call?.id || `${toolName || 'tool'}_${iterations}`,
+        name: toolName,
+        content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult),
+      });
+    }
+  }
+}
+
+function buildStudyTopicsPrompt({
   finishByDate,
   timeRemainingDays,
   courseSelection,
@@ -30,7 +344,7 @@ function buildPrompt({
   syllabusFiles,
   examFormatDetails,
   examFiles,
-}) {
+} = {}) {
   const lines = [];
   lines.push('You are an AI study planner who must output ONLY a comma-separated list of study topics with no additional text.');
   lines.push('Tasks:');
@@ -41,6 +355,7 @@ function buildPrompt({
   lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations).');
   lines.push('');
   lines.push('Provided context:');
+
   if (courseSelection) {
     lines.push(`- Course Selection: ${courseSelection.code} — ${courseSelection.title}`);
   }
@@ -80,177 +395,42 @@ function buildPrompt({
   return lines.join('\n');
 }
 
-async function callChatCompletion({ apiKey, model, messages, reasoningEffort }) {
-  const body = {
-    model,
-    messages,
-    max_tokens: 600,
-    temperature: 0.4,
-    tools: [
-      {
-        type: 'function',
-        function: {
-          name: 'web_search',
-          description: 'Perform a web search to gather additional information.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description: 'The search query.'
-              }
-            },
-            required: ['query']
-          }
-        }
-      }
-    ],
-    tool_choice: 'auto',
-  };
-
-  // Enable high reasoning for Grok-4-Fast
-  body.reasoning = { enabled: true, effort: reasoningEffort || 'high' };
-
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
-      'X-Title': 'EdTech Study Planner',
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => response.statusText);
-    const err = new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
-    err.details = errorText;
-    throw err;
-  }
-
-  return response.json();
-}
-
-async function performWebSearch(apiKey, query) {
-  if (customSearchExecutor) {
-    return await customSearchExecutor(query);
-  }
-
-  const normalizedQuery = (query || '').toString().trim();
-  if (!normalizedQuery) {
-    return 'No search performed: empty query.';
-  }
-
-  const response = await fetch(WEB_SEARCH_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ query: normalizedQuery }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`Web search failed: ${response.status} ${response.statusText} ${errorText}`);
-  }
-
-  const data = await response.json();
-  if (Array.isArray(data?.results) && data.results.length > 0) {
-    return data.results
-      .map((item, index) => {
-        const snippet = item.snippet || item.description || '';
-        return `${index + 1}. ${item.title}${snippet ? ` - ${snippet}` : ''}`;
-      })
-      .join('\n');
-  }
-
-  return JSON.stringify(data);
-}
+const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach. Use the web_search tool when helpful to gather additional course insights. ALWAYS finish by responding with only a comma-separated list of study topics and nothing else.';
 
 export async function generateStudyTopics(input) {
-  if (customGenerator) {
-    return await customGenerator(input);
+  if (customStudyTopicsGenerator) {
+    return await customStudyTopicsGenerator(input);
   }
 
-  const apiKey = process.env.OPENROUTER_GROK_4_FAST_KEY;
-  if (!apiKey) {
-    throw new Error('Missing OPENROUTER_GROK_4_FAST_KEY environment variable');
+  const apiKey = resolveApiKey();
+  const model = input?.model || DEFAULT_MODEL;
+  const prompt = buildStudyTopicsPrompt(input || {});
+
+  const { content } = await executeOpenRouterChat({
+    apiKey,
+    model,
+    reasoning: { enabled: true, effort: 'high' },
+    temperature: 0.4,
+    maxTokens: 600,
+    tools: [createWebSearchTool()],
+    toolChoice: 'auto',
+    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    messages: [
+      { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
+      { role: 'user', content: prompt },
+    ],
+  });
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === 'string' ? part : part?.text || ''))
+      .join('')
+      .trim();
   }
 
-  const model = input?.model || MODEL_FALLBACK;
-  const prompt = buildPrompt(input || {});
-
-  const messages = [
-    {
-      role: 'system',
-      content:
-        'You are an AI study coach. Use the web_search tool when helpful to gather additional course insights. ALWAYS finish by responding with only a comma-separated list of study topics and nothing else.',
-    },
-    {
-      role: 'user',
-      content: prompt,
-    },
-  ];
-
-  let iterations = 0;
-  let lastPayload = null;
-
-  while (iterations < MAX_TOOL_ITERATIONS) {
-    iterations += 1;
-    lastPayload = await callChatCompletion({
-      apiKey,
-      model,
-      messages,
-      reasoningEffort: 'high',
-    });
-    const choice = lastPayload?.choices?.[0];
-    const message = choice?.message;
-
-    if (!message) {
-      throw new Error('OpenRouter response missing message');
-    }
-
-    messages.push(message);
-
-    const toolCalls = message.tool_calls;
-    if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
-      const content = message.content;
-      if (!content || typeof content !== 'string') {
-        throw new Error('OpenRouter response missing content');
-      }
-      return content.trim();
-    }
-
-    for (const call of toolCalls) {
-      const callId = call?.id || `tool_call_${iterations}`;
-      let argsStr = call?.function?.arguments || '{}';
-      let query = '';
-      try {
-        // Clean potential markdown wrappers around JSON
-        argsStr = argsStr.trim().replace(/^```json\s*|\s*```$/g, '');
-        const parsed = JSON.parse(argsStr);
-        query = parsed?.query || parsed?.q || parsed?.search || '';
-      } catch (err) {
-        console.warn('Failed to parse tool arguments:', err);
-      }
-
-      let toolContent;
-      try {
-        toolContent = await performWebSearch(apiKey, query);
-      } catch (toolErr) {
-        toolContent = `Web search error: ${toolErr.message}`;
-      }
-
-      messages.push({
-        role: 'tool',
-        tool_call_id: callId,
-        name: call?.function?.name || 'web_search',
-        content: toolContent,
-      });
-    }
+  if (typeof content !== 'string') {
+    throw new Error('OpenRouter returned unexpected content format for study topics');
   }
 
-  throw new Error('Exceeded maximum tool iterations without final answer');
+  return content.trim();
 }

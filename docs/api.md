@@ -110,6 +110,47 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 500 Internal Server Error → Unexpected exception calling OpenRouter.
   - 502 Bad Gateway → Model call failed or returned no topics.
 
+### POST /flashcards
+- Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).
+- Request body (JSON):
+  ```json
+  {
+    "topic": "Operating systems caching",
+    "count": 5
+  }
+  ```
+  - `topic` (string, required) – Subject to cover. Trims whitespace.
+  - `count` (integer, optional) – Number of flashcards to request (1–20). Defaults to 5.
+- Behavior:
+  - Sends a structured prompt to Grok-4-Fast via OpenRouter demanding a strict JSON object response.
+  - Validates the returned structure (keys "1".."n" with arrays of `[question, answer, explanation]`).
+  - Returns the flashcards object directly to the client.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "1": [
+        "Define cache hit rate and how it’s computed.",
+        "Hit rate = hits / total accesses.",
+        "Often computed over a trace; miss rate = 1 - hit rate."
+      ],
+      "2": [
+        "What is virtual memory?",
+        "Illusion of contiguous address space via paging.",
+        "Enables isolation, protection; page tables + TLB."
+      ],
+      "3": [
+        "Explain TLB misses.",
+        "A miss in the translation cache requiring a page table walk.",
+        "Can trigger page faults if mapping absent."
+      ]
+    }
+    ```
+  - 400 Bad Request → Missing or empty `topic`, invalid `count`.
+  - 500 Internal Server Error → Flashcard generator not configured or unexpected exception.
+  - 502 Bad Gateway → Grok returned a non-OK response or malformed JSON.
+  - 504 Gateway Timeout → Grok request exceeded 30 seconds.
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

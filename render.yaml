@@ -16,3 +16,5 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: OPENROUTER_GROK_4_FAST_KEY
+        sync: false
