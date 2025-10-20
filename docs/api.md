@@ -119,6 +119,10 @@ Base URL (production): https://edtech-backend-api.onrender.com
   ```json
   {
     "topics": ["Supervised Learning", "Optimization"],
+    "topicFamiliarity": {
+      "Supervised Learning": "confident",
+      "Optimization": "needs review"
+    },
     "className": "Machine Learning Final",
     "startDate": "2025-10-01T00:00:00.000Z",
     "endDate": "2025-12-15T00:00:00.000Z",
@@ -135,6 +139,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   ```
 - Field requirements:
   - `topics` (string[], required) – Non-empty array of topic names.
+  - `topicFamiliarity` (object | array, optional) – Learner self-assessed familiarity per topic. Provide either an object map (`{ "topic": "beginner" }`) or array of `{ topic, familiarity }`. Topics outside the `topics` list are rejected.
   - `className` (string, required) – Name of the class or exam being prepared for.
   - `startDate` & `endDate` (string, required) – ISO 8601 timestamps; `startDate` must be before `endDate`.
   - `userId` (string, required) – UUID of the learner the course belongs to.
@@ -144,6 +149,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
 - Behavior:
   - Validates inputs and forwards contextual data, including file attachments, to GPT-5 with high reasoning and optional web search.
+  - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
   - Expects strict JSON response matching the `ml_course.json` schema: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }` pairs.
   - Validates the returned schema, then saves it to `api.courses.course_data` with a generated UUID, the provided `userId`, and a `created_at` timestamp.
 - Responses:

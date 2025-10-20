@@ -17,6 +17,10 @@ const validBody = {
   startDate: '2025-01-01T00:00:00.000Z',
   endDate: '2025-02-01T00:00:00.000Z',
   userId: '22222222-2222-2222-2222-222222222222',
+  topicFamiliarity: {
+    Foundations: 'novice',
+    Algorithms: 'intermediate',
+  },
   syllabusText: 'Overview of course topics and expectations.',
   syllabusFiles: [
     { name: 'syllabus.pdf', url: 'https://example.com/syllabus.pdf', type: 'application/pdf' },
@@ -107,6 +111,10 @@ test('course structure generation route', async (t) => {
     });
     assert.ok(receivedPayload, 'expected generator payload');
     assert.deepEqual(receivedPayload.topics, validBody.topics);
+    assert.deepEqual(receivedPayload.topicFamiliarity, [
+      { topic: 'Foundations', familiarity: 'novice' },
+      { topic: 'Algorithms', familiarity: 'intermediate' },
+    ]);
     assert.equal(receivedPayload.attachments.length, 2);
     assert.match(receivedPayload.attachments[0].name, /syllabus/);
     assert.match(receivedPayload.attachments[1].name, /exam-structure/);
@@ -121,5 +129,19 @@ test('course structure generation route', async (t) => {
     assert.deepEqual(record.course_data, mockStructure);
     assert.ok(typeof record.id === 'string' && record.id.length > 0);
     assert.ok(typeof record.created_at === 'string');
+  });
+
+  await t.test('rejects topic familiarity entries for unknown topics', async () => {
+    const res = await request(app)
+      .post('/course-structure')
+      .set('Content-Type', 'application/json')
+      .set(baseHeaders)
+      .send({
+        ...validBody,
+        topicFamiliarity: { 'Non-existent topic': 'expert' },
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /includes unknown topic/i);
   });
 });

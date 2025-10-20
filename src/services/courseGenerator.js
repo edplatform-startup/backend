@@ -25,14 +25,36 @@ function resolveCourseApiKey(providedKey) {
   return key;
 }
 
+function stringifyJson(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    console.warn('Failed to stringify JSON content from course generator:', error);
+    return '';
+  }
+}
+
 function normalizeContentParts(value) {
   if (Array.isArray(value)) {
     return value
       .map((part) => {
         if (typeof part === 'string') return part;
-        if (part && typeof part === 'object') {
-          if (typeof part.text === 'string') return part.text;
-          if (typeof part.content === 'string') return part.content;
+        if (!part || typeof part !== 'object') return '';
+        if (typeof part.text === 'string') return part.text;
+        if (typeof part.content === 'string') return part.content;
+        if (typeof part.json === 'string') return part.json;
+        if (part.json && typeof part.json === 'object') return stringifyJson(part.json);
+        if (typeof part.parsed === 'string') return part.parsed;
+        if (part.parsed && typeof part.parsed === 'object') return stringifyJson(part.parsed);
+        if (typeof part.data === 'string') return part.data;
+        if (part.data && typeof part.data === 'object') return stringifyJson(part.data);
+        if (part.type === 'output_json' && part.output_json) {
+          return stringifyJson(part.output_json);
+        }
+        if (part.type === 'json' && part.value) {
+          return stringifyJson(part.value);
         }
         return '';
       })
@@ -42,6 +64,17 @@ function normalizeContentParts(value) {
 
   if (typeof value === 'string') {
     return value.trim();
+  }
+
+  if (value && typeof value === 'object') {
+    if (typeof value.text === 'string') return value.text.trim();
+    if (typeof value.content === 'string') return value.content.trim();
+    if (typeof value.json === 'string') return value.json.trim();
+    if (value.json && typeof value.json === 'object') return stringifyJson(value.json).trim();
+    if (typeof value.parsed === 'string') return value.parsed.trim();
+    if (value.parsed && typeof value.parsed === 'object') return stringifyJson(value.parsed).trim();
+    if (typeof value.data === 'string') return value.data.trim();
+    if (value.data && typeof value.data === 'object') return stringifyJson(value.data).trim();
   }
 
   return '';
@@ -56,6 +89,7 @@ function buildUserMessage({
   syllabusFiles,
   examStructureText,
   examStructureFiles,
+  topicFamiliarity,
 }) {
   const lines = [];
   lines.push('You are designing a comprehensive self-paced study plan.');
@@ -68,6 +102,14 @@ function buildUserMessage({
   topics.forEach((topic, index) => {
     lines.push(`  ${index + 1}. ${topic}`);
   });
+
+  if (Array.isArray(topicFamiliarity) && topicFamiliarity.length > 0) {
+    lines.push('Learner self-assessed familiarity levels:');
+    topicFamiliarity.forEach(({ topic, familiarity }) => {
+      if (!topic || !familiarity) return;
+      lines.push(`  - ${topic}: ${familiarity}`);
+    });
+  }
 
   if (syllabusText) {
     lines.push('Syllabus description:');
@@ -141,6 +183,7 @@ export async function generateCourseStructure({
   syllabusFiles,
   examStructureText,
   examStructureFiles,
+  topicFamiliarity,
   attachments = [],
   apiKey: explicitKey,
 }) {
@@ -154,6 +197,7 @@ export async function generateCourseStructure({
       syllabusFiles,
       examStructureText,
       examStructureFiles,
+      topicFamiliarity,
       attachments,
     });
   }
@@ -173,9 +217,10 @@ export async function generateCourseStructure({
     syllabusFiles,
     examStructureText,
     examStructureFiles,
+    topicFamiliarity,
   });
 
-  const { content } = await executeOpenRouterChat({
+  const { content, message } = await executeOpenRouterChat({
     apiKey,
     model: COURSE_MODEL_NAME,
     temperature: 0.3,
@@ -192,7 +237,17 @@ export async function generateCourseStructure({
     ],
   });
 
-  const raw = normalizeContentParts(content);
+  let raw = normalizeContentParts(content);
+
+  if (!raw && message && typeof message === 'object') {
+    if (message.parsed && typeof message.parsed === 'object') {
+      raw = stringifyJson(message.parsed).trim();
+    } else if (message.json && typeof message.json === 'object') {
+      raw = stringifyJson(message.json).trim();
+    } else if (message.data && typeof message.data === 'object') {
+      raw = stringifyJson(message.data).trim();
+    }
+  }
 
   if (!raw) {
     throw Object.assign(new Error('Course generator returned empty content'), {
@@ -202,7 +257,11 @@ export async function generateCourseStructure({
 
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    if (message?.parsed && typeof message.parsed === 'object') {
+      parsed = message.parsed;
+    } else {
+      parsed = JSON.parse(raw);
+    }
   } catch (error) {
     const err = new Error('Course generator returned invalid JSON');
     err.statusCode = 502;

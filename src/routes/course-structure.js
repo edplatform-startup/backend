@@ -31,6 +31,107 @@ function normalizeTopics(topics) {
   return { valid: true, value: sanitized };
 }
 
+function normalizeTopicFamiliarity(topics, topicFamiliarity) {
+  if (topicFamiliarity == null) {
+    return { valid: true, value: [] };
+  }
+
+  const topicSet = new Set(Array.isArray(topics) ? topics : []);
+  const normalized = new Map();
+
+  const coerceFamiliarity = (rawValue, topic) => {
+    if (rawValue == null) {
+      return { error: `topicFamiliarity for "${topic}" must be a non-empty string` };
+    }
+
+    if (typeof rawValue === 'string') {
+      const trimmed = rawValue.trim();
+      if (!trimmed) {
+        return { error: `topicFamiliarity for "${topic}" must be a non-empty string` };
+      }
+      return { value: trimmed };
+    }
+
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return { value: rawValue.toString() };
+    }
+
+    if (typeof rawValue === 'object') {
+      const candidate =
+        typeof rawValue.familiarity === 'string'
+          ? rawValue.familiarity.trim()
+          : typeof rawValue.level === 'string'
+          ? rawValue.level.trim()
+          : typeof rawValue.value === 'string'
+          ? rawValue.value.trim()
+          : '';
+
+      if (candidate) {
+        return { value: candidate };
+      }
+    }
+
+    return { error: `topicFamiliarity entry for "${topic}" must be a string (e.g. "beginner", "expert")` };
+  };
+
+  const assignFamiliarity = (topicName, rawValue) => {
+    if (typeof topicName !== 'string' || !topicName.trim()) {
+      return { error: 'topicFamiliarity entries must include a non-empty topic name' };
+    }
+
+    const normalizedTopic = topicName.trim();
+
+    if (!topicSet.has(normalizedTopic)) {
+      return { error: `topicFamiliarity includes unknown topic "${normalizedTopic}"` };
+    }
+
+    const { value, error } = coerceFamiliarity(rawValue, normalizedTopic);
+    if (error) {
+      return { error };
+    }
+
+    normalized.set(normalizedTopic, value);
+    return { value };
+  };
+
+  if (Array.isArray(topicFamiliarity)) {
+    for (let i = 0; i < topicFamiliarity.length; i++) {
+      const entry = topicFamiliarity[i];
+      if (!entry || typeof entry !== 'object') {
+        return { valid: false, error: 'topicFamiliarity array entries must be objects' };
+      }
+
+      const topicName = typeof entry.topic === 'string' ? entry.topic : entry.name;
+      const rawValue =
+        entry.familiarity ?? entry.level ?? entry.value ?? entry.familiarityLevel;
+
+      const { error } = assignFamiliarity(topicName, rawValue);
+      if (error) {
+        return { valid: false, error };
+      }
+    }
+  } else if (typeof topicFamiliarity === 'object') {
+    for (const [topicName, rawValue] of Object.entries(topicFamiliarity)) {
+      const { error } = assignFamiliarity(topicName, rawValue);
+      if (error) {
+        return { valid: false, error };
+      }
+    }
+  } else {
+    return {
+      valid: false,
+      error: 'topicFamiliarity must be an object mapping topics to familiarity levels or an array of { topic, familiarity }',
+    };
+  }
+
+  const result = Array.from(normalized.entries()).map(([topic, familiarity]) => ({
+    topic,
+    familiarity,
+  }));
+
+  return { valid: true, value: result };
+}
+
 function ensureCourseStructureShape(structure) {
   if (structure == null || typeof structure !== 'object' || Array.isArray(structure)) {
     return { valid: false, error: 'Course structure must be a JSON object' };
@@ -108,6 +209,7 @@ router.post('/', async (req, res) => {
     syllabusFiles,
     examStructureText,
     examStructureFiles,
+    topicFamiliarity,
   } = req.body || {};
 
   if (!userId) {
@@ -122,6 +224,14 @@ router.post('/', async (req, res) => {
   const normalizedTopics = normalizeTopics(topics);
   if (!normalizedTopics.valid) {
     return res.status(400).json({ error: normalizedTopics.error });
+  }
+
+  const topicFamiliarityValidation = normalizeTopicFamiliarity(
+    normalizedTopics.value,
+    topicFamiliarity
+  );
+  if (!topicFamiliarityValidation.valid) {
+    return res.status(400).json({ error: topicFamiliarityValidation.error });
   }
 
   if (typeof className !== 'string' || !className.trim()) {
@@ -181,6 +291,7 @@ router.post('/', async (req, res) => {
       syllabusFiles: syllabusFilesValidation.value,
       examStructureText: normalizedExamStructureText,
       examStructureFiles: examFilesValidation.value,
+      topicFamiliarity: topicFamiliarityValidation.value,
       attachments,
     });
 
