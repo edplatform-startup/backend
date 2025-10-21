@@ -1,7 +1,7 @@
 import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
 
 const COURSE_MODEL_NAME = 'openai/gpt-5';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 20000;
 const DEFAULT_MAX_TOOL_ITERATIONS = 6;
 
 let customCourseGenerator = null;
@@ -80,6 +80,36 @@ function normalizeContentParts(value) {
   return '';
 }
 
+const VALID_FORMATS = new Map([
+  ['video', 'video'],
+  ['reading', 'reading'],
+  ['reading excerpt', 'reading'],
+  ['flashcards', 'flashcards'],
+  ['mini quiz', 'mini quiz'],
+  ['practice exam', 'practice exam'],
+  ['practice problem', 'mini quiz'],
+  ['practice problems', 'mini quiz'],
+  ['practice', 'mini quiz'],
+  ['practice set', 'mini quiz'],
+  ['practice sets', 'mini quiz'],
+  ['project', 'project'],
+  ['lab', 'lab'],
+]);
+
+const OUTPUT_FORMAT_HINT = 'Module/Submodule | Format | Desc';
+const MAX_DESCRIPTION_WORDS = 18;
+
+function calculateRushingIndex(startDate, endDate, topicCount) {
+  if (!startDate || !endDate || !topicCount) return null;
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs <= 0) return null;
+  const diffDays = Math.max(1, diffMs / (1000 * 60 * 60 * 24));
+  return diffDays / topicCount;
+}
+
 function buildUserMessage({
   topics,
   className,
@@ -92,12 +122,15 @@ function buildUserMessage({
   topicFamiliarity,
 }) {
   const lines = [];
-  lines.push('You are designing a comprehensive self-paced study plan.');
-  lines.push('Use the provided context to create a structured course.');
-  lines.push('The final answer must be valid JSON matching the provided schema, no prose.');
+  const rushingIndex = calculateRushingIndex(startDate, endDate, topics.length);
+
+  lines.push("Inputs for today's learner context:");
   lines.push('---');
   lines.push(`Class / exam focus: ${className}`);
   lines.push(`Study window: ${startDate} → ${endDate}`);
+  if (rushingIndex != null) {
+    lines.push(`Approximate Rushingness Index (time left ÷ topics left): ${rushingIndex.toFixed(2)}`);
+  }
   lines.push('Requested topics to emphasise:');
   topics.forEach((topic, index) => {
     lines.push(`  ${index + 1}. ${topic}`);
@@ -150,16 +183,15 @@ function buildUserMessage({
   }
 
   lines.push('---');
-  lines.push(
-    'Output requirements: Return a JSON object. Keys should be formatted as "Module/Submodule" strings. Each value must be an array of 2-4 learning assets.'
-  );
-  lines.push(
-    'Each asset object must be: { "Format": one of ["video", "reading", "flashcards", "mini quiz", "practice exam", "project", "lab"], "content": detailed description in under 60 words }.'
-  );
-  lines.push(
-    'Ensure coverage across all requested topics, distribute workloads evenly across the date range, and respect prerequisites when sequencing.'
-  );
-  lines.push('Respond with JSON only.');
+  lines.push('Objective: craft the Learn Topics and Do Practice Problems phases only, sequenced to respect prerequisites and the rushing guidance.');
+  lines.push(`Favor concise descriptions (≤ ${MAX_DESCRIPTION_WORDS} words each) and avoid repeating the topic name in the description unless necessary.`);
+  lines.push('For each planned action produce exactly one line in the format:');
+  lines.push(`  ${OUTPUT_FORMAT_HINT}`);
+  lines.push('Rules for the concise output:');
+  lines.push('- Module/Submodule should capture the step and focus area, e.g., "Learn Topics - Supervised Learning/Regression".');
+  lines.push('- Format must be one of: video, reading, flashcards, mini quiz, practice exam, project, lab.');
+  lines.push('- Desc should be a direct imperative describing what to cover (≤ 18 words, no bullet markers).');
+  lines.push('- Return only the line list, no extra text, explanations, or JSON. Maintain order of execution.');
 
   return lines.join('\n');
 }
@@ -167,11 +199,100 @@ function buildUserMessage({
 function buildCourseSystemPrompt() {
   return [
     'You are an elite instructional designer collaborating with top universities.',
-    'You must produce rigorously structured study plans.',
-    'Always rely on provided materials or web_search when uncertain.',
-    'Never invent facts; cite file names or search results inline when relevant.',
-    'Return only strict JSON adhering to the schema.',
+    'Study process phases (loop until exam or time runs out): 1) Learn Topics, 2) Do Practice Problems, 3) Review/Learn Unfamiliar Topics, 4) repeat while time remains.',
+    'Learn Topics covers conceptual understanding for all topics; Review concentrates on unfamiliar items revealed during practice.',
+    'Time left and familiarity govern scaffolding: higher familiarity → less support during practice, lower familiarity → more guidance.',
+    'Rushingness Index (time left ÷ topics left) determines step pruning order: drop (1) Learn Topics familiar, (2) Learn Topics unfamiliar, (3) Practice Problems, (4) Review if still rushed.',
+    'Because no practice results exist yet, only output Learn Topics and Do Practice Problems steps, anticipating later loops implicitly.',
+    'Always rely on provided materials or the web_search tool when unsure, and never fabricate facts.',
+    `Respond exclusively with ultra-concise action lines in the format "${OUTPUT_FORMAT_HINT}" using lowercase format labels.`,
+    'No prose, no explanations, no JSON, no code fences.',
   ].join('\n');
+}
+
+function convertConcisePlanToStructure(rawText) {
+  const structure = {};
+  if (typeof rawText !== 'string' || !rawText.trim()) {
+    throw Object.assign(new Error('Model reply was empty'), {
+      details: 'No content returned to transform into course structure.',
+    });
+  }
+
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    throw Object.assign(new Error('Model reply lacked actionable lines'), {
+      details: 'No non-empty lines were found in the response.',
+      raw: rawText,
+    });
+  }
+
+  for (const line of lines) {
+    const normalizedLine = line.replace(/^[-•*\d.\s]+/, '').trim();
+    const parts = normalizedLine.split('|').map((part) => part.trim()).filter(Boolean);
+
+    if (parts.length < 3) {
+      throw Object.assign(new Error('Malformed plan line'), {
+        details: `Expected "${OUTPUT_FORMAT_HINT}" but received "${line}"`,
+        raw: rawText,
+      });
+    }
+
+    const [moduleKeyRaw, formatRaw, ...descParts] = parts;
+    const moduleKey = moduleKeyRaw;
+    const formatCanonical = VALID_FORMATS.get(formatRaw.toLowerCase());
+    const description = descParts.join(' | ').trim();
+
+    if (!moduleKey) {
+      throw Object.assign(new Error('Missing module key'), {
+        details: `Line missing module/submodule portion: "${line}"`,
+        raw: rawText,
+      });
+    }
+
+    if (!formatCanonical) {
+      throw Object.assign(new Error('Unsupported format in plan'), {
+        details: `Format "${formatRaw}" is not supported in line "${line}"`,
+        raw: rawText,
+      });
+    }
+
+    if (!description) {
+      throw Object.assign(new Error('Missing description in plan'), {
+        details: `Description missing for module "${moduleKey}": "${line}"`,
+        raw: rawText,
+      });
+    }
+
+    const words = description.split(/\s+/);
+    if (words.length > MAX_DESCRIPTION_WORDS) {
+      const truncated = words.slice(0, MAX_DESCRIPTION_WORDS).join(' ');
+      structure[moduleKey] = structure[moduleKey] || [];
+      structure[moduleKey].push({
+        Format: formatCanonical,
+        content: `${truncated}…`,
+      });
+      continue;
+    }
+
+    structure[moduleKey] = structure[moduleKey] || [];
+    structure[moduleKey].push({
+      Format: formatCanonical,
+      content: description,
+    });
+  }
+
+  if (Object.keys(structure).length === 0) {
+    throw Object.assign(new Error('No modules extracted from plan'), {
+      details: 'The response did not contain any module entries after parsing.',
+      raw: rawText,
+    });
+  }
+
+  return structure;
 }
 
 function summarizeMessageForDebug(message, response) {
@@ -252,7 +373,6 @@ export async function generateCourseStructure({
     tools: [createWebSearchTool()],
     toolChoice: 'auto',
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
-    responseFormat: { type: 'json_object' },
     attachments: normalizedAttachments,
     messages: [
       { role: 'system', content: buildCourseSystemPrompt() },
@@ -285,24 +405,33 @@ export async function generateCourseStructure({
     throw err;
   }
 
-  let parsed;
-  try {
-    if (message?.parsed && typeof message.parsed === 'object') {
-      parsed = message.parsed;
-    } else {
-      parsed = JSON.parse(raw);
+  let parsedStructure = null;
+
+  if (message?.parsed && typeof message.parsed === 'object') {
+    parsedStructure = message.parsed;
+  } else {
+    try {
+      parsedStructure = JSON.parse(raw);
+    } catch (error) {
+      parsedStructure = null;
     }
-  } catch (error) {
-    const err = new Error('Course generator returned invalid JSON');
-    err.statusCode = 502;
-    err.details = error.message;
-    err.rawResponse = raw;
-    throw err;
+  }
+
+  if (!parsedStructure || typeof parsedStructure !== 'object' || Array.isArray(parsedStructure)) {
+    try {
+      parsedStructure = convertConcisePlanToStructure(raw);
+    } catch (error) {
+      const err = new Error('Course generator returned unparseable content');
+      err.statusCode = 502;
+      err.details = error.details || error.message;
+      err.rawResponse = raw;
+      throw err;
+    }
   }
 
   return {
     model: COURSE_MODEL_NAME,
     raw,
-    courseStructure: parsed,
+    courseStructure: parsedStructure,
   };
 }
