@@ -8,6 +8,70 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
+// GET /courses/ids?userId=...
+router.get('/ids', async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  const v = validateUuid(userId, 'userId');
+  if (!v.valid) return res.status(400).json({ error: v.error });
+
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error fetching course ids:', error);
+      return res.status(500).json({ error: 'Failed to fetch course ids', details: error.message });
+    }
+
+    return res.json({ userId, count: data.length, courseIds: data.map((r) => r.id) });
+  } catch (e) {
+    console.error('Unhandled error fetching course ids:', e);
+    return res.status(500).json({ error: 'Internal server error', details: e.message });
+  }
+});
+
+// GET /courses/data?userId=...&courseId=...
+router.get('/data', async (req, res) => {
+  const { userId, courseId } = req.query;
+  if (!userId || !courseId) {
+    return res.status(400).json({ error: 'userId and courseId are required' });
+  }
+  const v1 = validateUuid(userId, 'userId');
+  if (!v1.valid) return res.status(400).json({ error: v1.error });
+  const v2 = validateUuid(courseId, 'courseId');
+  if (!v2.valid) return res.status(400).json({ error: v2.error });
+
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id,user_id,course_data')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Course not found for user' });
+      }
+      console.error('Supabase error fetching course_data:', error);
+      return res.status(500).json({ error: 'Failed to fetch course_data', details: error.message });
+    }
+
+    return res.json({ courseId: data.id, userId: data.user_id, course_data: data.course_data });
+  } catch (e) {
+    console.error('Unhandled error fetching course_data:', e);
+    return res.status(500).json({ error: 'Internal server error', details: e.message });
+  }
+});
 
 const MODEL_NAME = 'x-ai/grok-4-fast';
 

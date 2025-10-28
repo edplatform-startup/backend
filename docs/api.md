@@ -24,14 +24,10 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 200 OK → `{ "status": "ok" }`
 
 -### GET /courses
-- Purpose: Retrieve generated study plans saved for a user or fetch a specific plan.
-- Query parameters:
   - `userId` (string) – Required to list a user's courses. Also required when requesting a specific `courseId`.
   - `courseId` (string, optional) – UUID of a specific course. Must belong to the provided `userId`.
-- Behavior:
   - When only `userId` is supplied, returns all of that user's courses ordered by `created_at` descending.
   - When both `userId` and `courseId` are supplied, returns that single course if it belongs to the user; otherwise 404.
-- Success responses share the `Course` shape below.
   - 200 OK (collection)
     ```json
     {
@@ -47,11 +43,40 @@ Base URL (production): https://edtech-backend-api.onrender.com
       "course": Course
     }
     ```
-- Error responses:
   - 400 Bad Request → Missing params, invalid UUID formats, or `courseId` without `userId`.
   - 404 Not Found → Course not found for that user.
   - 500 Internal Server Error → Database read failure or unexpected exception.
 
+### GET /courses/ids
+- Purpose: Return all course IDs for a given user.
+- Query parameters:
+  - `userId` (string, required) – UUID of the user.
+- Responses:
+  - 200 OK → `{ "userId": "...", "count": n, "courseIds": ["uuid", ...] }`
+  - 400 Bad Request → Missing/invalid `userId`.
+  - 500 Internal Server Error → Database error.
+
+### GET /courses/data
+- Purpose: Return only the `course_data` JSON for a specific course, verifying the owner.
+- Query parameters:
+  - `userId` (string, required) – UUID of the user.
+  - `courseId` (string, required) – UUID of the course.
+- Responses:
+  - 200 OK → `{ "courseId": "...", "userId": "...", "course_data": { ... } }`
+  - 400 Bad Request → Missing/invalid params.
+  - 404 Not Found → Course not found for the user.
+  - 500 Internal Server Error → Database error.
+
+### GET /content
+- Purpose: Fetch the stored per-format content JSON by format and id.
+- Query parameters:
+  - `format` (string, required) – One of `video`, `reading`, `flashcards`, `mini_quiz`, `practice_exam`.
+  - `id` (string, required) – UUID of the content row (matches `asset.id` in `course_data`).
+- Responses:
+  - 200 OK → `{ "id": "...", "format": "...", "data": { ... } }`
+  - 400 Bad Request → Invalid format or id.
+  - 404 Not Found → No content with that id in the specified format.
+  - 500 Internal Server Error → Database error.
 `Course` object fields
 - `id` (string) – Course record UUID.
 - `user_id` (string) – Owner UUID.
