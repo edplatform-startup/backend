@@ -125,7 +125,7 @@ test('course structure generation route', async (t) => {
     assert.equal(insertedBatch.length, 1);
     const record = insertedBatch[0];
     assert.equal(record.user_id, validBody.userId);
-    assert.equal(record.user_uuid, validBody.userId);
+    assert.equal(record.user_id, validBody.userId);
     assert.deepEqual(record.course_data, mockStructure);
     assert.ok(typeof record.id === 'string' && record.id.length > 0);
     assert.ok(typeof record.created_at === 'string');

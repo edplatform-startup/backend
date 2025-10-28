@@ -13,12 +13,12 @@ const MODEL_NAME = 'x-ai/grok-4-fast';
 
 function normalizeCourseRow(row) {
   const courseData = row.course_data ?? row.course_json ?? null;
-  const normalizedUserId = row.user_id ?? row.user_uuid ?? null;
-  const normalizedUserUuid = row.user_uuid ?? row.user_id ?? null;
+  const normalizedUserId = row.user_id ?? row.user_id ?? null;
+  const normalizedUserUuid = row.user_id ?? row.user_id ?? null;
   return {
     id: row.id,
     user_id: normalizedUserId,
-    user_uuid: normalizedUserUuid,
+    user_id: normalizedUserUuid,
     course_data: courseData,
     course_json: courseData,
     created_at: row.created_at,
@@ -71,7 +71,7 @@ router.get('/', async (req, res) => {
 
     // Case 1: Both userId and courseId provided - get specific course if it belongs to user
     if (userId && courseId) {
-      query = query.eq('id', courseId).or(`user_id.eq.${userId},user_uuid.eq.${userId}`).single();
+      query = query.eq('id', courseId).or(`user_id.eq.${userId},user_id.eq.${userId}`).single();
       
       const { data, error } = await query;
 
@@ -94,7 +94,7 @@ router.get('/', async (req, res) => {
 
     // Case 2: Only userId provided - get all courses for this user
     if (userId) {
-      query = query.or(`user_id.eq.${userId},user_uuid.eq.${userId}`).order('created_at', { ascending: false });
+      query = query.or(`user_id.eq.${userId},user_id.eq.${userId}`).order('created_at', { ascending: false });
       
       const { data, error } = await query;
 

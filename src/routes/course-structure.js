@@ -310,7 +310,7 @@ router.post('/', async (req, res) => {
     const record = {
       id: courseId,
       user_id: userId,
-      user_uuid: userId,
+      user_id: userId,
       created_at: createdAt,
       course_data: result.courseStructure,
     };

@@ -26,7 +26,7 @@ const courseData = {
 const sampleCourseRow = {
   id: '11111111-1111-1111-1111-111111111111',
   user_id: '22222222-2222-2222-2222-222222222222',
-  user_uuid: '22222222-2222-2222-2222-222222222222',
+  user_id: '22222222-2222-2222-2222-222222222222',
   course_data: courseData,
   course_json: courseData,
   created_at: '2025-10-17T12:34:56.789Z',
@@ -70,7 +70,7 @@ test('courses route validations and behaviors', async (t) => {
 
     const res = await request(app)
       .get('/courses')
-      .query({ userId: sampleCourseRow.user_uuid })
+      .query({ userId: sampleCourseRow.user_id })
       .set(baseHeaders);
 
     assert.equal(res.status, 200);
@@ -88,7 +88,7 @@ test('courses route validations and behaviors', async (t) => {
 
     const res = await request(app)
       .get('/courses')
-      .query({ userId: sampleCourseRow.user_uuid, courseId: sampleCourseRow.id })
+      .query({ userId: sampleCourseRow.user_id, courseId: sampleCourseRow.id })
       .set(baseHeaders);
 
     assert.equal(res.status, 200);
@@ -105,7 +105,7 @@ test('courses route validations and behaviors', async (t) => {
 
     const res = await request(app)
       .get('/courses')
-      .query({ userId: sampleCourseRow.user_uuid, courseId: sampleCourseRow.id })
+      .query({ userId: sampleCourseRow.user_id, courseId: sampleCourseRow.id })
       .set(baseHeaders);
 
     assert.equal(res.status, 404);
@@ -121,7 +121,7 @@ test('courses route validations and behaviors', async (t) => {
 
     const res = await request(app)
       .get('/courses')
-      .query({ userId: sampleCourseRow.user_uuid, courseId: sampleCourseRow.id })
+      .query({ userId: sampleCourseRow.user_id, courseId: sampleCourseRow.id })
       .set(baseHeaders);
 
     assert.equal(res.status, 500);
@@ -134,7 +134,7 @@ test('courses route validations and behaviors', async (t) => {
       .post('/courses')
       .set('Content-Type', 'application/json')
       .send({
-        userId: sampleCourseRow.user_uuid,
+        userId: sampleCourseRow.user_id,
         syllabusFiles: [{ name: '' }],
       });
 
@@ -146,7 +146,7 @@ test('courses route validations and behaviors', async (t) => {
     setStudyTopicsGenerator(() => 'Topic A, Topic B, Topic C');
 
     const reqBody = {
-      userId: sampleCourseRow.user_uuid,
+      userId: sampleCourseRow.user_id,
       finishByDate: sampleCourseRow.finish_by_date,
       courseSelection: sampleCourseRow.course_selection,
       syllabusText: sampleCourseRow.syllabus_text,

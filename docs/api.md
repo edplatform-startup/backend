@@ -55,7 +55,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 `Course` object fields
 - `id` (string) – Course record UUID.
 - `user_id` (string) – Owner UUID stored for new records.
-- `user_uuid` (string) – Legacy owner UUID column (still populated for compatibility).
+- `user_id` (string) – Legacy owner UUID column (still populated for compatibility).
 - `course_data` (object|null) – Structured course syllabus stored from `ml_course.json` (preferred).
 - `course_json` (object|null) – Alias of `course_data` retained for backward compatibility.
 - `created_at` (string) – ISO timestamp when the record was created.
