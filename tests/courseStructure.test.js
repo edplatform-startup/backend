@@ -80,7 +80,7 @@ test('course structure generation route', async (t) => {
     setCourseStructureGenerator((payload) => {
       receivedPayload = payload;
       return {
-        model: 'openai/gpt-5',
+        model: 'x-ai/grok-4-fast',
         raw: JSON.stringify(mockStructure),
         courseStructure: mockStructure,
       };
