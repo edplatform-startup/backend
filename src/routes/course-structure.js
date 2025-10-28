@@ -284,6 +284,29 @@ router.post('/', async (req, res) => {
   try {
     const supabase = getSupabase();
     const courseId = randomUUID();
+    // Pre-insert placeholder course row to satisfy FK for content tables
+    const createdAt = new Date().toISOString();
+    const placeholder = {
+      id: courseId,
+      user_id: userId,
+      created_at: createdAt,
+      course_data: null,
+    };
+
+    const preInsert = await supabase
+      .schema('api')
+      .from('courses')
+      .insert([placeholder])
+      .select('id')
+      .single();
+
+    if (preInsert.error) {
+      console.error('Failed to persist placeholder course:', preInsert.error);
+      return res.status(502).json({
+        error: 'Failed to save course placeholder',
+        details: preInsert.error.message || preInsert.error,
+      });
+    }
 
     const result = await generateCourseStructureWithAssets({
       topics: normalizedTopics.value,
@@ -311,30 +334,26 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const createdAt = new Date().toISOString();
-    const record = {
-      id: courseId,
-      user_id: userId,
-      created_at: createdAt,
-      course_data: result.courseStructure,
-    };
-
-    const { data, error: insertError } = await supabase
+    // Update placeholder with final course_data
+    const { data: updated, error: updateError } = await supabase
       .schema('api')
       .from('courses')
-      .insert([record])
+      .update({ course_data: result.courseStructure })
+      .eq('id', courseId)
       .select('id')
       .single();
 
-    if (insertError) {
-      console.error('Failed to persist course structure:', insertError);
+    if (updateError) {
+      console.error('Failed to update course structure:', updateError);
+      // attempt cleanup
+      await supabase.schema('api').from('courses').delete().eq('id', courseId);
       return res.status(502).json({
         error: 'Failed to save course structure',
-        details: insertError.message || insertError,
+        details: updateError.message || updateError,
       });
     }
 
-    const persistedId = data?.id ?? courseId;
+    const persistedId = updated?.id ?? courseId;
     return res.status(201).json({ courseId: persistedId });
   } catch (error) {
     const status = error.statusCode && Number.isInteger(error.statusCode) ? error.statusCode : 500;

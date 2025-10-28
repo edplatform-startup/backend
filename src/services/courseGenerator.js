@@ -681,8 +681,8 @@ export async function generateAssetsContent(structure, ctx) {
           const id = await generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset });
           return { id };
         } catch (error) {
-          // Log and mark as failed
-          console.warn('Asset generation failed:', { moduleKey, fmt, error: error?.message || error });
+          // Log full details and mark as failed
+          console.warn('Asset generation failed:', { moduleKey, fmt, error: error?.message || error, details: error?.details });
           throw error;
         }
       });

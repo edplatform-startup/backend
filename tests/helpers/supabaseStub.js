@@ -1,7 +1,9 @@
-export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [] } = {}) {
+export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [], updateResponses = [], deleteResponses = [] } = {}) {
   const listQueue = [...listResponses];
   const singleQueue = [...singleResponses];
   const insertQueue = [...insertResponses];
+  const updateQueue = [...updateResponses];
+  const deleteQueue = [...deleteResponses];
   const defaultResponse = { data: null, error: null };
 
   const supabase = {
@@ -34,6 +36,25 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
         return createInsertChain(responseForInsert);
       };
 
+      chain.update = (payload) => {
+        const updateResp = updateQueue.length ? updateQueue.shift() : defaultResponse;
+        if (updateResp && typeof updateResp.onUpdate === 'function') {
+          updateResp.onUpdate(payload);
+        }
+        const responseForUpdate = updateResp && typeof updateResp === 'object' && updateResp.data !== undefined
+          ? { data: updateResp.data, error: updateResp.error ?? null }
+          : defaultResponse;
+        return createUpdateChain(responseForUpdate);
+      };
+
+      chain.delete = () => {
+        const delResp = deleteQueue.length ? deleteQueue.shift() : defaultResponse;
+        const responseForDelete = delResp && typeof delResp === 'object' && delResp.data !== undefined
+          ? { data: delResp.data, error: delResp.error ?? null }
+          : defaultResponse;
+        return createUpdateChain(responseForDelete);
+      };
+
       chain.then = promise.then.bind(promise);
       chain.catch = promise.catch.bind(promise);
       chain.finally = promise.finally.bind(promise);
@@ -50,6 +71,15 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
       single() {
         return Promise.resolve(response);
       },
+    };
+    return chain;
+  }
+
+  function createUpdateChain(response) {
+    const chain = {
+      eq() { return chain; },
+      select() { return chain; },
+      single() { return Promise.resolve(response); },
     };
     return chain;
   }
