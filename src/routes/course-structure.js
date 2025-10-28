@@ -290,7 +290,8 @@ router.post('/', async (req, res) => {
       id: courseId,
       user_id: userId,
       created_at: createdAt,
-      course_data: null,
+      // Some databases enforce NOT NULL on course_data; use empty object as placeholder
+      course_data: {},
     };
 
     const preInsert = await supabase
