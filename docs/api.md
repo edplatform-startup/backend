@@ -154,6 +154,10 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - For each asset, the backend calls the model again to generate format-specific JSON content, persists it into dedicated tables, and attaches the inserted row id to the asset as `asset.id`.
     - Tables: `api.video_items`, `api.reading_articles`, `api.flashcard_sets`, `api.mini_quizzes`, `api.practice_exams`.
     - Each row includes: `course_id`, `user_id`, `module_key`, `content_prompt` (the asset `content`), and `data` (the JSON returned by the model).
+    - Data shapes:
+      - `video_items.data`: a single YouTube video object `{ "title": string, "description": string, "url": string }` (the model uses web_search to pick the best video)
+      - `flashcard_sets.data`: a single card `{ "question": string, "answer": string, "explanation": string }`
+      - Other formats remain unchanged from earlier behavior (readings/articles, mini_quizzes with questions[], practice_exams with mcq[]/frq[]).
   - Finally, the augmented `course_data` (now with per-asset `id` fields) is saved into `api.courses` using the same `courseId` that ties all content rows together.
 - Responses:
   - 201 Created → `{ "courseId": "<uuid>" }`

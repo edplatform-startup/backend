@@ -491,17 +491,14 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
 
 // Prompt builders per format
 function buildVideoPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a world-class instructor creating short, high-yield video lesson outlines. Always return strict JSON.';
+  const system = 'You are a precise research assistant who finds the best short YouTube video for a topic. Always return strict JSON.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Create 1–2 concise video items with:',
-    '- title (≤ 12 words)',
-    '- outline (3–5 bullet points)',
-    '- watch_time_minutes (integer, 5–15)',
-    '- key_points (3–6 strings)',
-    'Return JSON: { "videos": [ { "title": "...", "outline": ["..."], "watch_time_minutes": 10, "key_points": ["..."] } ] }',
+    'Task: Use the web_search tool to identify a single high-quality YouTube video (≤ 15 minutes) that best teaches this topic.',
+    'Choose official or reputable sources. Prefer concise, focused explanations.',
+    'Return JSON exactly as: { "title": "...", "description": "...", "url": "https://www.youtube.com/..." }',
   ].join('\n');
   return { system, user };
 }
@@ -519,13 +516,13 @@ function buildReadingPrompt({ className, moduleKey, desc }) {
 }
 
 function buildFlashcardsPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a precise flashcard writer. Always return a strict JSON object keyed as "1", "2", ...';
+  const system = 'You are a precise flashcard writer. Always return strict JSON.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Create 6–10 flashcards. Each value is [question, answer, explanation].',
-    'Return JSON: { "1": ["Q", "A", "Explain"], "2": ["..."], ... }',
+    'Create one high-yield flashcard.',
+    'Return JSON exactly as: { "question": "...", "answer": "...", "explanation": "..." }',
   ].join('\n');
   return { system, user };
 }
