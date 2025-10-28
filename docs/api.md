@@ -114,7 +114,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 502 Bad Gateway → Model call failed or returned no topics.
 
 ### POST /course-structure
-- Purpose: Generate and persist a full course learning plan leveraging OpenAI GPT-5 via OpenRouter.
+- Purpose: Generate and persist a full course learning plan leveraging xAI Grok 4 Fast via OpenRouter.
 - Request body (JSON):
   ```json
   {
@@ -148,7 +148,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examStructureText` (string, optional) – Description of the exam format.
   - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
 - Behavior:
-  - Validates inputs and forwards contextual data, including file attachments, to GPT-5 with high reasoning and optional web search.
+  - Validates inputs and forwards contextual data, including file attachments, to Grok 4 Fast with high reasoning and optional web search.
   - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
   - Expects strict JSON response matching the `ml_course.json` schema: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }` pairs.
   - Validates the returned schema, then saves it to `api.courses.course_data` with a generated UUID, the provided `userId`, and a `created_at` timestamp.

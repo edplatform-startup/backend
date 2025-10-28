@@ -167,7 +167,22 @@ async function defaultWebSearch(query, apiKey) {
     throw new Error(`Web search failed: ${response.status} ${response.statusText} ${errorText}`);
   }
 
-  const data = await response.json();
+  // Read as text first to gracefully handle empty/invalid JSON bodies
+  const raw = await response.text().catch(() => '');
+  const trimmed = (raw || '').trim();
+  if (!trimmed) {
+    // Return a benign string so the LLM can continue, instead of throwing
+    return 'No results returned by web_search.';
+  }
+
+  let data;
+  try {
+    data = JSON.parse(trimmed);
+  } catch {
+    // Fallback: return the raw text (truncated) so the model can still use it
+    return trimmed.slice(0, 1000);
+  }
+
   if (Array.isArray(data?.results) && data.results.length > 0) {
     return data.results
       .map((item, index) => {
@@ -177,7 +192,12 @@ async function defaultWebSearch(query, apiKey) {
       .join('\n');
   }
 
-  return JSON.stringify(data);
+  // If JSON is valid but not in expected shape, return a compact JSON string
+  try {
+    return typeof data === 'string' ? data : JSON.stringify(data);
+  } catch {
+    return '[web_search] Unrecognized response format.';
+  }
 }
 
 export function createWebSearchTool() {
@@ -221,7 +241,23 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
     throw err;
   }
 
-  return response.json();
+  const text = await response.text();
+  if (!text || text.trim() === '') {
+    const err = new Error('OpenRouter returned empty response');
+    err.statusCode = 502;
+    err.details = 'The API returned a 200 OK but with no content';
+    throw err;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const err = new Error('OpenRouter returned invalid JSON');
+    err.statusCode = 502;
+    err.details = `Failed to parse response: ${error.message}`;
+    err.responsePreview = text.slice(0, 500);
+    throw err;
+  }
 }
 
 export async function executeOpenRouterChat(options = {}) {

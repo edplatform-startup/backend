@@ -1,7 +1,7 @@
 import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
 
-const COURSE_MODEL_NAME = 'openai/gpt-5';
-const DEFAULT_MAX_TOKENS = 10000;
+const COURSE_MODEL_NAME = 'x-ai/grok-4-fast';
+const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_TOOL_ITERATIONS = 6;
 
 let customCourseGenerator = null;
@@ -16,7 +16,7 @@ export function clearCourseStructureGenerator() {
 
 function resolveCourseApiKey(providedKey) {
   const key =
-    providedKey || process.env.OPENROUTER_GPT5_KEY || process.env.OPENROUTER_API_KEY;
+    providedKey || process.env.OPENROUTER_GROK_4_FAST_KEY || process.env.OPENROUTER_API_KEY;
 
   if (!key) {
     throw new Error('Missing OpenRouter API key for GPT-5 (set OPENROUTER_GPT5_KEY or OPENROUTER_API_KEY).');
@@ -369,7 +369,7 @@ export async function generateCourseStructure({
     model: COURSE_MODEL_NAME,
     temperature: 0.3,
     maxTokens: DEFAULT_MAX_TOKENS,
-    reasoning: { enabled: true, effort: 'high' },
+    reasoning: { enabled: true, effort: 'medium' },
     tools: [createWebSearchTool()],
     toolChoice: 'auto',
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
