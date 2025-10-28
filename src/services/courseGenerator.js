@@ -92,8 +92,6 @@ const VALID_FORMATS = new Map([
   ['practice', 'mini quiz'],
   ['practice set', 'mini quiz'],
   ['practice sets', 'mini quiz'],
-  ['project', 'project'],
-  ['lab', 'lab'],
 ]);
 
 const OUTPUT_FORMAT_HINT = 'Module/Submodule | Format | Desc';
@@ -189,7 +187,7 @@ function buildUserMessage({
   lines.push(`  ${OUTPUT_FORMAT_HINT}`);
   lines.push('Rules for the concise output:');
   lines.push('- Module/Submodule should capture the step and focus area, e.g., "Learn Topics - Supervised Learning/Regression".');
-  lines.push('- Format must be one of: video, reading, flashcards, mini quiz, practice exam, project, lab.');
+  lines.push('- Format must be one of: video, reading, flashcards, mini quiz, practice exam.');
   lines.push('- Desc should be a direct imperative describing what to cover (≤ 18 words, no bullet markers).');
   lines.push('- Return only the line list, no extra text, explanations, or JSON. Maintain order of execution.');
 
@@ -434,4 +432,323 @@ export async function generateCourseStructure({
     raw,
     courseStructure: parsedStructure,
   };
+}
+
+// --- Added helpers for per-asset JSON generation and persistence ---
+
+function withTimeout(promiseFactory, timeoutMs, label = 'operation') {
+  if (!timeoutMs || timeoutMs <= 0) return promiseFactory();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return promiseFactory(controller.signal)
+    .finally(() => clearTimeout(timer));
+}
+
+async function callModelJson({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000, retries = 1 }) {
+  const exec = async (signal) => {
+    const { content, message } = await executeOpenRouterChat({
+      apiKey,
+      model: COURSE_MODEL_NAME,
+      temperature: 0.2,
+      maxTokens: 1200,
+      reasoning: { enabled: true, effort: 'medium' },
+      tools,
+      toolChoice: tools?.length ? 'auto' : undefined,
+      maxToolIterations: 3,
+      attachments,
+      responseFormat: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      signal,
+    });
+
+    // Prefer parsed JSON provided by the SDK if available
+    if (message?.parsed && typeof message.parsed === 'object') {
+      return message.parsed;
+    }
+
+    const raw = normalizeContentParts(content);
+    if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+    }
+  };
+
+  let attempt = 0;
+  while (true) {
+    try {
+      return await withTimeout(exec, timeoutMs, 'model-json');
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      attempt += 1;
+    }
+  }
+}
+
+// Prompt builders per format
+function buildVideoPrompt({ className, moduleKey, desc }) {
+  const system = 'You are a world-class instructor creating short, high-yield video lesson outlines. Always return strict JSON.';
+  const user = [
+    `Class: ${className}`,
+    `Module: ${moduleKey}`,
+    `Instruction: ${desc}`,
+    'Create 1–2 concise video items with:',
+    '- title (≤ 12 words)',
+    '- outline (3–5 bullet points)',
+    '- watch_time_minutes (integer, 5–15)',
+    '- key_points (3–6 strings)',
+    'Return JSON: { "videos": [ { "title": "...", "outline": ["..."], "watch_time_minutes": 10, "key_points": ["..."] } ] }',
+  ].join('\n');
+  return { system, user };
+}
+
+function buildReadingPrompt({ className, moduleKey, desc }) {
+  const system = 'You are a senior TA producing crisp reading summaries. Always return strict JSON.';
+  const user = [
+    `Class: ${className}`,
+    `Module: ${moduleKey}`,
+    `Instruction: ${desc}`,
+    'Produce an article-style summary with 3–6 sections.',
+    'Return JSON: { "article": { "title": "...", "sections": [ { "heading": "...", "summary": "..." } ] } }',
+  ].join('\n');
+  return { system, user };
+}
+
+function buildFlashcardsPrompt({ className, moduleKey, desc }) {
+  const system = 'You are a precise flashcard writer. Always return a strict JSON object keyed as "1", "2", ...';
+  const user = [
+    `Class: ${className}`,
+    `Module: ${moduleKey}`,
+    `Instruction: ${desc}`,
+    'Create 6–10 flashcards. Each value is [question, answer, explanation].',
+    'Return JSON: { "1": ["Q", "A", "Explain"], "2": ["..."], ... }',
+  ].join('\n');
+  return { system, user };
+}
+
+function buildMiniQuizPrompt({ className, moduleKey, desc }) {
+  const system = 'You are a careful quiz author. Always return strict JSON.';
+  const user = [
+    `Class: ${className}`,
+    `Module: ${moduleKey}`,
+    `Instruction: ${desc}`,
+    'Create 4–6 MCQ questions with exactly 4 options, one correct answer, and a short explanation.',
+    'Return JSON: { "questions": [ { "question": "...", "options": ["A","B","C","D"], "answer": "B", "explanation": "..." } ] }',
+  ].join('\n');
+  return { system, user };
+}
+
+function buildPracticeExamPrompt({ className, moduleKey, desc, examStructureText }) {
+  const system = 'You are a university exam setter. Always return strict JSON.';
+  const user = [
+    `Class: ${className}`,
+    `Module: ${moduleKey}`,
+    `Instruction: ${desc}`,
+    examStructureText ? `Exam hints: ${examStructureText}` : '',
+    'Create a small practice exam with MCQ and FRQ items (2–3 each).',
+    'MCQ have 4 options, one correct answer, brief explanation.',
+    'FRQ provide a detailed prompt and a short rubric.',
+    'Return JSON: { "mcq": [ { "question": "...", "options": ["A","B","C","D"], "answer": "C", "explanation": "..." } ], "frq": [ { "prompt": "...", "rubric": "..." } ] }',
+  ].filter(Boolean).join('\n');
+  return { system, user };
+}
+
+function tableForFormat(fmt) {
+  switch (fmt) {
+    case 'video':
+      return 'video_items';
+    case 'reading':
+      return 'reading_articles';
+    case 'flashcards':
+      return 'flashcard_sets';
+    case 'mini quiz':
+      return 'mini_quizzes';
+    case 'practice exam':
+      return 'practice_exams';
+    default:
+      return null;
+  }
+}
+
+async function saveFormatRow(supabase, table, row) {
+  const { data, error } = await supabase
+    .schema('api')
+    .from(table)
+    .insert([row])
+    .select('id')
+    .single();
+  if (error) {
+    const err = new Error(`Failed to save ${table}`);
+    err.statusCode = 502;
+    err.details = error.message || error;
+    throw err;
+  }
+  return data?.id;
+}
+
+async function generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset }) {
+  const fmt = asset?.Format?.toLowerCase?.();
+  const desc = asset?.content || '';
+  const table = tableForFormat(fmt);
+  if (!table) return null; // unsupported
+
+  let builder;
+  let tools = [];
+  if (fmt === 'video') {
+    builder = buildVideoPrompt;
+    tools = [createWebSearchTool()];
+  } else if (fmt === 'reading') {
+    builder = buildReadingPrompt;
+  } else if (fmt === 'flashcards') {
+    builder = buildFlashcardsPrompt;
+  } else if (fmt === 'mini quiz') {
+    builder = buildMiniQuizPrompt;
+  } else if (fmt === 'practice exam') {
+    builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText });
+  } else {
+    return null;
+  }
+
+  const { system, user } = builder({ className, moduleKey, desc });
+  const json = await callModelJson({ apiKey, system, user, tools, timeoutMs: 45000, retries: 1 });
+
+  const id = await saveFormatRow(supabase, table, {
+    course_id: courseId,
+    user_id: userId,
+    module_key: moduleKey,
+    content_prompt: desc,
+    data: json,
+  });
+
+  return id;
+}
+
+async function runLimited(tasks, limit = 3) {
+  const results = new Array(tasks.length);
+  let i = 0;
+  let active = 0;
+  return new Promise((resolve, reject) => {
+    const next = () => {
+      if (i >= tasks.length && active === 0) return resolve(results);
+      while (active < limit && i < tasks.length) {
+        const cur = i++;
+        active++;
+        Promise.resolve()
+          .then(tasks[cur])
+          .then((res) => {
+            results[cur] = { ok: true, value: res };
+          })
+          .catch((err) => {
+            results[cur] = { ok: false, error: err };
+          })
+          .finally(() => {
+            active--;
+            next();
+          });
+      }
+    };
+    next();
+  });
+}
+
+export async function generateAssetsContent(structure, ctx) {
+  const { supabase, userId, courseId, className, examStructureText, apiKey } = ctx;
+  if (!supabase || !userId || !courseId) return structure; // noop if not provided
+
+  const moduleKeys = Object.keys(structure || {});
+  const tasks = [];
+  const locations = [];
+
+  for (const moduleKey of moduleKeys) {
+    const assets = Array.isArray(structure[moduleKey]) ? structure[moduleKey] : [];
+    for (let idx = 0; idx < assets.length; idx++) {
+      const asset = assets[idx];
+      // Skip unsupported formats silently
+      const fmt = asset?.Format?.toLowerCase?.();
+      if (!tableForFormat(fmt)) {
+        // mark for removal
+        assets[idx] = null;
+        continue;
+      }
+
+      locations.push({ moduleKey, idx });
+      tasks.push(async () => {
+        try {
+          const id = await generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset });
+          return { id };
+        } catch (error) {
+          // Log and mark as failed
+          console.warn('Asset generation failed:', { moduleKey, fmt, error: error?.message || error });
+          throw error;
+        }
+      });
+    }
+  }
+
+  const results = await runLimited(tasks, 3);
+  let successCount = 0;
+
+  // Apply results back into the structure, dropping failed assets
+  for (let i = 0; i < results.length; i++) {
+    const loc = locations[i];
+    const res = results[i];
+    const arr = structure[loc.moduleKey];
+    if (!res?.ok || !res.value?.id) {
+      // drop this asset
+      arr[loc.idx] = null;
+    } else {
+      successCount += 1;
+      const asset = arr[loc.idx] || {};
+      asset.id = res.value.id;
+      arr[loc.idx] = asset;
+    }
+  }
+
+  // Clean nulls and empty modules
+  for (const moduleKey of moduleKeys) {
+    const assets = (structure[moduleKey] || []).filter(Boolean);
+    if (assets.length === 0) {
+      delete structure[moduleKey];
+    } else {
+      structure[moduleKey] = assets;
+    }
+  }
+
+  if (successCount === 0) {
+    const err = new Error('All per-asset generations failed');
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return structure;
+}
+
+// Extend main generator to optionally augment with per-asset content and persistence
+export async function generateCourseStructureWithAssets(params) {
+  const {
+    userId,
+    courseId,
+    supabase,
+    className,
+    examStructureText,
+    apiKey: explicitKey,
+    ...rest
+  } = params || {};
+
+  const base = await generateCourseStructure({ ...rest, className, examStructureText, apiKey: explicitKey });
+  const apiKey = resolveCourseApiKey(explicitKey);
+  const augmented = await generateAssetsContent(base.courseStructure, {
+    supabase,
+    userId,
+    courseId,
+    className,
+    examStructureText,
+    apiKey,
+  });
+
+  return { ...base, courseStructure: augmented };
 }

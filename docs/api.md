@@ -23,11 +23,11 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Responses:
   - 200 OK → `{ "status": "ok" }`
 
-### GET /courses
+-### GET /courses
 - Purpose: Retrieve generated study plans saved for a user or fetch a specific plan.
-- Query parameters (at least `userId` or both `userId` and `courseId`):
-  - `userId` (string, required unless `courseId` supplied but still required when `courseId` is present): UUID identifying the owner.
-  - `courseId` (string, optional): UUID of a specific course. Must belong to the same `userId`.
+- Query parameters:
+  - `userId` (string) – Required to list a user's courses. Also required when requesting a specific `courseId`.
+  - `courseId` (string, optional) – UUID of a specific course. Must belong to the provided `userId`.
 - Behavior:
   - When only `userId` is supplied, returns all of that user's courses ordered by `created_at` descending.
   - When both `userId` and `courseId` are supplied, returns that single course if it belongs to the user; otherwise 404.
@@ -54,8 +54,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 
 `Course` object fields
 - `id` (string) – Course record UUID.
-- `user_id` (string) – Owner UUID stored for new records.
-- `user_id` (string) – Legacy owner UUID column (still populated for compatibility).
+- `user_id` (string) – Owner UUID.
 - `course_data` (object|null) – Structured course syllabus stored from `ml_course.json` (preferred).
 - `course_json` (object|null) – Alias of `course_data` retained for backward compatibility.
 - `created_at` (string) – ISO timestamp when the record was created.
@@ -148,10 +147,14 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examStructureText` (string, optional) – Description of the exam format.
   - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
 - Behavior:
-  - Validates inputs and forwards contextual data, including file attachments, to Grok 4 Fast with high reasoning and optional web search.
+  - Validates inputs and forwards contextual data, including file attachments, to Grok 4 Fast with reasoning and optional web search.
   - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
-  - Expects strict JSON response matching the `ml_course.json` schema: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }` pairs.
-  - Validates the returned schema, then saves it to `api.courses.course_data` with a generated UUID, the provided `userId`, and a `created_at` timestamp.
+  - The model produces a concise plan parsed into the course structure: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }`.
+  - Supported formats: `video`, `reading`, `flashcards`, `mini quiz`, `practice exam`. `project` and `lab` are ignored if present.
+  - For each asset, the backend calls the model again to generate format-specific JSON content, persists it into dedicated tables, and attaches the inserted row id to the asset as `asset.id`.
+    - Tables: `api.video_items`, `api.reading_articles`, `api.flashcard_sets`, `api.mini_quizzes`, `api.practice_exams`.
+    - Each row includes: `course_id`, `user_id`, `module_key`, `content_prompt` (the asset `content`), and `data` (the JSON returned by the model).
+  - Finally, the augmented `course_data` (now with per-asset `id` fields) is saved into `api.courses` using the same `courseId` that ties all content rows together.
 - Responses:
   - 201 Created → `{ "courseId": "<uuid>" }`
   - 400 Bad Request → Invalid inputs (missing topics/userId, bad dates, malformed file metadata, etc.).
@@ -199,6 +202,25 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 502 Bad Gateway → Grok returned a non-OK response or malformed JSON.
   - 504 Gateway Timeout → Grok request exceeded 30 seconds.
 
+### GET /college-courses
+- Purpose: Search catalog for college courses by code or title.
+- Query parameters:
+  - `query` (string, required) – Search term. Whitespace is removed; partial matches supported.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "query": "CSE142",
+      "count": 2,
+      "items": [
+        { "code": "CSE142", "title": "Foundations of CS I" },
+        { "code": "CSE142A", "title": "Foundations of CS I (Honors)" }
+      ]
+    }
+    ```
+  - 400 Bad Request → Missing `query`.
+  - 500 Internal Server Error → Supabase error or unexpected exception.
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
@@ -213,6 +235,8 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
 - Fetch specific course → `GET https://edtech-backend-api.onrender.com/courses?userId=...&courseId=...`
   - Response: `{ "success": true, "course": Course }`
+- Search catalog → `GET https://edtech-backend-api.onrender.com/college-courses?query=cs50`
+  - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
 - Create topics → `POST https://edtech-backend-api.onrender.com/courses`
   - Body: see example above.
   - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "x-ai/grok-4-fast" }`

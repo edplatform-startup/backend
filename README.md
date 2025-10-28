@@ -157,6 +157,15 @@ The `postdeploy` script runs automatically after deployment to handle:
 
 Currently, this project doesn't use Prisma, so the script safely no-ops.
 
+If you are provisioning a fresh database, apply the content tables first:
+
+```
+-- In your database console
+\i docs/migrations/course-content.sql
+```
+
+This creates the per-format content tables (`video_items`, `reading_articles`, `flashcard_sets`, `mini_quizzes`, `practice_exams`) under the `api` schema.
+
 ### Monitoring & Debugging
 
 - **Logs:** View real-time logs in Render Dashboard → Your Service → Logs

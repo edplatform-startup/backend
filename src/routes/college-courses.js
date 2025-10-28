@@ -3,7 +3,7 @@ import { getSupabase } from '../supabaseClient.js';
 
 const router = Router();
 
-// GET /courses?query=cs50
+// GET /college-courses?query=cs50
 router.get('/', async (req, res) => {
   const q = (req.query.query || '').toString().trim();
   if (!q) {

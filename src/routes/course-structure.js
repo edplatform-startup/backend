@@ -5,7 +5,7 @@ import {
   validateFileArray,
   validateUuid,
 } from '../utils/validation.js';
-import { generateCourseStructure } from '../services/courseGenerator.js';
+import { generateCourseStructureWithAssets } from '../services/courseGenerator.js';
 import { getSupabase } from '../supabaseClient.js';
 
 const router = Router();
@@ -282,7 +282,10 @@ router.post('/', async (req, res) => {
   ];
 
   try {
-    const result = await generateCourseStructure({
+    const supabase = getSupabase();
+    const courseId = randomUUID();
+
+    const result = await generateCourseStructureWithAssets({
       topics: normalizedTopics.value,
       className: className.trim(),
       startDate: new Date(startDate).toISOString(),
@@ -293,6 +296,10 @@ router.post('/', async (req, res) => {
       examStructureFiles: examFilesValidation.value,
       topicFamiliarity: topicFamiliarityValidation.value,
       attachments,
+      // new params for per-asset generation and persistence
+      userId,
+      courseId,
+      supabase,
     });
 
     const validation = ensureCourseStructureShape(result.courseStructure);
@@ -304,12 +311,9 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const supabase = getSupabase();
-    const courseId = randomUUID();
     const createdAt = new Date().toISOString();
     const record = {
       id: courseId,
-      user_id: userId,
       user_id: userId,
       created_at: createdAt,
       course_data: result.courseStructure,
