@@ -1,6 +1,6 @@
 import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
 
-const COURSE_MODEL_NAME = 'x-ai/grok-4-fast';
+const COURSE_MODEL_NAME = 'openai/gpt-5';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_TOOL_ITERATIONS = 6;
 
