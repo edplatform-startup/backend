@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import axios from 'axios';
-import stringSimilarity from 'string-similarity';
+import stringSimilarity from 'string-similarity-js';
 
 const router = Router();
 
@@ -65,7 +65,7 @@ router.get('/', async (req, res) => {
     const lowerQuery = courseQuery.toLowerCase();
     const coursesWithSim = allCourses.map(course => {
       const lowerText = `${course.code} ${course.title}`.toLowerCase();
-      return { ...course, similarity: stringSimilarity.compareTwoStrings(lowerQuery, lowerText) };
+      return { ...course, similarity: stringSimilarity(lowerQuery, lowerText) };
     });
 
     // Sort by similarity descending and limit to 50
