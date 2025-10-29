@@ -96,12 +96,26 @@ router.post('/', async (req, res) => {
       content: text,
     });
   } catch (e) {
-    // Propagate helpful details if available
+    // Detailed error logging
     const status = e.statusCode || 500;
+    const logBlock = {
+      error: e.message,
+      status,
+      details: e.details,
+      stack: e.stack,
+      responseId: e.response?.id,
+      finishReason: e.response?.choices?.[0]?.finish_reason,
+      usage: e.response?.usage,
+      preview: e.responsePreview,
+      messages: e.messages,
+      rawResponse: e.rawResponse,
+    };
+    // Log to server console for debugging
+    console.error('Chat route error:', JSON.stringify(logBlock, null, 2));
     return res.status(status).json({
       error: 'Chat request failed',
       details: e.details || e.message,
-      preview: e.responsePreview,
+      debug: logBlock,
     });
   }
 });
