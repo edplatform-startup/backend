@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSupabase } from '../supabaseClient.js';
-import stringSimilarity from 'string-similarity-js';
+import { stringSimilarity } from 'string-similarity-js';
 
 const router = Router();
 
