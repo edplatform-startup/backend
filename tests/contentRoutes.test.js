@@ -51,7 +51,7 @@ test('content and course data routes', async (t) => {
 
     const res = await request(app)
       .get('/content')
-      .query({ format: 'flashcards', id: '11111111-1111-1111-1111-111111111111' })
+      .query({ format: 'flashcards', id: '11111111-1111-1111-1111-111111111111', userId: '22222222-2222-2222-2222-222222222222' })
       .set(baseHeaders);
 
     assert.equal(res.status, 200);

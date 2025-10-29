@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { executeOpenRouterChat } from '../services/grokClient.js';
+import { validateUuid } from '../utils/validation.js';
 
 const router = Router();
 
@@ -80,6 +81,12 @@ function validateFlashcards(candidate, expectedCount) {
 }
 
 router.post('/', async (req, res) => {
+  const userId = req.body?.userId;
+  const vu = validateUuid(userId, 'userId');
+  if (!vu.valid) {
+    return res.status(400).json({ error: vu.error });
+  }
+
   const topicInput = req.body?.topic ?? req.body?.description ?? req.body?.prompt;
   const topic = typeof topicInput === 'string' ? topicInput.trim() : '';
 

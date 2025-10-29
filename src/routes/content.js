@@ -20,15 +20,18 @@ function resolveTable(format) {
   return TABLE_BY_FORMAT.get(key) || null;
 }
 
-// GET /content?format=video|reading|flashcards|mini_quiz|practice_exam&id=<uuid>
+// GET /content?format=video|reading|flashcards|mini_quiz|practice_exam&id=<uuid>&userId=<uuid>
 router.get('/', async (req, res) => {
-  const { format, id } = req.query;
+  const { format, id, userId } = req.query;
 
   const table = resolveTable(format);
   if (!table) return res.status(400).json({ error: 'Invalid format' });
 
   const v = validateUuid(id, 'id');
   if (!v.valid) return res.status(400).json({ error: v.error });
+
+  const vu = validateUuid(userId, 'userId');
+  if (!vu.valid) return res.status(400).json({ error: vu.error });
 
   try {
     const supabase = getSupabase();
@@ -37,6 +40,7 @@ router.get('/', async (req, res) => {
       .from(table)
       .select('id, data')
       .eq('id', id)
+      .eq('user_id', userId)
       .single();
 
     if (error) {

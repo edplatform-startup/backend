@@ -12,15 +12,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 ## Endpoints
 
 ### GET /
-- Purpose: Basic service info.
-- Request: No params.
-- Responses:
-  - 200 OK → `{ "name": "edtech-backend-api", "ok": true }`
-
-### GET /healthz
-- Purpose: Health check endpoint for monitoring and deployment systems.
-- Request: No params.
-- Responses:
+ POST `/chat` — general-purpose chat endpoint for Grok 4 Fast
   - 200 OK → `{ "status": "ok" }`
 
 -### GET /courses
@@ -28,28 +20,20 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `courseId` (string, optional) – UUID of a specific course. Must belong to the provided `userId`.
   - When only `userId` is supplied, returns all of that user's courses ordered by `created_at` descending.
   - When both `userId` and `courseId` are supplied, returns that single course if it belongs to the user; otherwise 404.
-  - 200 OK (collection)
-    ```json
-    {
       "success": true,
       "count": 2,
       "courses": [Course, Course]
     }
     ```
   - 200 OK (single)
-    ```json
-    {
       "success": true,
-      "course": Course
-    }
+    - Requires `userId` query param (UUID).
     ```
   - 400 Bad Request → Missing params, invalid UUID formats, or `courseId` without `userId`.
   - 404 Not Found → Course not found for that user.
-  - 500 Internal Server Error → Database read failure or unexpected exception.
 
 ### GET /courses/ids
 - Purpose: Return all course IDs for a given user.
-- Query parameters:
   - `userId` (string, required) – UUID of the user.
 - Responses:
   - 200 OK → `{ "userId": "...", "count": n, "courseIds": ["uuid", ...] }`
@@ -59,11 +43,9 @@ Base URL (production): https://edtech-backend-api.onrender.com
 ### GET /courses/data
 - Purpose: Return only the `course_data` JSON for a specific course, verifying the owner.
 - Query parameters:
-  - `userId` (string, required) – UUID of the user.
-  - `courseId` (string, required) – UUID of the course.
 - Responses:
   - 200 OK → `{ "courseId": "...", "userId": "...", "course_data": { ... } }`
-  - 400 Bad Request → Missing/invalid params.
+    - Requires `userId` query param (UUID) and enforces ownership.
   - 404 Not Found → Course not found for the user.
   - 500 Internal Server Error → Database error.
 
@@ -77,12 +59,17 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 400 Bad Request → Invalid format or id.
   - 404 Not Found → No content with that id in the specified format.
   - 500 Internal Server Error → Database error.
-`Course` object fields
+   Query params:
+   - `format`: one of `video`, `reading`, `flashcards`, `mini_quiz`, `practice_exam`
+   - `id`: UUID of the content item
+   - `userId`: UUID of the requesting user; must own the content
+
+   Returns `{ id, format, data }`.
 - `id` (string) – Course record UUID.
 - `user_id` (string) – Owner UUID.
-- `course_data` (object|null) – Structured course syllabus stored from `ml_course.json` (preferred).
 - `course_json` (object|null) – Alias of `course_data` retained for backward compatibility.
 - `created_at` (string) – ISO timestamp when the record was created.
+    - `userId` (string, required, UUID): caller identity (validated format)
 - `finish_by_date` (string|null) – Optional target completion date (ISO 8601).
 - `course_selection` (object|null) – Selected source course `{ code, title }`.
 - `syllabus_text` (string|null) – Raw syllabus text provided by the user.
@@ -91,11 +78,11 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - `exam_files` (FileMeta[]) – Uploaded exam reference files.
 
 `FileMeta` object fields
-- `name` (string) – File display name.
 - `url` (string, optional) – Location where the file can be fetched.
 - `size` (number, optional) – File size in bytes.
 - `type` (string, optional) – MIME type.
 - `content` (string, optional) – Base64-encoded file payload when the file is uploaded inline.
+    "userId": "22222222-2222-2222-2222-222222222222",
 
 ### POST /courses
 - Purpose: Generate study topics with Grok 4 Fast Reasoning (via OpenRouter) and return them to the caller (no persistence yet).

@@ -6,6 +6,7 @@ import coursesRouter from './routes/courses.js';
 import flashcardsRouter from './routes/flashcards.js';
 import courseStructureRouter from './routes/course-structure.js';
 import contentRouter from './routes/content.js';
+import chatRouter from './routes/chat.js';
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/courses', coursesRouter);
 app.use('/flashcards', flashcardsRouter);
 app.use('/course-structure', courseStructureRouter);
 app.use('/content', contentRouter);
+app.use('/chat', chatRouter);
 
 // 404 handler
 app.use((req, res) => {
