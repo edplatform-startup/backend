@@ -219,23 +219,40 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 504 Gateway Timeout → Grok request exceeded 30 seconds.
 
 ### GET /college-courses
-- Purpose: Search catalog for college courses by code or title.
+- Purpose: Search real-time college course catalogs across 750+ U.S. institutions (via Ellucian Banner systems) by college name and course query. Uses fuzzy string matching to return the top 50 most relevant courses from the latest available term.
+- External API Used: `https://api.collegeplanner.io/v1` (unofficial, public, no auth required)
 - Query parameters:
-  - `query` (string, required) – Search term. Whitespace is removed; partial matches supported.
+  - `college` (string, **required**) – Name of the college (e.g., `"University of Washington"`, `"Stanford"`, `"MIT"`). Fuzzy-matched against known institutions.
+  - `course` (string, **required**) – Course code or title keyword (e.g., `"cs50"`, `"intro to machine learning"`). Used for similarity scoring across `code` and `title`.
+- Behavior:
+  1. Fuzzy-matches the `college` name to the closest known institution (minimum similarity threshold: 0.5).
+  2. Fetches the **latest term** (e.g., `202508`) for that college.
+  3. Retrieves **all subjects** and **all courses** in that term.
+  4. Computes **string similarity** between the `course` query and each course’s `code + title`.
+  5. Returns the **top 50 most similar courses**, sorted by relevance.
 - Responses:
   - 200 OK →
     ```json
     {
-      "query": "CSE142",
-      "count": 2,
+      "college": "University of Washington",
+      "query": "cs50",
+      "count": 10,
       "items": [
-        { "code": "CSE142", "title": "Foundations of CS I" },
-        { "code": "CSE142A", "title": "Foundations of CS I (Honors)" }
+        {
+          "code": "CSE 142",
+          "title": "Computer Programming I"
+        },
+        {
+          "code": "INFO 201",
+          "title": "Technical Foundations of Informatics"
+        },
+        {
+          "code": "CSE 143",
+          "title": "Computer Programming II"
+        }
+        // ... up to 50 results
       ]
     }
-    ```
-  - 400 Bad Request → Missing `query`.
-  - 500 Internal Server Error → Supabase error or unexpected exception.
 
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
