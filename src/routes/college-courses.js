@@ -9,9 +9,17 @@ const BASE_URL = 'https://api.collegeplanner.io/v1/';
 
 // Helper to fetch JSON from API
 async function fetchApi(endpoint) {
-  const response = await fetch(`${BASE_URL}${endpoint}`);
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+  });
   if (!response.ok) {
     throw new Error(`API error: ${response.statusText}`);
+  }
+  const contentType = response.headers.get('Content-Type');
+  if (!contentType || !contentType.includes('application/json')) {
+    throw new Error(`Expected JSON but received ${contentType}`);
   }
   return await response.json();
 }

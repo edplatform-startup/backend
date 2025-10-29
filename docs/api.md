@@ -15,6 +15,66 @@ Base URL (production): https://edtech-backend-api.onrender.com
  POST `/chat` — general-purpose chat endpoint for Grok 4 Fast
   - 200 OK → `{ "status": "ok" }`
 
+### POST /chat
+- Purpose: General-purpose chat endpoint for Grok 4 Fast (OpenRouter). Accepts a system prompt and a user message, plus optional context, attachments, and model controls. Returns the model's response.
+- Request body (JSON):
+  ```json
+  {
+    "system": "string (required)",
+    "user": "string (required)",
+    "userId": "string (required, UUID)",
+    "context": "string | object | array (optional)",
+    "useWebSearch": "boolean (optional, default: false)",
+    "responseFormat": "text | json (optional, default: \"text\")",
+    "temperature": "number (optional, default: 0.5)",
+    "maxTokens": "number (optional, default: 600)",
+    "attachments": [
+      { "type": "string", "mimeType": "string", "data": "string (base64)", "url": "string", "name": "string" }
+    ],
+    "reasoning": "boolean | string | object (optional)"
+  }
+  ```
+- Field requirements:
+  - `system` (string, required) – System prompt / instructions for the model.
+  - `user` (string, required) – The user's message or question.
+  - `userId` (string, required) – Caller identity; must be a valid UUID (validated server-side).
+  - `context` (optional) – Additional context to include with the system prompt. May be a string or any JSON-serializable object/array.
+  - `useWebSearch` (optional) – When true, the server enables a web search tool for the model.
+  - `responseFormat` (optional) – `"text"` (default) returns a plain text string; `"json"` requests a JSON object response when supported.
+  - `temperature` (optional) – Floating number controlling randomness; default `0.5`.
+  - `maxTokens` (optional) – Maximum tokens to allow in model output; default `600`.
+  - `attachments` (optional) – Array of file-like objects; each may include inline base64 `data` or a `url`.
+  - `reasoning` (optional) – Enable or configure model reasoning (boolean or structured object).
+- Responses:
+  - 200 OK → Model response (JSON):
+    ```json
+    {
+      "model": "x-ai/grok-4-fast",
+      "content": "<string>" // normalized model output (text) or serialized JSON depending on responseFormat
+    }
+    ```
+  - 400 Bad Request → Missing or invalid `system`, `user`, or `userId` (invalid UUID) or un-serializable `context`.
+  - 500 Internal Server Error → Unexpected exception calling the model or server-side error. The body may include `details` and a `debug` block for troubleshooting (not recommended to rely on in production).
+- Examples:
+  - Request:
+    ```json
+    {
+      "system": "You are a helpful tutor.",
+      "user": "Explain the difference between supervised and unsupervised learning.",
+      "userId": "550e8400-e29b-41d4-a716-446655440000",
+      "context": { "course": "Machine Learning" },
+      "useWebSearch": true,
+      "responseFormat": "text"
+    }
+    ```
+  - Response (200):
+    ```json
+    {
+      "model": "x-ai/grok-4-fast",
+      "content": "Supervised learning uses labeled data to train models, while unsupervised learning finds patterns in unlabeled data."
+    }
+    ```
+
 -### GET /courses
   - `userId` (string) – Required to list a user's courses. Also required when requesting a specific `courseId`.
   - `courseId` (string, optional) – UUID of a specific course. Must belong to the provided `userId`.

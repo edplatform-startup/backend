@@ -491,7 +491,7 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
 
 // Prompt builders per format
 function buildVideoPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a precise research assistant who finds the best short YouTube video for a topic. Always return strict JSON.';
+  const system = 'You are a precise research assistant who finds the best short YouTube video for a topic. Always return strict JSON and always make sure the final response has a video.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
@@ -504,25 +504,27 @@ function buildVideoPrompt({ className, moduleKey, desc }) {
 }
 
 function buildReadingPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a senior TA producing crisp reading summaries. Always return strict JSON.';
+  const system = 'You are an expert educator writing a teaching article for learners. Always return strict JSON.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Produce an article-style summary with 3–6 sections.',
-    'Return JSON: { "article": { "title": "...", "sections": [ { "heading": "...", "summary": "..." } ] } }',
+    'Write a single teaching article for someone learning this concept. The article should have a clear title, a concise subtitle, and a well-structured body that explains the concept step by step.',
+    'Return JSON exactly as: { "article": { "title": "...", "subtitle": "...", "body": "..." } }',
   ].join('\n');
   return { system, user };
 }
 
 function buildFlashcardsPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a precise flashcard writer. Always return strict JSON.';
+  const system = 'You are a flashcard expert creating concise flashcards for long-term retention. Only include concept explanations, definitions, or key facts. Do not include practice problems or unrelated content. Use math or formulas only if directly relevant.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Create one high-yield flashcard.',
-    'Return JSON exactly as: { "question": "...", "answer": "...", "explanation": "..." }',
+    'Generate a set of flashcards (3–7) that help learners retain the key concepts. Each flashcard should be concise and focused on concept retention.',
+    'If a flashcard contains math or formulas, use the following format: { "inline-math": "..." } for inline math. Otherwise, use { "text": "..." } for text.',
+    'Return JSON exactly as: { "1": [ { "content": [ { "text": "..." } ] }, ... ], "2": [ ... ], ... }',
+    'Do not include practice problems, trivia, or unrelated content. Only generate math if it is relevant to the concept.',
   ].join('\n');
   return { system, user };
 }
