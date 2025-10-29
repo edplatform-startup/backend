@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import axios from 'axios';
+import { getSupabase } from '../supabaseClient.js';
 import stringSimilarity from 'string-similarity-js';
 
 const router = Router();
@@ -17,49 +17,45 @@ router.get('/', async (req, res) => {
   }
 
   try {
-    const baseUrl = 'https://api.collegeplanner.io/v1/';
+    // Hardcode supported colleges (expand as needed)
+    const supportedColleges = [
+      { code: 'UW', name: 'University of Washington' },
+      // Add more colleges here with corresponding data sources
+    ];
 
-    // Fetch list of supported colleges
-    const { data: colleges } = await axios.get(`${baseUrl}colleges`);
-
-    // Assume colleges is an array of {code: 'GeorgiaTech', name: 'Georgia Institute of Technology'}
-    const names = colleges.map(c => c.name);
+    const names = supportedColleges.map(c => c.name);
     const bestMatch = stringSimilarity.findBestMatch(college, names).bestMatch;
 
     if (bestMatch.rating < 0.5) {
       return res.status(400).json({ error: 'No matching college found' });
     }
 
-    const selectedCollege = colleges.find(c => c.name === bestMatch.target);
+    const selectedCollege = supportedColleges.find(c => c.name === bestMatch.target);
     const collegeCode = selectedCollege.code;
 
-    // Fetch terms for the college
-    const { data: terms } = await axios.get(`${baseUrl}terms?college=${collegeCode}`);
-
-    // Assume terms is an array of strings like '201908'
-    if (terms.length === 0) {
-      return res.status(404).json({ error: 'No terms found for this college' });
-    }
-    const latestTerm = terms.sort((a, b) => b.localeCompare(a))[0];
-
-    // Fetch subjects for the term
-    const { data: subjects } = await axios.get(`${baseUrl}subjects?college=${collegeCode}&term=${latestTerm}`);
-
-    // Assume subjects is an array of strings like 'ACCT'
-    const coursePromises = subjects.map(sub =>
-      axios.get(`${baseUrl}courses?college=${collegeCode}&term=${latestTerm}&subject=${sub}`)
-        .catch(() => ({ data: [] })) // Handle failed subject fetches gracefully
-    );
-
-    const responses = await Promise.all(coursePromises);
-
     let allCourses = [];
-    responses.forEach(res => {
-      allCourses = allCourses.concat(res.data.map(row => ({
-        code: `${row.department} ${row.course_number}`,
-        title: row.course_title
-      })));
-    });
+
+    if (collegeCode === 'UW') {
+      // Fetch from Supabase for UW
+      const supabase = getSupabase();
+      const { data, error } = await supabase
+        .from('uw_courses')
+        .select('code,title')
+        .limit(10000); // Fetch a large number to get all courses
+
+      if (error) {
+        console.error('Supabase error:', error);
+        return res.status(500).json({ error: 'Failed to fetch courses' });
+      }
+
+      allCourses = (data || []).map(row => ({
+        code: row.code,
+        title: row.title
+      }));
+    } else {
+      // Placeholder for other colleges
+      return res.status(400).json({ error: 'College not supported yet' });
+    }
 
     // Compute similarities
     const lowerQuery = courseQuery.toLowerCase();
