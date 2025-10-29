@@ -24,13 +24,23 @@ router.get('/', async (req, res) => {
     ];
 
     const names = supportedColleges.map(c => c.name);
-    const bestMatch = stringSimilarity.findBestMatch(college, names).bestMatch;
 
-    if (bestMatch.rating < 0.5) {
+    // Find best match manually
+    let bestRating = 0;
+    let bestTarget = null;
+    for (const name of names) {
+      const sim = stringSimilarity(college, name);
+      if (sim > bestRating) {
+        bestRating = sim;
+        bestTarget = name;
+      }
+    }
+
+    if (bestRating < 0.5) {
       return res.status(400).json({ error: 'No matching college found' });
     }
 
-    const selectedCollege = supportedColleges.find(c => c.name === bestMatch.target);
+    const selectedCollege = supportedColleges.find(c => c.name === bestTarget);
     const collegeCode = selectedCollege.code;
 
     let allCourses = [];
