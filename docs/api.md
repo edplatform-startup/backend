@@ -9,6 +9,18 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Versioning: None (single, unversioned API)
 - Rate limiting: Not implemented
 
+## Request size limits
+
+- Default maximum request body size: 150mb (configurable via `REQUEST_BODY_LIMIT`, e.g., `20mb`).
+- If exceeded, the server responds with HTTP 413 Payload Too Large:
+  ```json
+  { "error": "Payload too large", "details": "The request body exceeded the allowed size...", "maxAllowed": "150mb" }
+  ```
+- Recommendations for large inputs:
+  - Prefer providing `url` for files instead of large base64 `content`.
+  - If sending base64 `content`, keep individual files reasonably small (a few MB) and avoid bundling many files in a single request.
+  - For Grok models (which do not accept file streams), the server will inline text content from files when possible; non-textual binaries should be provided by URL.
+
 ## Endpoints
 
 ### GET /
@@ -220,6 +232,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
 - Behavior:
   - Validates inputs and forwards contextual data, including file attachments, to Grok 4 Fast with reasoning and optional web search.
+  - For Grok models that do not support file inputs, the server automatically inlines textual file content into the prompt (when decodable) and includes URLs for non-text files.
   - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
   - The model produces a concise plan parsed into the course structure: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }`.
   - Supported formats: `video`, `reading`, `flashcards`, `mini quiz`, `practice exam`. `project` and `lab` are ignored if present.
@@ -234,6 +247,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Responses:
   - 201 Created → `{ "courseId": "<uuid>" }`
   - 400 Bad Request → Invalid inputs (missing topics/userId, bad dates, malformed file metadata, etc.).
+  - 413 Payload Too Large → Request body exceeds configured limit; prefer URLs for files.
   - 502 Bad Gateway → Model returned empty/invalid JSON structure or persistence failed.
   - 500 Internal Server Error → Unexpected failure calling OpenRouter.
 

@@ -11,7 +11,9 @@ import chatRouter from './routes/chat.js';
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+// Increase JSON and URL-encoded body limits to support inline files and rich context
+app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '150mb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.REQUEST_BODY_LIMIT || '150mb' }));
 app.use(morgan('dev'));
 
 app.get('/', (req, res) => {
@@ -38,6 +40,13 @@ app.use((req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({
+      error: 'Payload too large',
+      details: 'The request body exceeded the allowed size. Consider sending files by URL or reducing inline content.',
+      maxAllowed: process.env.REQUEST_BODY_LIMIT || '150mb',
+    });
+  }
   res.status(500).json({ error: 'Internal Server Error: ' + err.message });
 });
 
