@@ -143,6 +143,83 @@ function parseToolArguments(rawArgs) {
   return {};
 }
 
+function isLikelyText(buffer) {
+  if (!buffer || buffer.length === 0) return false;
+  let printable = 0;
+  const len = Math.min(buffer.length, 4096);
+  for (let i = 0; i < len; i++) {
+    const c = buffer[i];
+    // allow common whitespace and printable ASCII
+    if (
+      c === 9 || c === 10 || c === 13 || // tab, LF, CR
+      (c >= 32 && c <= 126)
+    ) {
+      printable++;
+    }
+  }
+  return printable / len > 0.85;
+}
+
+function decodeBase64ToUtf8Safe(b64) {
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    if (!isLikelyText(buf)) return null;
+    const text = buf.toString('utf8');
+    // basic sanity: avoid lots of NULs
+    if (/\u0000/.test(text)) return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+function buildAttachmentsInlineText(attachments, opts = {}) {
+  const maxPerFileChars = opts.maxPerFileChars || 8000;
+  const maxTotalChars = opts.maxTotalChars || 24000;
+  if (!Array.isArray(attachments) || attachments.length === 0) return '';
+  let out = [];
+  let total = 0;
+  let index = 1;
+  for (const att of attachments) {
+    if (!att || typeof att !== 'object') continue;
+    const name = att.name || `file_${index}`;
+    const mime = att.mimeType || att.mime_type || att.type || 'file';
+    let header = `File ${index}: ${name} (${mime})`;
+    let body = '';
+    if (att.data) {
+      const text = decodeBase64ToUtf8Safe(att.data);
+      if (typeof text === 'string' && text.trim()) {
+        body = text.trim();
+      } else {
+        body = '[content omitted: non-text or undecodable]';
+      }
+    } else if (att.url) {
+      body = `URL provided: ${att.url}`;
+    } else {
+      body = '[no data or url provided]';
+    }
+
+    if (body.length > maxPerFileChars) {
+      body = body.slice(0, maxPerFileChars) + '\n[truncated]';
+    }
+
+    const block = `${header}\n${body}`;
+    if (total + block.length > maxTotalChars) {
+      out.push('[additional files truncated due to size]');
+      break;
+    }
+    out.push(block);
+    total += block.length;
+    index++;
+  }
+  if (out.length === 0) return '';
+  return [
+    'Attached materials (inlined as text for models without file-input support):',
+    '---',
+    out.join('\n\n---\n\n'),
+  ].join('\n');
+}
+
 async function defaultWebSearch(query, apiKey) {
   if (customWebSearchExecutor) {
     return await customWebSearchExecutor(query);
@@ -295,6 +372,13 @@ export async function executeOpenRouterChat(options = {}) {
     : [];
   const { definitions: toolDefinitions, handlers: toolHandlers } = formatToolDefinitions(tools);
   const reasoningPayload = sanitizeReasoning(reasoning);
+  const shouldInlineAttachments = typeof model === 'string' && /^x-ai\/grok/.test(model);
+  if (shouldInlineAttachments && validatedAttachments.length > 0) {
+    const inlineText = buildAttachmentsInlineText(validatedAttachments);
+    if (inlineText) {
+      conversation.push({ role: 'user', content: inlineText });
+    }
+  }
 
   let iterations = 0;
 
@@ -319,7 +403,7 @@ export async function executeOpenRouterChat(options = {}) {
       requestBody.tool_choice = toolChoice || 'auto';
     }
 
-    if (validatedAttachments.length > 0) {
+    if (!shouldInlineAttachments && validatedAttachments.length > 0) {
       requestBody.attachments = validatedAttachments.map((attachment, index) => {
         const { type, mimeType, data, url, name } = attachment;
         const normalized = { type: type || 'file' };
@@ -402,7 +486,7 @@ function buildStudyTopicsPrompt({
   lines.push('You are an AI study planner who must output ONLY a comma-separated list of study topics with no additional text.');
   lines.push('Tasks:');
   lines.push('1. Analyze the provided materials about the course and exam.');
-  lines.push('2. Use the web_search tool when helpful to supplement course knowledge and best study practices.');
+  lines.push('2. Use the web_search tool to understand the course being studied for beyond the information provided and best study practices.');
   lines.push('3. Determine the most important topics to learn given the time remaining.');
   lines.push('4. Ensure coverage of every concept the learner must master for maximal success.');
   lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations).');
@@ -410,7 +494,7 @@ function buildStudyTopicsPrompt({
   lines.push('Provided context:');
 
   if (courseSelection) {
-    lines.push(`- Course Selection: ${courseSelection.code} — ${courseSelection.title}`);
+    lines.push(`- Course Selection: ${courseSelection.college} — ${courseSelection.course}`);
   }
   if (finishByDate) {
     lines.push(`- Target Exam/Completion Date: ${finishByDate}`);
