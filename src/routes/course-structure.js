@@ -335,6 +335,25 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Expose LLM selection metadata via headers without breaking response shape
+    try {
+      if (result?.model) res.set('X-Model-Name', String(result.model));
+      if (typeof result?.fallbackOccurred === 'boolean') {
+        res.set('X-Model-Fallback', result.fallbackOccurred ? '1' : '0');
+      }
+      if (Number.isInteger(result?.retries)) {
+        res.set('X-Model-Retries', String(result.retries));
+      }
+      if (Array.isArray(result?.attemptedModels)) {
+        const attempted = result.attemptedModels
+          .map((m) => `${m.name}:${m.attempts}`)
+          .join(',');
+        if (attempted) res.set('X-Models-Attempted', attempted);
+      }
+    } catch (_) {
+      // ignore header issues
+    }
+
     // Update placeholder with final course_data
     const { data: updated, error: updateError } = await supabase
       .schema('api')

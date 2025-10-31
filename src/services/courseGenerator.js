@@ -1,8 +1,10 @@
 import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
 
-const COURSE_MODEL_NAME = 'x-ai/grok-4-fast';
+const COURSE_MODEL_NAME = 'google/gemini-2.5-pro';
+const FALLBACK_MODEL_NAME = 'x-ai/grok-4-fast';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_TOOL_ITERATIONS = 6;
+const MAX_RETRIES_PER_MODEL = 2; // additional retries after first attempt
 
 let customCourseGenerator = null;
 
@@ -16,10 +18,10 @@ export function clearCourseStructureGenerator() {
 
 function resolveCourseApiKey(providedKey) {
   const key =
-    providedKey || process.env.OPENROUTER_GROK_4_FAST_KEY || process.env.OPENROUTER_API_KEY;
+    providedKey || process.env.OPENROUTER_GEMINI_KEY || process.env.OPENROUTER_API_KEY;
 
   if (!key) {
-    throw new Error('Missing OpenRouter API key for GPT-5 (set OPENROUTER_GPT5_KEY or OPENROUTER_API_KEY).');
+    throw new Error('Missing OpenRouter API key for Gemini 2.5 Pro (set OPENROUTER_GEMINI_KEY or OPENROUTER_API_KEY).');
   }
 
   return key;
@@ -95,7 +97,7 @@ const VALID_FORMATS = new Map([
 ]);
 
 const OUTPUT_FORMAT_HINT = 'Module/Submodule | Format | Desc';
-const MAX_DESCRIPTION_WORDS = 18;
+const MAX_DESCRIPTION_WORDS = 32;
 
 function calculateRushingIndex(startDate, endDate, topicCount) {
   if (!startDate || !endDate || !topicCount) return null;
@@ -200,12 +202,170 @@ function buildCourseSystemPrompt() {
     'Study process phases (loop until exam or time runs out): 1) Learn Topics, 2) Do Practice Problems, 3) Review/Learn Unfamiliar Topics, 4) repeat while time remains.',
     'Learn Topics covers conceptual understanding for all topics; Review concentrates on unfamiliar items revealed during practice.',
     'Time left and familiarity govern scaffolding: higher familiarity → less support during practice, lower familiarity → more guidance.',
-    'Rushingness Index (time left ÷ topics left) determines step pruning order: drop (1) Learn Topics familiar, (2) Learn Topics unfamiliar, (3) Practice Problems, (4) Review if still rushed.',
-    'Because no practice results exist yet, only output Learn Topics and Do Practice Problems steps, anticipating later loops implicitly.',
-    'Always rely on provided materials or the web_search tool when unsure, and never fabricate facts.',
+    'Rushingness Index (time left ÷ topics left) determines step pruning order: drop (1) Learn Topics familiar, (2) Practice Problems familiar, (3) Practice Problems unfamiliar, (4) Learn Topics familiar, (5) Review if still rushed.',
+    'Because no practice results exist yet, only output steps involving learning topics, practicing with those topics, and testing the user on the topics, anticipating later loops implicitly.',
+    'Always rely on provided materials or the web_search tool when unsure, and never fabricate facts or information. Review generated courses for factual inaccuracies or biases and prune them.',
     `Respond exclusively with ultra-concise action lines in the format "${OUTPUT_FORMAT_HINT}" using lowercase format labels.`,
+    'Each module should be a larger topic with submodules being subtopics of this, never explicity say "Learn Topics" or "Do Practice Problems" only use names relevant to the course generated.',
     'No prose, no explanations, no JSON, no code fences.',
   ].join('\n');
+}
+
+function allowedFormatsList() {
+  return Array.from(new Set(Array.from(VALID_FORMATS.values()))).join(', ');
+}
+
+function buildCorrectionLineFromError(error) {
+  const base = `Your previous response did not follow the required output. Fix it now by responding ONLY with lines in the exact format "${OUTPUT_FORMAT_HINT}" using one of [${allowedFormatsList()}], no prose, no JSON, no code fences.`;
+  if (!error) return base;
+  const detail = typeof error?.details === 'string' ? error.details : error?.message;
+  if (detail) {
+    return `${base} What you got wrong: ${detail}`;
+  }
+  return base;
+}
+
+async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
+  const result = await executeOpenRouterChat({
+    apiKey,
+    model,
+    temperature: 0.3,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    reasoning: { enabled: true, effort: 'medium' },
+    tools: [createWebSearchTool()],
+    toolChoice: 'auto',
+    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    attachments,
+    messages,
+  });
+  return result;
+}
+
+function extractRawFromResult({ content, message }) {
+  let raw = normalizeContentParts(content);
+  if (!raw && message && typeof message === 'object') {
+    if (message.parsed && typeof message.parsed === 'object') {
+      raw = stringifyJson(message.parsed).trim();
+    } else if (message.json && typeof message.json === 'object') {
+      raw = stringifyJson(message.json).trim();
+    } else if (message.data && typeof message.data === 'object') {
+      raw = stringifyJson(message.data).trim();
+    }
+  }
+  return raw || '';
+}
+
+function tryParseCourseStructure(raw, message) {
+  // Accept SDK-parsed object if present
+  if (message?.parsed && typeof message.parsed === 'object' && !Array.isArray(message.parsed)) {
+    return { ok: true, courseStructure: message.parsed };
+  }
+  // Try JSON first
+  if (raw) {
+    try {
+      const asJson = JSON.parse(raw);
+      if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
+        return { ok: true, courseStructure: asJson };
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+  // Then concise lines format
+  try {
+    const structure = convertConcisePlanToStructure(raw);
+    return { ok: true, courseStructure: structure };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+async function generateWithRetriesAndFallback({ apiKey, baseMessages, attachments }) {
+  const attemptsLog = [];
+
+  // helper to run attempts for a specific model
+  const runForModel = async (modelName) => {
+    const corrections = [];
+    for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+      const msgs = [...baseMessages];
+      if (corrections.length) {
+        msgs.push({ role: 'user', content: corrections[corrections.length - 1] });
+      }
+
+      let chat;
+      try {
+        chat = await tryGeneratePlanOnce({ apiKey, model: modelName, messages: msgs, attachments });
+      } catch (err) {
+        attemptsLog.push({ model: modelName, attempt: attempt + 1, error: err?.message || 'request failed' });
+        if (attempt >= MAX_RETRIES_PER_MODEL) {
+          return { ok: false };
+        }
+        const correction = buildCorrectionLineFromError(err);
+        corrections.push(correction);
+        continue;
+      }
+
+      const raw = extractRawFromResult(chat);
+      if (!raw) {
+        const debug = summarizeMessageForDebug(chat?.message, chat?.response);
+        const err = new Error('Course generator returned empty content');
+        err.details = { finishReason: debug?.finishReason || 'unknown', responseId: chat?.response?.id };
+        attemptsLog.push({ model: modelName, attempt: attempt + 1, error: err.message });
+        if (attempt >= MAX_RETRIES_PER_MODEL) {
+          return { ok: false };
+        }
+        const correction = buildCorrectionLineFromError(err);
+        corrections.push(correction);
+        continue;
+      }
+
+      const parsed = tryParseCourseStructure(raw, chat?.message);
+      if (parsed.ok) {
+        return {
+          ok: true,
+          model: modelName,
+          raw,
+          courseStructure: parsed.courseStructure,
+          retries: attempt,
+          corrections,
+          attemptsLog,
+        };
+      }
+
+      // build correction and retry
+      attemptsLog.push({ model: modelName, attempt: attempt + 1, error: parsed.error?.message || 'unparseable content' });
+      if (attempt >= MAX_RETRIES_PER_MODEL) {
+        return { ok: false };
+      }
+      const correction = buildCorrectionLineFromError(parsed.error);
+      corrections.push(correction);
+    }
+    return { ok: false };
+  };
+
+  // Try primary (Gemini)
+  const primary = await runForModel(COURSE_MODEL_NAME);
+  if (primary.ok) {
+    return { ...primary, fallbackOccurred: false, attemptedModels: [{ name: COURSE_MODEL_NAME, attempts: primary.retries + 1 }] };
+  }
+
+  // Fallback to Grok 4 Fast
+  const fallback = await runForModel(FALLBACK_MODEL_NAME);
+  if (fallback.ok) {
+    return {
+      ...fallback,
+      fallbackOccurred: true,
+      attemptedModels: [
+        { name: COURSE_MODEL_NAME, attempts: MAX_RETRIES_PER_MODEL + 1 },
+        { name: FALLBACK_MODEL_NAME, attempts: fallback.retries + 1 },
+      ],
+    };
+  }
+
+  const err = new Error('All models failed to produce a valid course structure');
+  err.statusCode = 502;
+  err.details = { attemptedModels: [COURSE_MODEL_NAME, FALLBACK_MODEL_NAME] };
+  throw err;
 }
 
 function convertConcisePlanToStructure(rawText) {
@@ -362,75 +522,24 @@ export async function generateCourseStructure({
     topicFamiliarity,
   });
 
-  const { content, message, response } = await executeOpenRouterChat({
+  const baseMessages = [
+    { role: 'system', content: buildCourseSystemPrompt() },
+    { role: 'user', content: userMessage },
+  ];
+
+  const result = await generateWithRetriesAndFallback({
     apiKey,
-    model: COURSE_MODEL_NAME,
-    temperature: 0.3,
-    maxTokens: DEFAULT_MAX_TOKENS,
-    reasoning: { enabled: true, effort: 'medium' },
-    tools: [createWebSearchTool()],
-    toolChoice: 'auto',
-    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    baseMessages,
     attachments: normalizedAttachments,
-    messages: [
-      { role: 'system', content: buildCourseSystemPrompt() },
-      { role: 'user', content: userMessage },
-    ],
   });
 
-  let raw = normalizeContentParts(content);
-
-  if (!raw && message && typeof message === 'object') {
-    if (message.parsed && typeof message.parsed === 'object') {
-      raw = stringifyJson(message.parsed).trim();
-    } else if (message.json && typeof message.json === 'object') {
-      raw = stringifyJson(message.json).trim();
-    } else if (message.data && typeof message.data === 'object') {
-      raw = stringifyJson(message.data).trim();
-    }
-  }
-
-  if (!raw) {
-    const debug = summarizeMessageForDebug(message, response);
-    const err = new Error('Course generator returned empty content');
-    err.statusCode = 502;
-    err.details = {
-      finishReason: debug?.finishReason || 'unknown',
-      responseId: response?.id,
-      usage: response?.usage,
-    };
-    err.debug = debug;
-    throw err;
-  }
-
-  let parsedStructure = null;
-
-  if (message?.parsed && typeof message.parsed === 'object') {
-    parsedStructure = message.parsed;
-  } else {
-    try {
-      parsedStructure = JSON.parse(raw);
-    } catch (error) {
-      parsedStructure = null;
-    }
-  }
-
-  if (!parsedStructure || typeof parsedStructure !== 'object' || Array.isArray(parsedStructure)) {
-    try {
-      parsedStructure = convertConcisePlanToStructure(raw);
-    } catch (error) {
-      const err = new Error('Course generator returned unparseable content');
-      err.statusCode = 502;
-      err.details = error.details || error.message;
-      err.rawResponse = raw;
-      throw err;
-    }
-  }
-
   return {
-    model: COURSE_MODEL_NAME,
-    raw,
-    courseStructure: parsedStructure,
+    model: result.model,
+    raw: result.raw,
+    courseStructure: result.courseStructure,
+    retries: result.retries,
+    fallbackOccurred: result.fallbackOccurred,
+    attemptedModels: result.attemptedModels,
   };
 }
 
@@ -445,10 +554,16 @@ function withTimeout(promiseFactory, timeoutMs, label = 'operation') {
 }
 
 async function callModelJson({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000, retries = 1 }) {
-  const exec = async (signal) => {
+  const doExec = async ({ signal, model, correction }) => {
+    const messages = [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ];
+    if (correction) messages.push({ role: 'user', content: correction });
+
     const { content, message } = await executeOpenRouterChat({
       apiKey,
-      model: COURSE_MODEL_NAME,
+      model,
       temperature: 0.2,
       maxTokens: 1200,
       reasoning: { enabled: true, effort: 'medium' },
@@ -457,10 +572,7 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
       maxToolIterations: 3,
       attachments,
       responseFormat: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
+      messages,
       signal,
     });
 
@@ -478,14 +590,25 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
     }
   };
 
-  let attempt = 0;
-  while (true) {
-    try {
-      return await withTimeout(exec, timeoutMs, 'model-json');
-    } catch (err) {
-      if (attempt >= retries) throw err;
-      attempt += 1;
+  const runWithModel = async (modelName) => {
+    let attempt = 0;
+    let correction;
+    while (attempt <= retries) {
+      try {
+        return await withTimeout((signal) => doExec({ signal, model: modelName, correction }), timeoutMs, 'model-json');
+      } catch (err) {
+        if (attempt >= retries) throw err;
+        attempt += 1;
+        correction = 'Your previous response was not valid JSON or did not match the requested structure. Return STRICT JSON only, no prose and no code fences.';
+      }
     }
+  };
+
+  try {
+    return await runWithModel(COURSE_MODEL_NAME);
+  } catch (_) {
+    // Fallback to Grok 4 Fast
+    return await runWithModel(FALLBACK_MODEL_NAME);
   }
 }
 
@@ -498,6 +621,7 @@ function buildVideoPrompt({ className, moduleKey, desc }) {
     `Instruction: ${desc}`,
     'Task: Use the web_search tool to identify a single high-quality YouTube video (≤ 15 minutes) that best teaches this topic.',
     'Choose official or reputable sources. Prefer concise, focused explanations.',
+    'The professor desigining this course specified instructions given earlier, use them to guide your search',
     'Return JSON exactly as: { "title": "...", "description": "...", "url": "https://www.youtube.com/..." }',
   ].join('\n');
   return { system, user };
@@ -509,7 +633,7 @@ function buildReadingPrompt({ className, moduleKey, desc }) {
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Write a single teaching article for someone learning this concept. The article should have a clear title, a concise subtitle, and a well-structured body that explains the concept step by step.',
+    'Write a single teaching article for someone learning this concept. The article should have a clear title, a concise subtitle, and a well-structured body that explains the concept step by step. Follow the instructions the professor gave.',
     'Return JSON exactly as: { "article": { "title": "...", "subtitle": "...", "body": "..." } }',
   ].join('\n');
   return { system, user };
@@ -521,8 +645,8 @@ function buildFlashcardsPrompt({ className, moduleKey, desc }) {
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Generate a set of flashcards (3–7) that help learners retain the key concepts. Each flashcard should be concise and focused on concept retention.',
-    'If a flashcard contains math or formulas, use the following format: { "inline-math": "..." } for inline math. Otherwise, use { "text": "..." } for text.',
+    'Generate a set of flashcards (3–7) that help learners retain the key concepts. Each flashcard should be concise and focused on concept retention. Follow the instructions the professor gave.',
+    'If a flashcard contains math or formulas, use the following format: { "inline-math": "..." } for inline math formatted in LaTeX. Otherwise, use { "text": "..." } for text.',
     'Return JSON exactly as: { "1": [ { "content": [ { "text": "..." } ] }, ... ], "2": [ ... ], ... }',
     'Do not include practice problems, trivia, or unrelated content. Only generate math if it is relevant to the concept.',
   ].join('\n');
@@ -535,7 +659,7 @@ function buildMiniQuizPrompt({ className, moduleKey, desc }) {
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Create 4–6 MCQ questions with exactly 4 options, one correct answer, and a short explanation.',
+    'Create 4–6 MCQ questions with exactly 4 options, one correct answer, and a short explanation. Follow the instructions the professor gave.',
     'Return JSON: { "questions": [ { "question": "...", "options": ["A","B","C","D"], "answer": "B", "explanation": "..." } ] }',
   ].join('\n');
   return { system, user };
@@ -548,7 +672,7 @@ function buildPracticeExamPrompt({ className, moduleKey, desc, examStructureText
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
     examStructureText ? `Exam hints: ${examStructureText}` : '',
-    'Create a small practice exam with MCQ and FRQ items (2–3 each).',
+    'Create a practice exam that fits the exam structure or hints if they are specified. Follow the instructions the professor gave.',
     'MCQ have 4 options, one correct answer, brief explanation.',
     'FRQ provide a detailed prompt and a short rubric.',
     'Return JSON: { "mcq": [ { "question": "...", "options": ["A","B","C","D"], "answer": "C", "explanation": "..." } ], "frq": [ { "prompt": "...", "rubric": "..." } ] }',
@@ -597,19 +721,29 @@ async function generateOneAsset({ apiKey, supabase, userId, courseId, className,
 
   let builder;
   let tools = [];
-  if (fmt === 'video') {
-    builder = buildVideoPrompt;
-    tools = [createWebSearchTool()];
-  } else if (fmt === 'reading') {
-    builder = buildReadingPrompt;
-  } else if (fmt === 'flashcards') {
-    builder = buildFlashcardsPrompt;
-  } else if (fmt === 'mini quiz') {
-    builder = buildMiniQuizPrompt;
-  } else if (fmt === 'practice exam') {
-    builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText });
-  } else {
-    return null;
+  switch (fmt) {
+    case 'video':
+      builder = buildVideoPrompt;
+      tools = [createWebSearchTool()];
+      break;
+    case 'reading':
+      builder = buildReadingPrompt;
+      tools = [createWebSearchTool()];
+      break;
+    case 'flashcards':
+      builder = buildFlashcardsPrompt;
+      tools = [createWebSearchTool()];
+      break;
+    case 'mini quiz':
+      builder = buildMiniQuizPrompt;
+      tools = [createWebSearchTool()];
+      break;
+    case 'practice exam':
+      builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText });
+      tools = [createWebSearchTool()];
+      break;
+    default:
+      return null;
   }
 
   const { system, user } = builder({ className, moduleKey, desc });
