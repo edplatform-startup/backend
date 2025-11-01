@@ -1,7 +1,7 @@
 const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_WEB_SEARCH_ENDPOINT = process.env.OPENROUTER_WEB_SEARCH_URL || 'https://openrouter.ai/api/v1/tools/web_search';
 const DEFAULT_MODEL = 'x-ai/grok-4-fast';
-const DEFAULT_MAX_TOOL_ITERATIONS = 3;
+const DEFAULT_MAX_TOOL_ITERATIONS = 9;
 
 let customStudyTopicsGenerator = null;
 let customWebSearchExecutor = null;
@@ -486,10 +486,10 @@ function buildStudyTopicsPrompt({
   lines.push('You are an AI study planner who must output ONLY a comma-separated list of study topics with no additional text.');
   lines.push('Tasks:');
   lines.push('1. Analyze the provided materials about the course and exam.');
-  lines.push('2. Use the web_search tool to understand the course being studied for beyond the information provided and best study practices.');
-  lines.push('3. Determine the most important topics to learn given the time remaining.');
-  lines.push('4. Ensure coverage of every concept the learner must master for maximal success.');
-  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations).');
+  lines.push('2. Use the web_search tool to do a deep and detailed analysis of the course being studied to generate the topics the user needs to learn.');
+  lines.push('3. Determine a list of all topics to learn for someone to be prepared for an exam for that course.');
+  lines.push('4. Ensure coverage of every concept from the class the learner must master for maximal success.');
+  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations, no commas in names of topics).');
   lines.push('');
   lines.push('Provided context:');
 
@@ -498,9 +498,6 @@ function buildStudyTopicsPrompt({
   }
   if (finishByDate) {
     lines.push(`- Target Exam/Completion Date: ${finishByDate}`);
-  }
-  if (typeof timeRemainingDays === 'number') {
-    lines.push(`- Estimated days remaining: ${timeRemainingDays}`);
   }
   if (syllabusText) {
     lines.push('- Syllabus Text:');
@@ -548,7 +545,7 @@ export async function generateStudyTopics(input) {
     model,
     reasoning: { enabled: true, effort: 'high' },
     temperature: 0.4,
-    maxTokens: 600,
+    maxTokens: 2048,
     tools: [createWebSearchTool()],
     toolChoice: 'auto',
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
