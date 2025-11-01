@@ -230,14 +230,31 @@ async function defaultWebSearch(query, apiKey) {
     return 'No search performed: empty query.';
   }
 
-  const response = await fetch(DEFAULT_WEB_SEARCH_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ query: normalizedQuery }),
-  });
+  // Add a defensive timeout for the web_search tool so tool calls don't hang the whole request
+  const controller = new AbortController();
+  const TOOL_TIMEOUT_MS = 20000; // 20s per web_search call
+  const timer = setTimeout(() => controller.abort(), TOOL_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(DEFAULT_WEB_SEARCH_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ query: normalizedQuery }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err && err.name === 'AbortError') {
+      // Return a benign string so the LLM can continue without failing the entire run
+      return 'web_search timed out.';
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
@@ -359,6 +376,8 @@ export async function executeOpenRouterChat(options = {}) {
     signal,
     attachments = [],
     responseFormat,
+    // Optional per-request timeout used for each round-trip to OpenRouter (defensive default)
+    requestTimeoutMs = 55000,
   } = options;
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -416,7 +435,31 @@ export async function executeOpenRouterChat(options = {}) {
       });
     }
 
-    const payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal });
+    // Build a local controller to enforce per-request timeout and also honor any upstream signal
+    let controller;
+    let timer;
+    let effectiveSignal = signal;
+    if (!effectiveSignal && requestTimeoutMs && requestTimeoutMs > 0) {
+      controller = new AbortController();
+      timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+      effectiveSignal = controller.signal;
+    } else if (signal && requestTimeoutMs && requestTimeoutMs > 0) {
+      // Compose: if caller provided a signal, piggyback a timeout onto it
+      controller = new AbortController();
+      // If outer signal aborts, propagate
+      if (typeof signal.addEventListener === 'function') {
+        signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+      }
+      timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+      effectiveSignal = controller.signal;
+    }
+
+    let payload;
+    try {
+      payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal: effectiveSignal });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const message = payload?.choices?.[0]?.message;
 
     if (!message) {
@@ -548,7 +591,10 @@ export async function generateStudyTopics(input) {
     maxTokens: 2048,
     tools: [createWebSearchTool()],
     toolChoice: 'auto',
-    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    // Keep tool loops bounded to avoid platform timeouts
+    maxToolIterations: 6,
+    // Guard each OpenRouter round-trip with a timeout to avoid long hangs/abort cascades
+    requestTimeoutMs: 50000,
     messages: [
       { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
       { role: 'user', content: prompt },
