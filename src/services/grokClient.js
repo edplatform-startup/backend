@@ -527,17 +527,27 @@ function buildStudyTopicsPrompt({
 } = {}) {
   const lines = [];
   lines.push('You are an AI study planner who must output ONLY a comma-separated list of study topics with no additional text.');
+  lines.push('The topics MUST be domain-specific concepts for the given course (e.g., "Linear Regression", "Backpropagation", "NP-Completeness") and NOT meta-skills.');
+  lines.push('Prohibited topics: study skills, time management, note-taking, exam strategies, revision techniques, generic learning methods, productivity tips, or generic advice.');
+  lines.push('You MUST use the web_search tool to find the official syllabus or authoritative course outline for this exact course (prefer .edu, .ac.uk, or the instructor’s page) before answering.');
   lines.push('Tasks:');
-  lines.push('1. Analyze the provided materials about the course and exam.');
-  lines.push('2. Use the web_search tool to do a deep and detailed analysis of the course being studied to generate the topics the user needs to learn.');
-  lines.push('3. Determine a list of all topics to learn for someone to be prepared for an exam for that course.');
-  lines.push('4. Ensure coverage of every concept from the class the learner must master for maximal success.');
-  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations, no commas in names of topics).');
+  lines.push('1. Analyze any provided materials about the course and exam.');
+  lines.push('2. Perform at least one web_search to locate the official syllabus or course outline for this specific course. Prefer queries like: "<course code> <course title> syllabus site:.edu".');
+  lines.push('3. Extract the concrete subject-matter topics taught in the course (domain concepts only).');
+  lines.push('4. Ensure coverage of all core topics needed to succeed in the exam for this course.');
+  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations, no commas inside a topic).');
   lines.push('');
   lines.push('Provided context:');
 
   if (courseSelection) {
-    lines.push(`- Course Selection: ${courseSelection.college} — ${courseSelection.course}`);
+    const cs = courseSelection || {};
+    const college = cs.college || cs.institution || cs.university || cs.school || '';
+    const title = cs.title || cs.course || cs.name || '';
+    const code = cs.code || cs.id || '';
+    const courseLabel = [college, [code, title].filter(Boolean).join(' ')].filter(Boolean).join(' — ');
+    if (courseLabel) {
+      lines.push(`- Course: ${courseLabel}`);
+    }
   }
   if (finishByDate) {
     lines.push(`- Target Exam/Completion Date: ${finishByDate}`);
@@ -567,12 +577,37 @@ function buildStudyTopicsPrompt({
   }
 
   lines.push('');
-  lines.push('Remember: output only the comma-separated topics list. If you need more information, call the web_search tool with relevant queries.');
+  lines.push('Remember: you MUST call web_search to find the official syllabus/outline before answering, then output only the comma-separated topics list. Exclude any generic study skills or meta-learning items.');
 
   return lines.join('\n');
 }
 
-const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach. Use the web_search tool when helpful to gather additional course insights. ALWAYS finish by responding with only a comma-separated list of study topics and nothing else.';
+const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach. You MUST use the web_search tool to locate the official syllabus/outline for the given course and extract course-specific domain topics only. NEVER include meta-skills (study skills, note-taking, time management). ALWAYS finish with only a comma-separated list of topics and nothing else.';
+
+function parseTopicsText(raw) {
+  const text = (raw || '').toString().trim();
+  if (!text) return [];
+  return text
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .slice(0, 100);
+}
+
+function isGenericTopicList(topics) {
+  if (!Array.isArray(topics) || topics.length === 0) return true;
+  // List of generic/meta keywords to reject
+  const banned = [
+    'study', 'time management', 'note', 'exam', 'review', 'revision', 'learning strategies', 'productivity', 'mindset', 'motivation', 'test-taking'
+  ];
+  const lc = topics.map((t) => t.toLowerCase());
+  // If any topic contains banned words, or if all topics are very short generic terms, flag it
+  const hasBanned = lc.some((t) => banned.some((b) => t.includes(b)));
+  if (hasBanned) return true;
+  // Heuristic: if too few topics or too vague words
+  if (topics.length < 5) return true;
+  return false;
+}
 
 export async function generateStudyTopics(input) {
   if (customStudyTopicsGenerator) {
@@ -583,34 +618,53 @@ export async function generateStudyTopics(input) {
   const model = input?.model || DEFAULT_MODEL;
   const prompt = buildStudyTopicsPrompt(input || {});
 
-  const { content } = await executeOpenRouterChat({
-    apiKey,
-    model,
-    reasoning: { enabled: true, effort: 'high' },
-    temperature: 0.4,
-    maxTokens: 2048,
-    tools: [createWebSearchTool()],
-    toolChoice: 'auto',
-    // Keep tool loops bounded to avoid platform timeouts
-    maxToolIterations: 6,
-    // Guard each OpenRouter round-trip with a timeout to avoid long hangs/abort cascades
-    requestTimeoutMs: 50000,
-    messages: [
-      { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
-      { role: 'user', content: prompt },
-    ],
-  });
+  const baseMessages = [
+    { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
+    { role: 'user', content: prompt },
+  ];
 
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => (typeof part === 'string' ? part : part?.text || ''))
-      .join('')
-      .trim();
+  const runOnce = async (extraUserMessage) => {
+    const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
+    const { content } = await executeOpenRouterChat({
+      apiKey,
+      model,
+      reasoning: { enabled: true, effort: 'high' },
+      temperature: 0.2,
+      maxTokens: 2048,
+      tools: [createWebSearchTool()],
+      toolChoice: 'auto',
+      maxToolIterations: 6,
+      requestTimeoutMs: 50000,
+      messages,
+    });
+
+    const text = Array.isArray(content)
+      ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+      : typeof content === 'string' ? content.trim() : '';
+
+    const topics = parseTopicsText(text);
+    return { text, topics };
+  };
+
+  // Attempt up to 3 times with corrective guidance if output is generic
+  let attempt = 0;
+  let last = await runOnce();
+  while (attempt < 2 && isGenericTopicList(last.topics)) {
+    attempt += 1;
+    const correction = [
+      'Correction: Your previous list contained generic study skills or too few course-specific topics.',
+      'Requirements:',
+      '- Perform web_search to find the exact syllabus/outline for this course (prefer the official page).',
+      '- Output 10–25 domain-specific topics taught in the course.',
+      '- Exclude meta-skills such as study skills, time management, note-taking, exam prep, or review methods.',
+      'Respond again with only the comma-separated list of course topics.'
+    ].join('\n');
+    last = await runOnce(correction);
   }
 
-  if (typeof content !== 'string') {
+  if (!last.text) {
     throw new Error('OpenRouter returned unexpected content format for study topics');
   }
 
-  return content.trim();
+  return last.text;
 }
