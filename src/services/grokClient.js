@@ -542,7 +542,7 @@ function buildStudyTopicsPrompt({
   if (courseSelection) {
     const cs = courseSelection || {};
     const college = cs.college || cs.institution || cs.university || cs.school || '';
-    const title = cs.title || cs.course || cs.name || '';
+    const title = cs.title || cs.course || cs.name || cs.courseTitle || '';
     const code = cs.code || cs.id || '';
     const courseLabel = [college, [code, title].filter(Boolean).join(' ')].filter(Boolean).join(' — ');
     if (courseLabel) {
