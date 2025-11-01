@@ -622,21 +622,138 @@ function buildVideoPrompt({ className, moduleKey, desc }) {
     'Task: Use the web_search tool to identify a single high-quality YouTube video (≤ 15 minutes) that best teaches this topic.',
     'Choose official or reputable sources. Prefer concise, focused explanations.',
     'The professor desigining this course specified instructions given earlier, use them to guide your search',
-    'Return JSON exactly as: { "title": "...", "description": "...", "url": "https://www.youtube.com/..." }',
+    'Return JSON exactly as: { "url": "https://www.youtube.com/...", "title": "...", "summary": "..." }',
+    'The url MUST be a valid YouTube video link: youtube.com/watch?v=..., youtu.be/..., shorts, or embed URLs are acceptable.',
   ].join('\n');
   return { system, user };
 }
 
+function isValidYouTubeVideoUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const isYouTubeHost = host === 'youtu.be' || host.endsWith('youtube.com');
+    if (!isYouTubeHost) return false;
+
+    const isPlausibleId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{6,15}$/i.test(id);
+
+    if (host === 'youtu.be') {
+      const id = u.pathname.split('/').filter(Boolean)[0];
+      return isPlausibleId(id);
+    }
+
+    const path = u.pathname;
+    if (path === '/watch') {
+      const v = u.searchParams.get('v');
+      return isPlausibleId(v);
+    }
+    if (path.startsWith('/shorts/') || path.startsWith('/embed/')) {
+      const parts = path.split('/').filter(Boolean);
+      const id = parts[1];
+      return isPlausibleId(id);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeVideoJson(json) {
+  if (!json || typeof json !== 'object') return null;
+  const url = typeof json.url === 'string' ? json.url.trim() : undefined;
+  const title = typeof json.title === 'string' ? json.title.trim() : undefined;
+  // accept description but map to summary if needed
+  const summaryRaw = typeof json.summary === 'string' ? json.summary : json.description;
+  const summary = typeof summaryRaw === 'string' ? summaryRaw.trim() : undefined;
+  if (!url || !title || !summary) return null;
+  return { url, title, summary };
+}
+
+async function callVideoJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+  let attempts = 0;
+  let correction = '';
+  while (attempts <= 2) { // max 2 retries beyond first
+    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+    let json;
+    try {
+      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+    } catch (err) {
+      if (attempts >= 2) throw err;
+      attempts += 1;
+      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "url": "https://www.youtube.com/...", "title": "...", "summary": "..." }. The url MUST contain "www.youtube.com". No extra keys, no prose, no code fences.';
+      continue;
+    }
+
+    const normalized = normalizeVideoJson(json);
+    if (normalized && isValidYouTubeVideoUrl(normalized.url)) {
+      return normalized;
+    }
+
+    if (attempts >= 2) {
+      const e = new Error('Video JSON missing required YouTube URL or fields');
+      e.statusCode = 502;
+      e.details = { json };
+      throw e;
+    }
+    attempts += 1;
+    correction = 'Your previous response did not include a valid YouTube video URL in "url" (accepted: youtube.com/watch?v=..., youtu.be/..., shorts, embed) or was missing required fields. Return STRICT JSON: { "url": "https://www.youtube.com/watch?v=...", "title": "...", "summary": "..." } only.';
+  }
+}
+
 function buildReadingPrompt({ className, moduleKey, desc }) {
-  const system = 'You are an expert educator writing a teaching article for learners. Always return strict JSON.';
+  const system = 'You are an expert educator writing a focused teaching article for learners. Always return strict JSON.';
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Write a single teaching article for someone learning this concept. The article should have a clear title, a concise subtitle, and a well-structured body that explains the concept step by step. Follow the instructions the professor gave.',
-    'Return JSON exactly as: { "article": { "title": "...", "subtitle": "...", "body": "..." } }',
+    'Write a single teaching article with:\n- a clear, concise title\n- a well-structured body using Markdown headings and paragraphs\n- math using LaTeX (inline $...$ or block $$...$$) when helpful',
+    'Return JSON exactly as: { "title": "...", "body": "..." }',
+    'No extra keys, no prose outside JSON, no code fences.',
   ].join('\n');
   return { system, user };
+}
+
+function normalizeReadingJson(json) {
+  if (!json || typeof json !== 'object') return null;
+  if (json.article && typeof json.article === 'object') {
+    const t = typeof json.article.title === 'string' ? json.article.title.trim() : undefined;
+    const b = typeof json.article.body === 'string' ? json.article.body.trim() : undefined;
+    if (t && b) return { title: t, body: b };
+  }
+  const title = typeof json.title === 'string' ? json.title.trim() : undefined;
+  const body = typeof json.body === 'string' ? json.body.trim() : undefined;
+  if (!title || !body) return null;
+  return { title, body };
+}
+
+async function callReadingJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+  let attempts = 0;
+  let correction = '';
+  while (attempts <= 2) {
+    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+    let json;
+    try {
+      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+    } catch (err) {
+      if (attempts >= 2) throw err;
+      attempts += 1;
+      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "title": "...", "body": "..." }. No extra keys, no code fences, no prose.';
+      continue;
+    }
+
+    const normalized = normalizeReadingJson(json);
+    if (normalized) return normalized;
+
+    if (attempts >= 2) {
+      const e = new Error('Reading JSON missing required fields');
+      e.statusCode = 502;
+      e.details = { json };
+      throw e;
+    }
+    attempts += 1;
+    correction = 'Your previous response did not include both top-level fields "title" and "body". Return STRICT JSON: { "title": "...", "body": "..." } only.';
+  }
 }
 
 function buildFlashcardsPrompt({ className, moduleKey, desc }) {
@@ -645,12 +762,67 @@ function buildFlashcardsPrompt({ className, moduleKey, desc }) {
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Generate a set of flashcards (3–7) that help learners retain the key concepts. Each flashcard should be concise and focused on concept retention. Follow the instructions the professor gave.',
-    'If a flashcard contains math or formulas, use the following format: { "inline-math": "..." } for inline math formatted in LaTeX. Otherwise, use { "text": "..." } for text.',
-    'Return JSON exactly as: { "1": [ { "content": [ { "text": "..." } ] }, ... ], "2": [ ... ], ... }',
-    'Do not include practice problems, trivia, or unrelated content. Only generate math if it is relevant to the concept.',
+    'Generate 3–7 flashcards. Each card is exactly a triple: [question, answer, explanation].',
+    'Use Markdown for math: inline $...$; blocks $$...$$ when needed.',
+    'Return STRICT JSON exactly as: { "cards": [ ["question","answer","explanation"], ... ] }',
+    'No extra keys, no prose outside JSON, no code fences.',
   ].join('\n');
   return { system, user };
+}
+
+function normalizeFlashcardsJson(json) {
+  // Accept { cards: [ [q,a,e], ... ] }
+  if (json && typeof json === 'object' && Array.isArray(json.cards)) {
+    const ok = json.cards.every(
+      (c) => Array.isArray(c) && c.length === 3 && c.every((s) => typeof s === 'string' && s.trim() !== '')
+    );
+    if (ok) return { cards: json.cards.map((c) => c.map((s) => s.trim())) };
+  }
+  // Accept { cards: [ { question, answer, explanation } ] }
+  if (json && typeof json === 'object' && Array.isArray(json.cards)) {
+    const mapped = json.cards
+      .map((c) =>
+        c && typeof c === 'object'
+          ? [c.question, c.answer, c.explanation].filter((x) => typeof x === 'string')
+          : null
+      )
+      .filter(Boolean);
+    if (mapped.length > 0 && mapped.every((c) => c.length === 3)) {
+      return { cards: mapped.map((c) => c.map((s) => s.trim())) };
+    }
+  }
+  return null;
+}
+
+async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+  let attempts = 0;
+  let correction = '';
+  while (attempts <= 2) {
+    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+    let json;
+    try {
+      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+    } catch (err) {
+      if (attempts >= 2) throw err;
+      attempts += 1;
+      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "cards": [ ["question","answer","explanation"], ... ] }. No extra keys, no code fences, no prose.';
+      continue;
+    }
+
+    const normalized = normalizeFlashcardsJson(json);
+    if (normalized && Array.isArray(normalized.cards) && normalized.cards.length > 0) {
+      return normalized;
+    }
+
+    if (attempts >= 2) {
+      const e = new Error('Flashcards JSON missing required shape');
+      e.statusCode = 502;
+      e.details = { json };
+      throw e;
+    }
+    attempts += 1;
+    correction = 'Your previous response did not include top-level { "cards": [ ["question","answer","explanation"], ... ] }. Ensure each card has exactly 3 non-empty strings.';
+  }
 }
 
 function buildMiniQuizPrompt({ className, moduleKey, desc }) {
@@ -747,7 +919,13 @@ async function generateOneAsset({ apiKey, supabase, userId, courseId, className,
   }
 
   const { system, user } = builder({ className, moduleKey, desc });
-  const json = await callModelJson({ apiKey, system, user, tools, timeoutMs: 45000, retries: 1 });
+  const json = fmt === 'video'
+    ? await callVideoJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
+    : fmt === 'reading'
+    ? await callReadingJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
+    : fmt === 'flashcards'
+    ? await callFlashcardsJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
+    : await callModelJson({ apiKey, system, user, tools, timeoutMs: 45000, retries: 1 });
 
   const id = await saveFormatRow(supabase, table, {
     course_id: courseId,
