@@ -232,7 +232,7 @@ async function defaultWebSearch(query, apiKey) {
 
   // Add a defensive timeout for the web_search tool so tool calls don't hang the whole request
   const controller = new AbortController();
-  const TOOL_TIMEOUT_MS = 20000; // 20s per web_search call
+  const TOOL_TIMEOUT_MS = 30000; // 30s per web_search call (increased for Claude Sonnet reasoning)
   const timer = setTimeout(() => controller.abort(), TOOL_TIMEOUT_MS);
   let response;
   try {
@@ -340,7 +340,7 @@ export function createBrowsePageTool() {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; EdTechBot/1.0)',
           },
-          signal: AbortSignal.timeout(10000), // 10s timeout
+          signal: AbortSignal.timeout(20000), // 20s timeout (increased for Claude Sonnet reasoning)
         });
         
         if (!response.ok) {
