@@ -647,14 +647,17 @@ function buildStudyTopicsPrompt({
 
 const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach extracting exhaustive, accurate course topics. MUST use web_search to find official syllabus/outline (prefer .edu sites) and browse_page on provided files/URLs for full extraction. Focus ONLY on domain-specific concepts (e.g., "Two\'s Complement", "Stack Frames")—NEVER include meta-skills (study skills, time management, etc.). Err on over-coverage: list 15-30 subtopics to ensure all core/exam-relevant items are included, but stay within the exact course scope (no unrelated CS topics). Output ONLY a JSON array of topics for parsing.';
 
-function parseTopicsText(raw) {
-  const text = (raw || '').toString().trim();
-  if (!text) return [];
+export function parseTopicsText(raw) {
+  const original = (raw || '').toString();
+  const stripped = stripCodeFences(original).trim();
+  if (!stripped) return [];
 
-  // Try JSON first: expect { "topics": [ ... ] } or a bare [ ... ]
-  if (text.startsWith('{') || text.startsWith('[')) {
+  // If the content looks like JSON, only accept valid { topics: [...] } or a bare [...].
+  // Do NOT fall back to comma-splitting for arbitrary JSON objects (prevents splitting tool schemas).
+  const looksJson = stripped.startsWith('{') || stripped.startsWith('[');
+  if (looksJson) {
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(stripped);
       const arr = Array.isArray(parsed)
         ? parsed
         : (parsed && Array.isArray(parsed.topics) ? parsed.topics : null);
@@ -664,11 +667,18 @@ function parseTopicsText(raw) {
           .filter((t) => t.length > 0)
           .slice(0, 100);
       }
-    } catch {}
+      // JSON parsed but not an array or { topics: [...] } → treat as invalid topics
+      return [];
+    } catch {
+      // JSON-looking but invalid JSON → treat as invalid topics
+      return [];
+    }
   }
 
-  // Fallback: comma-separated list
-  return text
+  // Plain text fallback: support simple comma-separated or newline/bullet lists
+  return stripped
+    .replace(/\r?\n+/g, ',')
+    .replace(/\s+-\s+/g, ',')
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0)
@@ -762,7 +772,7 @@ export async function generateStudyTopics(input) {
     { role: 'user', content: prompt },
   ];
 
-  const runOnceWithModel = async (mdl, extraUserMessage) => {
+  const runOnceWithModel = async (mdl, extraUserMessage, { requireTools = true } = {}) => {
     const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
     const timeouts = [30000, 45000];
     let lastErr;
@@ -775,9 +785,9 @@ export async function generateStudyTopics(input) {
           reasoning: { enabled: true, effort: 'medium' },
           temperature: 0.2,
           maxTokens: 800,
-          tools: [createWebSearchTool(), createBrowsePageTool()],
-          toolChoice: 'required',
-          maxToolIterations: 2,
+          tools: requireTools ? [createWebSearchTool(), createBrowsePageTool()] : [],
+          toolChoice: requireTools ? 'auto' : undefined,
+          maxToolIterations: requireTools ? 2 : 0,
           requestTimeoutMs: timeouts[idx],
           responseFormat: { type: 'json_object' },
           messages,
@@ -806,10 +816,23 @@ export async function generateStudyTopics(input) {
 
   const runOnce = async (extraUserMessage) => {
     try {
-      return await runOnceWithModel(primaryModel, extraUserMessage);
+      return await runOnceWithModel(primaryModel, extraUserMessage, { requireTools: true });
     } catch (err) {
-      // Fallback to Grok Fast on failure
-      return await runOnceWithModel(fallbackModel, extraUserMessage);
+      // If aborted or tool failure, retry without tools quickly
+      if (err?.name === 'AbortError') {
+        try {
+          return await runOnceWithModel(primaryModel, extraUserMessage, { requireTools: false });
+        } catch {/* ignore and fall through */}
+      }
+      // Fallback to Grok Fast
+      try {
+        return await runOnceWithModel(fallbackModel, extraUserMessage, { requireTools: true });
+      } catch (e2) {
+        if (e2?.name === 'AbortError') {
+          return await runOnceWithModel(fallbackModel, extraUserMessage, { requireTools: false });
+        }
+        throw e2;
+      }
     }
   };
 

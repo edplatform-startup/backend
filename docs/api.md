@@ -214,7 +214,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date formats, or invalid file metadata (empty name, missing url/data).
   - 500 Internal Server Error → Unexpected exception calling OpenRouter.
-  - 502 Bad Gateway → Model call failed or returned no topics.
+  - 502 Bad Gateway → Model call failed or returned no topics. Notes: arbitrary JSON objects (e.g., tool schemas) are rejected unless they are a JSON array or `{ "topics": [...] }`.
 
 ### POST /course-structure
 - Purpose: Generate and persist a full course learning plan leveraging xAI Grok 4 Fast via OpenRouter.

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSupabase } from '../supabaseClient.js';
-import { generateStudyTopics } from '../services/grokClient.js';
+import { generateStudyTopics, parseTopicsText } from '../services/grokClient.js';
 import {
   isValidIsoDate,
   validateFileArray,
@@ -274,26 +274,9 @@ router.post('/', async (req, res) => {
       model: MODEL_NAME,
     });
 
-    let normalizedOutput = [];
-    // Prefer JSON shape { topics: [...] } if provided
-    try {
-      const parsed = JSON.parse(topicsResponse);
-      if (Array.isArray(parsed)) {
-        normalizedOutput = parsed.map((x) => String(x).trim()).filter(Boolean);
-      } else if (parsed && Array.isArray(parsed.topics)) {
-        normalizedOutput = parsed.topics.map((x) => String(x).trim()).filter(Boolean);
-      }
-    } catch {}
-    if (!Array.isArray(normalizedOutput) || normalizedOutput.length === 0) {
-      normalizedOutput = topicsResponse
-        .replace(/\r?\n+/g, ',')
-        .replace(/\s+-\s+/g, ',')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-    }
+    const normalizedOutput = parseTopicsText(topicsResponse);
 
-    if (normalizedOutput.length === 0) {
+    if (!Array.isArray(normalizedOutput) || normalizedOutput.length === 0) {
       return res.status(502).json({
         error: 'Model did not return any study topics',
       });
