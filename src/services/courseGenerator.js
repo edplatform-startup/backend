@@ -4,15 +4,15 @@ import { executeOpenRouterChat, createWebSearchTool, getCostTotals } from './gro
 const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
 const FALLBACK_MODEL_NAME = 'x-ai/grok-4-fast';
 
-// Per-content-type model configuration
-const VIDEO_MODEL = 'google/gemini-2.5-flash';
+// Per-content-type model configuration (prefer providers supporting tools + JSON)
+const VIDEO_MODEL = 'openai/gpt-4o';
 const VIDEO_FALLBACK = 'x-ai/grok-4-fast';
 const READING_MODEL = 'openai/gpt-4o';
 const READING_FALLBACK = 'deepseek/deepseek-v3';
-const FLASHCARDS_MODEL = 'nousresearch/hermes-4-70b';
-const FLASHCARDS_FALLBACK = 'deepseek/deepseek-coder-v2';
+const FLASHCARDS_MODEL = 'x-ai/grok-4-fast';
+const FLASHCARDS_FALLBACK = 'anthropic/claude-haiku-3.5';
 const MINI_QUIZ_MODEL = 'anthropic/claude-haiku-3.5';
-const MINI_QUIZ_FALLBACK = 'microsoft/phi-3.5-mini-128k';
+const MINI_QUIZ_FALLBACK = 'x-ai/grok-4-fast';
 const PRACTICE_EXAM_MODEL = 'anthropic/claude-sonnet-4';
 const PRACTICE_EXAM_FALLBACK = 'x-ai/grok-3-beta';
 
@@ -113,17 +113,6 @@ const VALID_FORMATS = new Map([
 const OUTPUT_FORMAT_HINT = 'Module/Submodule | Format | Desc';
 const MAX_DESCRIPTION_WORDS = 32;
 
-function calculateRushingIndex(startDate, endDate, topicCount) {
-  if (!startDate || !endDate || !topicCount) return null;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-  const diffMs = end.getTime() - start.getTime();
-  if (diffMs <= 0) return null;
-  const diffDays = Math.max(1, diffMs / (1000 * 60 * 60 * 24));
-  return diffDays / topicCount;
-}
-
 function buildUserMessage({
   topics,
   className,
@@ -136,13 +125,26 @@ function buildUserMessage({
   topicFamiliarity,
 }) {
   const lines = [];
-  const rushingIndex = calculateRushingIndex(startDate, endDate, topics.length);
+  // Compute days left until end date (from "now") and include explicitly for pacing
+  let daysLeft = null;
+  if (endDate) {
+    const end = new Date(endDate);
+    if (!Number.isNaN(end.getTime())) {
+      const now = new Date();
+      const diffMs = end.getTime() - now.getTime();
+      if (diffMs >= 0) {
+        daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+      } else {
+        daysLeft = 0;
+      }
+    }
+  }
 
   lines.push("Inputs for today's learner context:");
   lines.push(`Class / exam focus: ${className}`);
   lines.push(`Study window: ${startDate} → ${endDate}`);
-  if (rushingIndex != null) {
-    lines.push(`Approximate Rushingness Index (time left ÷ topics left): ${rushingIndex.toFixed(2)}`);
+  if (daysLeft != null) {
+    lines.push(`Days left until end date: ${daysLeft}`);
   }
   lines.push('Requested topics to emphasise:');
   lines.push('');
@@ -210,8 +212,14 @@ function buildUserMessage({
 
   lines.push('');
   lines.push('');
-  lines.push(`Objective: Generate an adaptive sequence respecting prerequisites, rushing (order/prune high-priority first), and familiarity (${globalFamiliarity} global). Include learn/practice/review phases weighted accordingly.`);
-  lines.push('Return JSON: { "steps": [ { "module": "Main Topic", "submodule": "Subtopic", "format": "video|reading|flashcards|mini quiz|practice exam", "content": "Imperative action (≤50 words, e.g., \'Explain regression via linear model with real dataset example\')" } ] }');
+  lines.push(`Objective: Generate a deep, detailed learning sequence that respects prerequisites and the learner's familiarity (${globalFamiliarity} global). Use the provided "Days left" to pace breadth vs. depth: if <= 1 day left, compress to essentials; if ample, add enrichment, advanced sections, spaced review.`);
+  lines.push('Design guidance:' );
+  lines.push('- For EACH module/topic, include multiple assets: readings, videos, flashcards, and mini quizzes; periodically add practice exams/cumulative reviews. Judge which format is best suited to teach the specific topics but each module should have multiple formats and there should be a breadth of topics and a depth of understanding per topic.');
+  lines.push('- Cover definitions, core concepts, derivations/proofs where relevant, worked examples, edge cases, and common misconceptions but adhere to what is covered in the course.');
+  lines.push('- Ensure scaffolding from basics → applications → mixed practice → review.');
+  lines.push('- Favor variety for retention and deep understanding and build a nuanced course.');
+  lines.push('- Aim for at least 3–6 steps per topic (more if days allow).');
+  lines.push('Return JSON: { "steps": [ { "module": "Main Topic", "submodule": "Subtopic", "format": "video|reading|flashcards|mini quiz|practice exam", "content": "Imperative action for the most important aspects of this (i.e., what the user should gain from this) (≤100 words, e.g., \'Explain regression via linear model with real dataset example\')" } ] }');
   lines.push('No extra text.');
 
   return lines.join('\n');
@@ -220,11 +228,11 @@ function buildUserMessage({
 function buildCourseSystemPrompt() {
   return [
     'You are an elite instructional designer using evidence-based practices (Bloom\'s taxonomy, active recall, spaced repetition).',
-    'Sequence content adaptively: prioritize prerequisites, then learn (understand concepts) → practice (apply/analyze via problems) → review (interleave unfamiliar).',
-    'Order by familiarity (low: more scaffolding first; high: less) and rushing index (prune low-priority: familiar learn/practice last).',
-    'Use provided syllabus/files (browse_page for details) or web_search for accuracy—never fabricate.',
-    'Output JSON array of steps ordered by execution (urgent/unfamiliar high-priority first).',
-    'Favor varied formats for retention.',
+    'Create a comprehensive, exam-aligned course plan that fosters deep understanding, not a shallow outline.',
+    'Sequence adaptively: prerequisites first → learn (concept building) → practice (worked/mixed problems) → spaced review and checkpoints.',
+    'Scale depth by days remaining (provided in user message): compress to essentials when days are few; otherwise expand with enrichment, case studies, and advanced applications.',
+    'Use provided syllabus/files (browse_page) and web_search for accuracy—do not fabricate.',
+    'Output a JSON steps array ordered by execution. Prefer variety (reading, video, flashcards, mini quiz) and include practice exams periodically.',
   ].join(' ');
 }
 
@@ -761,7 +769,7 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
           maxTokens: 1000,
           reasoning: { enabled: true, effort: 'medium' },
           tools,
-          toolChoice: 'required', // Force web search usage
+          toolChoice: 'auto', // Avoid provider errors for forced tool calling
           maxToolIterations: 2,
           attachments,
           responseFormat: { type: 'json_object' },
@@ -1031,7 +1039,7 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
 async function callPracticeExamJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
   let attempts = 0;
   let correction = '';
-  while (attempts <= 1) {
+  while (attempts <= 2) {
     const userWithCorrection = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
     let json;
     try {
@@ -1071,9 +1079,9 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
 
       json = await withTimeout((signal) => doExec({ signal }), timeoutMs, 'practice-exam-json');
     } catch (err) {
-      if (attempts >= 1) throw err;
+      if (attempts >= 2) throw err;
       attempts += 1;
-      correction = 'Invalid. Return STRICT JSON with mcq/frq arrays, including model answers.';
+      correction = 'Invalid or empty. Return STRICT JSON: { "mcq": [ {"question":"...","options":["A","B","C","D"],"answer":"A","explanation":"..."} ], "frq": [ {"prompt":"...","model_answer":"...","rubric":"..."} ] }';
       continue;
     }
 
@@ -1082,7 +1090,7 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
       return json;
     }
 
-    if (attempts >= 1) {
+    if (attempts >= 2) {
       const e = new Error('Practice exam JSON missing required structure');
       e.statusCode = 502;
       e.details = { json };

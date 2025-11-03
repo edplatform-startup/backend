@@ -615,6 +615,9 @@ function buildStudyTopicsPrompt({
   if (finishByDate) {
     lines.push(`- Target Exam/Completion Date: ${finishByDate}`);
   }
+  if (typeof timeRemainingDays === 'number') {
+    lines.push(`- Time remaining (days): ${timeRemainingDays}`);
+  }
   if (syllabusText) {
     lines.push('- Syllabus Text:');
     lines.push(syllabusText);
