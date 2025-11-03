@@ -764,27 +764,44 @@ export async function generateStudyTopics(input) {
 
   const runOnceWithModel = async (mdl, extraUserMessage) => {
     const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
-    const { content } = await executeOpenRouterChat({
-      apiKey,
-      model: mdl,
-      reasoning: { enabled: true, effort: 'medium' },
-      temperature: 0.2,
-      maxTokens: 800,
-      tools: [createWebSearchTool(), createBrowsePageTool()],
-      toolChoice: 'auto',
-      maxToolIterations: 2,
-      requestTimeoutMs: 30000,
-      responseFormat: { type: 'json_object' },
-      messages,
-      attachments,
-    });
+    const timeouts = [30000, 45000];
+    let lastErr;
 
-    const text = Array.isArray(content)
-      ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
-      : typeof content === 'string' ? content.trim() : '';
+    for (let idx = 0; idx < timeouts.length; idx += 1) {
+      try {
+        const { content } = await executeOpenRouterChat({
+          apiKey,
+          model: mdl,
+          reasoning: { enabled: true, effort: 'medium' },
+          temperature: 0.2,
+          maxTokens: 800,
+          tools: [createWebSearchTool(), createBrowsePageTool()],
+          toolChoice: 'required',
+          maxToolIterations: 2,
+          requestTimeoutMs: timeouts[idx],
+          responseFormat: { type: 'json_object' },
+          messages,
+          attachments,
+        });
 
-    const topics = parseTopicsText(text);
-    return { text, topics };
+        const text = Array.isArray(content)
+          ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+          : typeof content === 'string' ? content.trim() : '';
+
+        const topics = parseTopicsText(text);
+        return { text, topics };
+      } catch (err) {
+        lastErr = err;
+        if (err?.name === 'AbortError' && idx < timeouts.length - 1) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (lastErr) throw lastErr;
+
+    return { text: '', topics: [] };
   };
 
   const runOnce = async (extraUserMessage) => {
