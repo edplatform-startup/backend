@@ -1,4 +1,4 @@
-import { executeOpenRouterChat, createBrowsePageTool, getCostTotals } from '../services/courseGenerator.js';
+import { executeOpenRouterChat, createBrowsePageTool, getCostTotals } from '../services/grokClient.js';
 // Optimized model configuration
 const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
 const FALLBACK_MODEL_NAME = 'x-ai/grok-4-fast';
