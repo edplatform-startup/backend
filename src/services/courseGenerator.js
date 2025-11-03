@@ -1,4 +1,4 @@
-import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
+import { executeOpenRouterChat, createWebSearchTool, getCostTotals } from './grokClient.js';
 
 // Optimized model configuration
 const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
@@ -1349,6 +1349,9 @@ export async function generateCourseStructureWithAssets(params) {
     ...rest
   } = params || {};
 
+  // Snapshot usage before course generation
+  const usageStart = getCostTotals();
+
   const base = await generateCourseStructure({ ...rest, className, examStructureText, apiKey: explicitKey });
   const apiKey = resolveCourseApiKey(explicitKey);
   const augmented = await generateAssetsContent(base.courseStructure, {
@@ -1359,6 +1362,18 @@ export async function generateCourseStructureWithAssets(params) {
     examStructureText,
     apiKey,
   });
+  // Log usage delta after course generation
+  try {
+    const usageEnd = getCostTotals();
+    const delta = {
+      prompt: (usageEnd.prompt - usageStart.prompt),
+      completion: (usageEnd.completion - usageStart.completion),
+      total: (usageEnd.total - usageStart.total),
+      usd: Number((usageEnd.usd - usageStart.usd).toFixed(6)),
+      calls: (usageEnd.calls - usageStart.calls),
+    };
+    console.log('[course] usage:', delta);
+  } catch {}
 
   return { ...base, courseStructure: augmented };
 }

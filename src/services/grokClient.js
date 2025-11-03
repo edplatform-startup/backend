@@ -510,6 +510,9 @@ export async function executeOpenRouterChat(options = {}) {
     } finally {
       if (timer) clearTimeout(timer);
     }
+    try {
+      accumulateUsage(model, payload?.usage || payload?.meta?.usage || {});
+    } catch {}
     const message = payload?.choices?.[0]?.message;
 
     if (!message) {
@@ -576,16 +579,26 @@ function buildStudyTopicsPrompt({
   examFiles,
 } = {}) {
   const lines = [];
-  lines.push('You are an AI study planner who must output ONLY a comma-separated list of study topics with no additional text.');
-  lines.push('The topics MUST be domain-specific concepts for the given course (e.g., "Linear Regression", "Backpropagation", "NP-Completeness") and NOT meta-skills.');
-  lines.push('Prohibited topics: study skills, time management, note-taking, exam strategies, revision techniques, generic learning methods, productivity tips, or generic advice.');
-  lines.push('You MUST use the web_search tool to find the official syllabus or authoritative course outline for this exact course (prefer .edu, .ac.uk, or the instructor’s page) before answering.');
+  lines.push('You are an AI study planner extracting topics. Output ONLY a JSON array of domain-specific topics (strings, no extras).');
+  lines.push('Prohibited: meta-skills like study skills, time management, note-taking, exam strategies, revision, productivity.');
   lines.push('Tasks:');
-  lines.push('1. Analyze any provided materials about the course and exam.');
-  lines.push('2. Perform at least one web_search to locate the official syllabus or course outline for this specific course. Prefer queries like: "<course code> <course title> syllabus site:.edu".');
-  lines.push('3. Extract the concrete subject-matter topics taught in the course (domain concepts only).');
-  lines.push('4. Ensure coverage of all core topics needed to succeed in the exam for this course.');
-  lines.push('5. Respond with only the comma-separated list of topics (no numbering, no explanations, no commas inside a topic).');
+  lines.push('1. Analyze provided syllabus text/files and exam details.');
+  // Build web_search query from courseSelection
+  let query = '';
+  if (courseSelection) {
+    const cs = courseSelection || {};
+    const code = cs.code || cs.id || '';
+    const title = cs.title || cs.course || cs.name || cs.courseTitle || '';
+    query = [code, title].filter(Boolean).join(' ');
+  }
+  if (query) {
+    lines.push(`2. Use web_search (query: "${query} syllabus site:.edu") and browse_page on syllabus/exam files (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") to compile exhaustive list.`);
+  } else {
+    lines.push('2. Use web_search and browse_page on syllabus/exam files (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") to compile exhaustive list.');
+  }
+  lines.push('3. Cross-reference for completeness: include all prerequisites, examples, and exam-covered concepts.');
+  lines.push('4. Ensure 15-30 topics covering every course element for exam success.');
+  lines.push('5. Respond with ONLY: { "topics": ["Topic1", "Topic2", ...] }');
   lines.push('');
   lines.push('Provided context:');
 
@@ -627,16 +640,34 @@ function buildStudyTopicsPrompt({
   }
 
   lines.push('');
-  lines.push('Remember: you MUST call web_search to find the official syllabus/outline before answering, then output only the comma-separated topics list. Exclude any generic study skills or meta-learning items.');
+  lines.push('MUST call tools before final output.');
 
   return lines.join('\n');
 }
 
-const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach. You MUST use the web_search tool to locate the official syllabus/outline for the given course and extract course-specific domain topics only. NEVER include meta-skills (study skills, note-taking, time management). ALWAYS finish with only a comma-separated list of topics and nothing else.';
+const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach extracting exhaustive, accurate course topics. MUST use web_search to find official syllabus/outline (prefer .edu sites) and browse_page on provided files/URLs for full extraction. Focus ONLY on domain-specific concepts (e.g., "Two\'s Complement", "Stack Frames")—NEVER include meta-skills (study skills, time management, etc.). Err on over-coverage: list 15-30 subtopics to ensure all core/exam-relevant items are included, but stay within the exact course scope (no unrelated CS topics). Output ONLY a JSON array of topics for parsing.';
 
 function parseTopicsText(raw) {
   const text = (raw || '').toString().trim();
   if (!text) return [];
+
+  // Try JSON first: expect { "topics": [ ... ] } or a bare [ ... ]
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      const arr = Array.isArray(parsed)
+        ? parsed
+        : (parsed && Array.isArray(parsed.topics) ? parsed.topics : null);
+      if (Array.isArray(arr)) {
+        return arr
+          .map((t) => (typeof t === 'string' ? t.trim() : String(t)))
+          .filter((t) => t.length > 0)
+          .slice(0, 100);
+      }
+    } catch {}
+  }
+
+  // Fallback: comma-separated list
   return text
     .split(',')
     .map((t) => t.trim())
@@ -655,8 +686,56 @@ function isGenericTopicList(topics) {
   const hasBanned = lc.some((t) => banned.some((b) => t.includes(b)));
   if (hasBanned) return true;
   // Heuristic: if too few topics or too vague words
-  if (topics.length < 5) return true;
+  if (topics.length < 15) return true;
   return false;
+}
+
+// --- Lightweight usage/cost tracking ---
+const __usageTotals = { prompt: 0, completion: 0, total: 0, usd: 0, calls: 0, perModel: {} };
+
+function getPriceForModel(model) {
+  // USD per 1K tokens (approx; override with OPENROUTER_PRICE_MAP if provided)
+  const envMap = process.env.OPENROUTER_PRICE_MAP ? (() => { try { return JSON.parse(process.env.OPENROUTER_PRICE_MAP); } catch { return null; } })() : null;
+  const defaultMap = {
+    'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
+    'x-ai/grok-4-fast': { in: 0.001, out: 0.002 },
+    'google/gemini-2.5-flash': { in: 0.0006, out: 0.0018 },
+    'openai/gpt-4o': { in: 0.005, out: 0.015 },
+    'nousresearch/hermes-4-70b': { in: 0.0005, out: 0.001 },
+    'anthropic/claude-haiku-3.5': { in: 0.0008, out: 0.004 },
+    'x-ai/grok-3-beta': { in: 0.001, out: 0.002 },
+    'deepseek/deepseek-v3': { in: 0.001, out: 0.0025 },
+    'deepseek/deepseek-coder-v2': { in: 0.0008, out: 0.002 },
+    'microsoft/phi-3.5-mini-128k': { in: 0.0002, out: 0.0006 },
+  };
+  const map = envMap || defaultMap;
+  return map[model] || { in: 0, out: 0 };
+}
+
+export function getCostTotals() {
+  return JSON.parse(JSON.stringify(__usageTotals));
+}
+
+function accumulateUsage(model, usage) {
+  if (!usage) return;
+  const prompt = Number(usage.prompt_tokens || usage.input_tokens || 0) || 0;
+  const completion = Number(usage.completion_tokens || usage.output_tokens || 0) || 0;
+  const total = Number(usage.total_tokens || prompt + completion || 0) || (prompt + completion);
+  const price = getPriceForModel(model);
+  const usd = (prompt * price.in + completion * price.out) / 1000;
+  __usageTotals.prompt += prompt;
+  __usageTotals.completion += completion;
+  __usageTotals.total += total;
+  __usageTotals.usd += usd;
+  __usageTotals.calls += 1;
+  if (!__usageTotals.perModel[model]) {
+    __usageTotals.perModel[model] = { prompt: 0, completion: 0, total: 0, usd: 0, calls: 0 };
+  }
+  __usageTotals.perModel[model].prompt += prompt;
+  __usageTotals.perModel[model].completion += completion;
+  __usageTotals.perModel[model].total += total;
+  __usageTotals.perModel[model].usd += usd;
+  __usageTotals.perModel[model].calls += 1;
 }
 
 export async function generateStudyTopics(input) {
@@ -665,7 +744,8 @@ export async function generateStudyTopics(input) {
   }
 
   const apiKey = resolveApiKey();
-  const model = input?.model || DEFAULT_MODEL;
+  const primaryModel = input?.model || 'anthropic/claude-sonnet-4';
+  const fallbackModel = 'x-ai/grok-4-fast';
   const prompt = buildStudyTopicsPrompt(input || {});
 
   // Prepare attachments from syllabusFiles and examFiles
@@ -682,20 +762,21 @@ export async function generateStudyTopics(input) {
     { role: 'user', content: prompt },
   ];
 
-  const runOnce = async (extraUserMessage) => {
+  const runOnceWithModel = async (mdl, extraUserMessage) => {
     const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
     const { content } = await executeOpenRouterChat({
       apiKey,
-      model,
-      reasoning: { enabled: true, effort: 'high' },
+      model: mdl,
+      reasoning: { enabled: true, effort: 'medium' },
       temperature: 0.2,
-      maxTokens: 2048,
-      tools: [createWebSearchTool()],
+      maxTokens: 800,
+      tools: [createWebSearchTool(), createBrowsePageTool()],
       toolChoice: 'auto',
-      maxToolIterations: 6,
-      requestTimeoutMs: 50000,
+      maxToolIterations: 2,
+      requestTimeoutMs: 30000,
+      responseFormat: { type: 'json_object' },
       messages,
-      attachments, // Pass file attachments (will be inlined for Grok models)
+      attachments,
     });
 
     const text = Array.isArray(content)
@@ -706,18 +787,26 @@ export async function generateStudyTopics(input) {
     return { text, topics };
   };
 
-  // Attempt up to 3 times with corrective guidance if output is generic
+  const runOnce = async (extraUserMessage) => {
+    try {
+      return await runOnceWithModel(primaryModel, extraUserMessage);
+    } catch (err) {
+      // Fallback to Grok Fast on failure
+      return await runOnceWithModel(fallbackModel, extraUserMessage);
+    }
+  };
+
+  // Attempt up to 2 total tries with corrective guidance if output is generic or insufficient
   let attempt = 0;
   let last = await runOnce();
-  while (attempt < 2 && isGenericTopicList(last.topics)) {
+  while (attempt < 1 && isGenericTopicList(last.topics)) {
     attempt += 1;
     const correction = [
-      'Correction: Your previous list contained generic study skills or too few course-specific topics.',
+      'Correction: Previous output included generics, meta-skills, or insufficient coverage (fewer than 15 topics or missing syllabus elements).',
       'Requirements:',
-      '- Perform web_search to find the exact syllabus/outline for this course (prefer the official page).',
-      '- Output 10–25 domain-specific topics taught in the course.',
-      '- Exclude meta-skills such as study skills, time management, note-taking, exam prep, or review methods.',
-      'Respond again with only the comma-separated list of course topics.'
+      '- Re-call web_search/browse_page to extract FULL syllabus topics/subtopics (aim 15-30 within course scope).',
+      '- Verify against official sources; exclude ALL meta-items.',
+      'Respond ONLY with JSON: { "topics": ["Topic1", "Topic2", ...] }'
     ].join('\n');
     last = await runOnce(correction);
   }
@@ -725,6 +814,18 @@ export async function generateStudyTopics(input) {
   if (!last.text) {
     throw new Error('OpenRouter returned unexpected content format for study topics');
   }
+
+  // Log cost delta for this generation
+  try {
+    const totals = getCostTotals();
+    console.log('[topics] usage:', {
+      prompt_tokens: totals.prompt,
+      completion_tokens: totals.completion,
+      total_tokens: totals.total,
+      estimated_usd: Number(totals.usd.toFixed(6)),
+      calls: totals.calls,
+    });
+  } catch {}
 
   return last.text;
 }

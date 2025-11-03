@@ -73,7 +73,7 @@ router.get('/data', async (req, res) => {
   }
 });
 
-const MODEL_NAME = 'x-ai/grok-4-fast';
+const MODEL_NAME = 'anthropic/claude-sonnet-4';
 
 function normalizeCourseRow(row) {
   const courseData = row.course_data ?? row.course_json ?? null;
@@ -274,12 +274,24 @@ router.post('/', async (req, res) => {
       model: MODEL_NAME,
     });
 
-    const normalizedOutput = topicsResponse
-      .replace(/\r?\n+/g, ',')
-      .replace(/\s+-\s+/g, ',')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
+    let normalizedOutput = [];
+    // Prefer JSON shape { topics: [...] } if provided
+    try {
+      const parsed = JSON.parse(topicsResponse);
+      if (Array.isArray(parsed)) {
+        normalizedOutput = parsed.map((x) => String(x).trim()).filter(Boolean);
+      } else if (parsed && Array.isArray(parsed.topics)) {
+        normalizedOutput = parsed.topics.map((x) => String(x).trim()).filter(Boolean);
+      }
+    } catch {}
+    if (!Array.isArray(normalizedOutput) || normalizedOutput.length === 0) {
+      normalizedOutput = topicsResponse
+        .replace(/\r?\n+/g, ',')
+        .replace(/\s+-\s+/g, ',')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
 
     if (normalizedOutput.length === 0) {
       return res.status(502).json({
