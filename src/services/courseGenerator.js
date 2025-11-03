@@ -1,4 +1,4 @@
-import { executeOpenRouterChat, createWebSearchTool, getCostTotals } from './grokClient.js';
+import { executeOpenRouterChat, createBrowsePageTool, getCostTotals } from './grokClient.js';
 
 // Optimized model configuration
 const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
@@ -231,7 +231,7 @@ function buildCourseSystemPrompt() {
     'Create a comprehensive, exam-aligned course plan that fosters deep understanding, not a shallow outline.',
     'Sequence adaptively: prerequisites first → learn (concept building) → practice (worked/mixed problems) → spaced review and checkpoints.',
     'Scale depth by days remaining (provided in user message): compress to essentials when days are few; otherwise expand with enrichment, case studies, and advanced applications.',
-    'Use provided syllabus/files (browse_page) and web_search for accuracy—do not fabricate.',
+    'Use provided syllabus/files (browse_page) and built-in search for accuracy—do not fabricate.',
     'Output a JSON steps array ordered by execution. Prefer variety (reading, video, flashcards, mini quiz) and include practice exams periodically.',
   ].join(' ');
 }
@@ -251,7 +251,6 @@ function buildCorrectionLineFromError(error) {
 }
 
 async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
-  const { createBrowsePageTool } = await import('./grokClient.js');
   
   const result = await executeOpenRouterChat({
     apiKey,
@@ -259,9 +258,10 @@ async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
     temperature: 0.2,
     maxTokens: 800,
     reasoning: { enabled: true, effort: 'medium' },
-    tools: [createWebSearchTool(), createBrowsePageTool()],
+    tools: [createBrowsePageTool()],
     toolChoice: 'auto',
     maxToolIterations: 2,
+    enableWebSearch: true,
     responseFormat: { type: 'json_object' },
     attachments,
     messages,
@@ -648,6 +648,7 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
       responseFormat: { type: 'json_object' },
       messages,
       signal,
+      enableWebSearch: true,
     });
 
     // Prefer parsed JSON provided by the SDK if available
@@ -688,7 +689,7 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
 
 // Prompt builders per format
 function buildVideoPrompt({ className, moduleKey, desc, familiarityLevel = 'medium' }) {
-  const system = `You are a precise curator of educational videos. MUST use web_search for real YouTube videos. Tailor to ${familiarityLevel}: low=beginner intros; high=advanced applications. Prefer 1-2 short videos (≤15min total) from reputable sources (e.g., Khan Academy, 3Blue1Brown).`;
+  const system = `You are a precise curator of educational videos. MUST use built-in search for real YouTube videos. Tailor to ${familiarityLevel}: low=beginner intros; high=advanced applications. Prefer 1-2 short videos (≤15min total) from reputable sources (e.g., Khan Academy, 3Blue1Brown).`;
   
   const user = [
     `Class: ${className}`,
@@ -696,7 +697,7 @@ function buildVideoPrompt({ className, moduleKey, desc, familiarityLevel = 'medi
     `Instruction: ${desc}`,
     `Familiarity: ${familiarityLevel}`,
     '',
-    'CRITICAL: Use web_search with tailored queries, e.g., "site:youtube.com {topic} {familiarityLevel} tutorial" or "{topic} advanced example youtube". Select 1-2 high-quality videos totaling ≤15min.',
+    'CRITICAL: Use built-in search with tailored queries, e.g., "site:youtube.com {topic} {familiarityLevel} tutorial" or "{topic} advanced example youtube". Select 1-2 high-quality videos totaling ≤15min.',
     '',
     'RETURN JSON: { "videos": [ { "url": "https://www.youtube.com/watch?v=VIDEO_ID", "title": "exact title", "duration_min": number, "summary": "≤30 words on coverage" } ] }',
     '',
@@ -775,6 +776,7 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
           responseFormat: { type: 'json_object' },
           messages,
           signal,
+          enableWebSearch: true,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -794,7 +796,7 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
     } catch (err) {
       if (attempts >= 2) throw err;
       attempts += 1;
-      correction = 'Invalid/empty response. MUST web_search for VALID YouTube videos tailored to familiarity. Return STRICT JSON { "videos": [ { "url": "...", "title": "...", "duration_min": ..., "summary": "..." } ] }. No extras.';
+      correction = 'Invalid/empty response. MUST use built-in search for VALID YouTube videos tailored to familiarity. Return STRICT JSON { "videos": [ { "url": "...", "title": "...", "duration_min": ..., "summary": "..." } ] }. No extras.';
       continue;
     }
 
@@ -834,7 +836,7 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
 }
 
 function buildReadingPrompt({ className, moduleKey, desc, familiarityLevel = 'medium' }) {
-  const system = 'You are an expert educator crafting concise, sourced articles. Use web_search/browse_page for 2-3 facts/examples; cite inline (e.g., [Source]). Structure for Bloom\'s: intro (understand), examples (apply), summary (analyze). Cap body ≤800 words.';
+  const system = 'You are an expert educator crafting concise, sourced articles. Use built-in search/browse_page for 2-3 facts/examples; cite inline (e.g., [Source]). Structure for Bloom\'s: intro (understand), examples (apply), summary (analyze). Cap body ≤800 words.';
   
   const user = [
     `Class: ${className}`,
@@ -888,6 +890,7 @@ async function callReadingJsonWithValidation({ apiKey, system, user, attachments
           responseFormat: { type: 'json_object' },
           messages,
           signal,
+          enableWebSearch: true,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -997,6 +1000,7 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
           responseFormat: { type: 'json_object' },
           messages,
           signal,
+          enableWebSearch: true,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -1062,6 +1066,7 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
           responseFormat: { type: 'json_object' },
           messages,
           signal,
+          enableWebSearch: true,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -1172,30 +1177,30 @@ async function generateOneAsset({ apiKey, supabase, userId, courseId, className,
   const table = tableForFormat(fmt);
   if (!table) return null; // unsupported
 
-  const { createBrowsePageTool } = await import('./grokClient.js');
+  
   let builder;
   let tools = [];
   
   switch (fmt) {
     case 'video':
       builder = buildVideoPrompt;
-      tools = [createWebSearchTool()];
+      tools = [createBrowsePageTool()];
       break;
     case 'reading':
       builder = buildReadingPrompt;
-      tools = [createWebSearchTool(), createBrowsePageTool()];
+      tools = [createBrowsePageTool()];
       break;
     case 'flashcards':
       builder = buildFlashcardsPrompt;
-      tools = [createWebSearchTool(), createBrowsePageTool()];
+      tools = [createBrowsePageTool()];
       break;
     case 'mini quiz':
       builder = buildMiniQuizPrompt;
-      tools = [createWebSearchTool(), createBrowsePageTool()];
+      tools = [createBrowsePageTool()];
       break;
     case 'practice exam':
       builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText, familiarityLevel });
-      tools = [createWebSearchTool(), createBrowsePageTool()];
+      tools = [createBrowsePageTool()];
       break;
     default:
       return null;
@@ -1255,7 +1260,7 @@ async function runLimited(tasks, limit = 3) {
 
 export async function generateAssetsContent(structure, ctx) {
   const { supabase, userId, courseId, className, examStructureText, apiKey, topicFamiliarity } = ctx;
-  if (!supabase || !userId || !courseId) return structure; // noop if not provided
+  if (!supabase || !userId || !courseId) return structure; // noop if not not provided
 
   // Calculate global familiarity level
   let familiarityLevel = 'medium';
