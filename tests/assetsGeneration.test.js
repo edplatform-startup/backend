@@ -62,11 +62,15 @@ test('per-asset generation: ignores unsupported formats and attaches ids', async
   setOpenRouterChatExecutor(async ({ messages }) => {
     const user = messages?.find((m) => m.role === 'user')?.content || '';
     let parsed;
-    if (typeof user === 'string' && user.includes('"videos"')) {
-      parsed = { videos: [{ title: 'Graph Intro', outline: ['a','b'], watch_time_minutes: 8, key_points: ['x'] }] };
-    } else if (typeof user === 'string' && user.includes('"questions"')) {
+    // Check for video prompt (contains "videos" or "YouTube")
+    if (typeof user === 'string' && (user.includes('"videos"') || user.includes('YouTube'))) {
+      parsed = { videos: [{ url: 'https://www.youtube.com/watch?v=abc123xyz', title: 'Graph Intro', duration_min: 10, summary: 'Introduction to graphs' }] };
+    } 
+    // Check for mini quiz prompt (contains "questions")
+    else if (typeof user === 'string' && user.includes('"questions"')) {
       parsed = { questions: [{ question: 'Q1', options: ['A','B','C','D'], answer: 'A', explanation: 'why' }] };
-    } else {
+    } 
+    else {
       parsed = { ok: true };
     }
     return { content: JSON.stringify(parsed), message: { parsed } };

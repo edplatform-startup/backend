@@ -112,6 +112,17 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 400 Bad Request → Missing/invalid `userId`.
   - 500 Internal Server Error → Database error.
 
+### DELETE /courses
+- Purpose: Delete a specific course for a user.
+- Query parameters:
+  - `userId` (string, required) – UUID of the user.
+  - `courseId` (string, required) – UUID of the course to delete.
+- Responses:
+  - 200 OK → `{ "success": true, "message": "Course deleted successfully", "courseId": "..." }`
+  - 400 Bad Request → Missing/invalid `userId` or `courseId`.
+  - 404 Not Found → Course not found or does not belong to the user.
+  - 500 Internal Server Error → Database error.
+
 ### GET /courses/data
 - Purpose: Return only the `course_data` JSON for a specific course, verifying the owner.
 - Query parameters:
@@ -163,23 +174,32 @@ Base URL (production): https://edtech-backend-api.onrender.com
   {
     "userId": "550e8400-e29b-41d4-a716-446655440000",
     "finishByDate": "2025-12-01T00:00:00.000Z",
-    "courseSelection": { "code": "CSE142", "title": "Foundations of CS" },
+    "university": "University of Washington",
+    "courseTitle": "Introduction to Computer Science",
     "syllabusText": "Optional syllabus text...",
-    "syllabusFiles": [ { "name": "syllabus.pdf", "url": "https://...", "size": 12345, "type": "application/pdf" } ],
-    "examFormatDetails": "2 midterms + 1 final",
-    "examFiles": []
+    "syllabusFiles": [
+      { "name": "syllabus.pdf", "url": "https://example.com/syllabus.pdf", "type": "application/pdf", "data": "<base64>" }
+    ],
+    "examFormatDetails": "Preferred exam format: MCQ | Notes: 2 midterms + 1 final",
+    "examFiles": [
+      { "name": "exam-guide.pdf", "url": "https://...", "type": "application/pdf" }
+    ]
   }
   ```
 - Field requirements:
   - `userId` (string, required) – UUID; rejects non-UUID values.
   - `finishByDate` (string, optional) – ISO 8601 date/time.
-  - `courseSelection` (object|null, optional) – Must include non-empty `code` and `title` strings.
-  - `syllabusText` (string, optional).
-  - `syllabusFiles` (FileMeta[], optional) – Each entry validated as above.
-  - `examFormatDetails` (string, optional).
-  - `examFiles` (FileMeta[], optional).
+  - `university` (string, optional) – Name of the university/college.
+  - `courseTitle` (string, optional) – Title of the course.
+  - `syllabusText` (string, optional) – Free-form syllabus text.
+  - `syllabusFiles` (FileMeta[], optional) – Array of file objects with `name`, `type`, and either `url` or `data` (base64). Files are validated and content is extracted when possible.
+  - `examFormatDetails` (string, optional) – Combined exam format and notes (e.g., "Preferred exam format: MCQ | Notes: 2 midterms").
+  - `examFiles` (FileMeta[], optional) – Array of exam-related files.
 - Behavior:
+  - Validates file metadata (non-empty name, valid type, url or data present).
   - Sends the provided context to the Grok 4 Fast Reasoning model via OpenRouter, enabling the `web_search` tool so the model can research missing course information before answering.
+  - **Files are automatically inlined as text for Grok 4 Fast (which only accepts text/image inputs).** Text-based files (PDFs, docs, txt) are decoded and included in the prompt. Non-text files are referenced by URL if provided.
+  - Internally constructs a `courseSelection` object from `university` and `courseTitle` for the prompt.
   - Parses the model result into a normalized topics array.
   - Responds with the generated topics; data is not yet saved to Supabase.
 - Responses:
@@ -192,7 +212,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
       "model": "x-ai/grok-4-fast"
     }
     ```
-  - 400 Bad Request → Missing `userId`, invalid UUID/date formats, bad `courseSelection`, or malformed file metadata.
+  - 400 Bad Request → Missing `userId`, invalid UUID/date formats, or invalid file metadata (empty name, missing url/data).
   - 500 Internal Server Error → Unexpected exception calling OpenRouter.
   - 502 Bad Gateway → Model call failed or returned no topics.
 
@@ -231,8 +251,9 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examStructureText` (string, optional) – Description of the exam format.
   - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
 - Behavior:
-  - Validates inputs and forwards contextual data, including file attachments, to Grok 4 Fast with reasoning and optional web search.
-  - For Grok models that do not support file inputs, the server automatically inlines textual file content into the prompt (when decodable) and includes URLs for non-text files.
+  - Validates inputs and forwards contextual data, including file attachments, to Gemini 2.5 Pro (primary) with Grok 4 Fast fallback for course structure generation.
+  - **Video generation uses Gemini 2.5 Pro exclusively with enforced web search to find real, working YouTube URLs.**
+  - For models that do not support file inputs, the server automatically inlines textual file content into the prompt (when decodable) and includes URLs for non-text files.
   - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
   - The model produces a concise plan parsed into the course structure: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }`.
   - Supported formats: `video`, `reading`, `flashcards`, `mini quiz`, `practice exam`. `project` and `lab` are ignored if present.
@@ -240,7 +261,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
     - Tables: `api.video_items`, `api.reading_articles`, `api.flashcard_sets`, `api.mini_quizzes`, `api.practice_exams`.
     - Each row includes: `course_id`, `user_id`, `module_key`, `content_prompt` (the asset `content`), and `data` (the JSON returned by the model).
     - Data shapes:
-      - `video_items.data`: `{ "url": string, "title": string, "summary": string }` (URL accepts youtube.com/watch?v=..., youtu.be/..., shorts, or embed)
+      - `video_items.data`: `{ "url": string, "title": string, "summary": string }` - **URL is guaranteed to be a valid, working YouTube video** (youtube.com/watch?v=..., youtu.be/..., shorts, or embed). Gemini 2.5 Pro uses web search with up to 4 retry attempts to ensure valid URLs.
       - `reading_articles.data`: `{ "title": string, "body": string }` (Markdown, may include LaTeX inline $...$ and block $$...$$)
   - `flashcard_sets.data`: `{ "cards": [ [question, answer, explanation], ... ] }`
       - Other formats remain unchanged from earlier behavior (mini_quizzes with questions[], practice_exams with mcq[]/frq[]).

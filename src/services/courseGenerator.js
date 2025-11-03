@@ -1,9 +1,23 @@
 import { executeOpenRouterChat, createWebSearchTool } from './grokClient.js';
 
-const COURSE_MODEL_NAME = 'google/gemini-2.5-pro';
+// Optimized model configuration
+const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
 const FALLBACK_MODEL_NAME = 'x-ai/grok-4-fast';
-const DEFAULT_MAX_TOKENS = 4096;
-const DEFAULT_MAX_TOOL_ITERATIONS = 6;
+
+// Per-content-type model configuration
+const VIDEO_MODEL = 'google/gemini-2.5-flash';
+const VIDEO_FALLBACK = 'x-ai/grok-4-fast';
+const READING_MODEL = 'openai/gpt-4o';
+const READING_FALLBACK = 'deepseek/deepseek-v3';
+const FLASHCARDS_MODEL = 'nousresearch/hermes-4-70b';
+const FLASHCARDS_FALLBACK = 'deepseek/deepseek-coder-v2';
+const MINI_QUIZ_MODEL = 'anthropic/claude-haiku-3.5';
+const MINI_QUIZ_FALLBACK = 'microsoft/phi-3.5-mini-128k';
+const PRACTICE_EXAM_MODEL = 'anthropic/claude-sonnet-4';
+const PRACTICE_EXAM_FALLBACK = 'x-ai/grok-3-beta';
+
+const DEFAULT_MAX_TOKENS = 800;
+const DEFAULT_MAX_TOOL_ITERATIONS = 2;
 const MAX_RETRIES_PER_MODEL = 2; // additional retries after first attempt
 
 let customCourseGenerator = null;
@@ -125,90 +139,93 @@ function buildUserMessage({
   const rushingIndex = calculateRushingIndex(startDate, endDate, topics.length);
 
   lines.push("Inputs for today's learner context:");
-  lines.push('---');
   lines.push(`Class / exam focus: ${className}`);
   lines.push(`Study window: ${startDate} → ${endDate}`);
   if (rushingIndex != null) {
     lines.push(`Approximate Rushingness Index (time left ÷ topics left): ${rushingIndex.toFixed(2)}`);
   }
   lines.push('Requested topics to emphasise:');
-  topics.forEach((topic, index) => {
-    lines.push(`  ${index + 1}. ${topic}`);
+  lines.push('');
+  topics.forEach((topic) => {
+    lines.push(topic);
   });
+  lines.push('');
 
   if (Array.isArray(topicFamiliarity) && topicFamiliarity.length > 0) {
     lines.push('Learner self-assessed familiarity levels:');
+    lines.push('');
     topicFamiliarity.forEach(({ topic, familiarity }) => {
       if (!topic || !familiarity) return;
-      lines.push(`  - ${topic}: ${familiarity}`);
+      lines.push(`${topic}: ${familiarity} (scale: low/medium/high)`);
     });
+    lines.push('');
   }
 
   if (syllabusText) {
     lines.push('Syllabus description:');
     lines.push(syllabusText);
+    lines.push('');
   }
 
   if (Array.isArray(syllabusFiles) && syllabusFiles.length) {
     lines.push('Syllabus files:');
-    syllabusFiles.forEach((file, index) => {
-      const annotations = [];
-      if (file.type) annotations.push(file.type);
-      if (file.size != null) annotations.push(`${file.size} bytes`);
-      lines.push(
-        `  ${index + 1}. ${file.name}${annotations.length ? ` (${annotations.join(', ')})` : ''}${
-          file.url ? ` → ${file.url}` : ''
-        }`
-      );
+    lines.push('');
+    syllabusFiles.forEach((file) => {
+      const parts = [file.name];
+      if (file.type) parts.push(`${file.type}`);
+      if (file.size != null) parts.push(`${file.size} bytes`);
+      if (file.url) parts.push(`→ ${file.url}`);
+      lines.push(parts.join(' '));
     });
+    lines.push('');
   }
 
   if (examStructureText) {
     lines.push('Exam structure description:');
     lines.push(examStructureText);
+    lines.push('');
   }
 
   if (Array.isArray(examStructureFiles) && examStructureFiles.length) {
     lines.push('Exam structure files:');
-    examStructureFiles.forEach((file, index) => {
-      const annotations = [];
-      if (file.type) annotations.push(file.type);
-      if (file.size != null) annotations.push(`${file.size} bytes`);
-      lines.push(
-        `  ${index + 1}. ${file.name}${annotations.length ? ` (${annotations.join(', ')})` : ''}${
-          file.url ? ` → ${file.url}` : ''
-        }`
-      );
+    examStructureFiles.forEach((file) => {
+      const parts = [file.name];
+      if (file.type) parts.push(`${file.type}`);
+      if (file.size != null) parts.push(`${file.size} bytes`);
+      if (file.url) parts.push(`→ ${file.url}`);
+      lines.push(parts.join(' '));
     });
+    lines.push('');
   }
 
-  lines.push('---');
-  lines.push('Objective: craft the Learn Topics and Do Practice Problems phases only, sequenced to respect prerequisites and the rushing guidance.');
-  lines.push(`Favor concise descriptions (≤ ${MAX_DESCRIPTION_WORDS} words each) and avoid repeating the topic name in the description unless necessary.`);
-  lines.push('For each planned action produce exactly one line in the format:');
-  lines.push(`  ${OUTPUT_FORMAT_HINT}`);
-  lines.push('Rules for the concise output:');
-  lines.push('- Module/Submodule should capture the step and focus area, e.g., "Learn Topics - Supervised Learning/Regression".');
-  lines.push('- Format must be one of: video, reading, flashcards, mini quiz, practice exam.');
-  lines.push('- Desc should be a direct imperative describing what to cover (≤ 18 words, no bullet markers).');
-  lines.push('- Return only the line list, no extra text, explanations, or JSON. Maintain order of execution.');
+  // Calculate global familiarity level
+  let globalFamiliarity = 'medium';
+  if (Array.isArray(topicFamiliarity) && topicFamiliarity.length > 0) {
+    const familiarityMap = { low: 1, medium: 2, high: 3 };
+    const avg = topicFamiliarity.reduce((sum, { familiarity }) => {
+      return sum + (familiarityMap[familiarity?.toLowerCase()] || 2);
+    }, 0) / topicFamiliarity.length;
+    globalFamiliarity = avg < 1.7 ? 'low' : avg > 2.3 ? 'high' : 'medium';
+  }
+
+  lines.push('');
+  lines.push('');
+  lines.push(`Objective: Generate an adaptive sequence respecting prerequisites, rushing (order/prune high-priority first), and familiarity (${globalFamiliarity} global). Include learn/practice/review phases weighted accordingly.`);
+  lines.push('Return JSON: { "steps": [ { "module": "Main Topic", "submodule": "Subtopic", "format": "video|reading|flashcards|mini quiz|practice exam", "content": "Imperative action (≤50 words, e.g., \'Explain regression via linear model with real dataset example\')" } ] }');
+  lines.push('No extra text.');
 
   return lines.join('\n');
 }
 
 function buildCourseSystemPrompt() {
   return [
-    'You are an elite instructional designer collaborating with top universities.',
-    'Study process phases (loop until exam or time runs out): 1) Learn Topics, 2) Do Practice Problems, 3) Review/Learn Unfamiliar Topics, 4) repeat while time remains.',
-    'Learn Topics covers conceptual understanding for all topics; Review concentrates on unfamiliar items revealed during practice.',
-    'Time left and familiarity govern scaffolding: higher familiarity → less support during practice, lower familiarity → more guidance.',
-    'Rushingness Index (time left ÷ topics left) determines step pruning order: drop (1) Learn Topics familiar, (2) Practice Problems familiar, (3) Practice Problems unfamiliar, (4) Learn Topics familiar, (5) Review if still rushed.',
-    'Because no practice results exist yet, only output steps involving learning topics, practicing with those topics, and testing the user on the topics, anticipating later loops implicitly.',
-    'Always rely on provided materials or the web_search tool when unsure, and never fabricate facts or information. Review generated courses for factual inaccuracies or biases and prune them.',
-    `Respond exclusively with ultra-concise action lines in the format "${OUTPUT_FORMAT_HINT}" using lowercase format labels.`,
-    'Each module should be a larger topic with submodules being subtopics of this, never explicity say "Learn Topics" or "Do Practice Problems" only use names relevant to the course generated.',
-    'No prose, no explanations, no JSON, no code fences.',
-  ].join('\n');
+    'You are an elite instructional designer using evidence-based practices (Bloom\'s taxonomy, active recall, spaced repetition).',
+    'Sequence content adaptively: prioritize prerequisites, then learn (understand concepts) → practice (apply/analyze via problems) → review (interleave unfamiliar).',
+    'Order by familiarity (low: more scaffolding first; high: less) and rushing index (prune low-priority: familiar learn/practice last).',
+    'Use provided syllabus/files (browse_page for details) or web_search for accuracy—never fabricate.',
+    'Output JSON array of steps ordered by execution (urgent/unfamiliar high-priority first).',
+    'Favor varied formats for retention.',
+  ].join(' ');
 }
 
 function allowedFormatsList() {
@@ -226,15 +243,18 @@ function buildCorrectionLineFromError(error) {
 }
 
 async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
+  const { createBrowsePageTool } = await import('./grokClient.js');
+  
   const result = await executeOpenRouterChat({
     apiKey,
     model,
-    temperature: 0.3,
-    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: 0.2,
+    maxTokens: 800,
     reasoning: { enabled: true, effort: 'medium' },
-    tools: [createWebSearchTool()],
+    tools: [createWebSearchTool(), createBrowsePageTool()],
     toolChoice: 'auto',
-    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    maxToolIterations: 2,
+    responseFormat: { type: 'json_object' },
     attachments,
     messages,
   });
@@ -257,27 +277,73 @@ function extractRawFromResult({ content, message }) {
 
 function tryParseCourseStructure(raw, message) {
   // Accept SDK-parsed object if present
-  if (message?.parsed && typeof message.parsed === 'object' && !Array.isArray(message.parsed)) {
-    return { ok: true, courseStructure: message.parsed };
+  if (message?.parsed && typeof message.parsed === 'object') {
+    const obj = message.parsed;
+    if (Array.isArray(obj.steps)) {
+      return { ok: true, courseStructure: convertStepsArrayToStructure(obj.steps) };
+    }
+    if (!Array.isArray(obj)) {
+      return { ok: true, courseStructure: obj };
+    }
   }
+  
   // Try JSON first
   if (raw) {
     try {
       const asJson = JSON.parse(raw);
-      if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
-        return { ok: true, courseStructure: asJson };
+      if (asJson && typeof asJson === 'object') {
+        if (Array.isArray(asJson.steps)) {
+          return { ok: true, courseStructure: convertStepsArrayToStructure(asJson.steps) };
+        }
+        if (!Array.isArray(asJson)) {
+          return { ok: true, courseStructure: asJson };
+        }
       }
     } catch (_) {
       // ignore
     }
   }
-  // Then concise lines format
+  
+  // Fallback: Then concise lines format (legacy)
   try {
     const structure = convertConcisePlanToStructure(raw);
     return { ok: true, courseStructure: structure };
   } catch (error) {
     return { ok: false, error };
   }
+}
+
+function convertStepsArrayToStructure(steps) {
+  if (!Array.isArray(steps)) {
+    throw new Error('Steps must be an array');
+  }
+  
+  const structure = {};
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    
+    const { module, submodule, format, content } = step;
+    if (!module || !format) continue;
+    
+    const moduleKey = `${module}${submodule ? '/' + submodule : ''}`;
+    if (!structure[moduleKey]) {
+      structure[moduleKey] = [];
+    }
+    
+    const normalizedFormat = VALID_FORMATS.get(format?.toLowerCase()?.trim());
+    if (!normalizedFormat) continue;
+    
+    structure[moduleKey].push({
+      'Format': normalizedFormat,
+      'content': content || '',
+    });
+  }
+  
+  if (Object.keys(structure).length === 0) {
+    throw new Error('No valid steps found in response');
+  }
+  
+  return structure;
 }
 
 async function generateWithRetriesAndFallback({ apiKey, baseMessages, attachments }) {
@@ -553,8 +619,8 @@ function withTimeout(promiseFactory, timeoutMs, label = 'operation') {
     .finally(() => clearTimeout(timer));
 }
 
-async function callModelJson({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000, retries = 1 }) {
-  const doExec = async ({ signal, model, correction }) => {
+async function callModelJson({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000, retries = 1, model = MINI_QUIZ_MODEL, fallbackModel = MINI_QUIZ_FALLBACK }) {
+  const doExec = async ({ signal, currentModel, correction }) => {
     const messages = [
       { role: 'system', content: system },
       { role: 'user', content: user },
@@ -563,13 +629,13 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
 
     const { content, message } = await executeOpenRouterChat({
       apiKey,
-      model,
-      temperature: 0.2,
-      maxTokens: 1200,
+      model: currentModel,
+      temperature: 0.4,
+      maxTokens: 800,
       reasoning: { enabled: true, effort: 'medium' },
       tools,
       toolChoice: tools?.length ? 'auto' : undefined,
-      maxToolIterations: 3,
+      maxToolIterations: 2,
       attachments,
       responseFormat: { type: 'json_object' },
       messages,
@@ -595,36 +661,40 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
     let correction;
     while (attempt <= retries) {
       try {
-        return await withTimeout((signal) => doExec({ signal, model: modelName, correction }), timeoutMs, 'model-json');
+        return await withTimeout((signal) => doExec({ signal, currentModel: modelName, correction }), timeoutMs, 'model-json');
       } catch (err) {
         if (attempt >= retries) throw err;
         attempt += 1;
-        correction = 'Your previous response was not valid JSON or did not match the requested structure. Return STRICT JSON only, no prose and no code fences.';
+        correction = 'Invalid. Return STRICT JSON with plausible distractors.';
       }
     }
   };
 
   try {
-    return await runWithModel(COURSE_MODEL_NAME);
+    return await runWithModel(model);
   } catch (_) {
-    // Fallback to Grok 4 Fast
-    return await runWithModel(FALLBACK_MODEL_NAME);
+    // Fallback model
+    return await runWithModel(fallbackModel);
   }
 }
 
 // Prompt builders per format
-function buildVideoPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a precise research assistant who finds the best short YouTube video for a topic. Always return strict JSON and always make sure the final response has a video.';
+function buildVideoPrompt({ className, moduleKey, desc, familiarityLevel = 'medium' }) {
+  const system = `You are a precise curator of educational videos. MUST use web_search for real YouTube videos. Tailor to ${familiarityLevel}: low=beginner intros; high=advanced applications. Prefer 1-2 short videos (≤15min total) from reputable sources (e.g., Khan Academy, 3Blue1Brown).`;
+  
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Task: Use the web_search tool to identify a single high-quality YouTube video (≤ 15 minutes) that best teaches this topic.',
-    'Choose official or reputable sources. Prefer concise, focused explanations.',
-    'The professor desigining this course specified instructions given earlier, use them to guide your search',
-    'Return JSON exactly as: { "url": "https://www.youtube.com/...", "title": "...", "summary": "..." }',
-    'The url MUST be a valid YouTube video link: youtube.com/watch?v=..., youtu.be/..., shorts, or embed URLs are acceptable.',
+    `Familiarity: ${familiarityLevel}`,
+    '',
+    'CRITICAL: Use web_search with tailored queries, e.g., "site:youtube.com {topic} {familiarityLevel} tutorial" or "{topic} advanced example youtube". Select 1-2 high-quality videos totaling ≤15min.',
+    '',
+    'RETURN JSON: { "videos": [ { "url": "https://www.youtube.com/watch?v=VIDEO_ID", "title": "exact title", "duration_min": number, "summary": "≤30 words on coverage" } ] }',
+    '',
+    'URLs MUST be valid (formats: watch?v=, youtu.be, shorts, embed). No placeholders.',
   ].join('\n');
+  
   return { system, user };
 }
 
@@ -670,46 +740,103 @@ function normalizeVideoJson(json) {
   return { url, title, summary };
 }
 
-async function callVideoJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+async function callVideoJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
   let attempts = 0;
   let correction = '';
-  while (attempts <= 2) { // max 2 retries beyond first
-    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+  
+  while (attempts <= 2) { // max 2 retries
+    const userWithCorrection = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
     let json;
     try {
-      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+      const doExec = async ({ signal }) => {
+        const messages = [
+          { role: 'system', content: system },
+          { role: 'user', content: userWithCorrection },
+        ];
+
+        const { content, message } = await executeOpenRouterChat({
+          apiKey,
+          model: VIDEO_MODEL,
+          temperature: 0.4,
+          maxTokens: 1000,
+          reasoning: { enabled: true, effort: 'medium' },
+          tools,
+          toolChoice: 'required', // Force web search usage
+          maxToolIterations: 2,
+          attachments,
+          responseFormat: { type: 'json_object' },
+          messages,
+          signal,
+        });
+
+        if (message?.parsed && typeof message.parsed === 'object') {
+          return message.parsed;
+        }
+
+        const raw = normalizeContentParts(content);
+        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+        }
+      };
+
+      json = await withTimeout((signal) => doExec({ signal }), timeoutMs, 'video-json');
     } catch (err) {
       if (attempts >= 2) throw err;
       attempts += 1;
-      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "url": "https://www.youtube.com/...", "title": "...", "summary": "..." }. The url MUST contain "www.youtube.com". No extra keys, no prose, no code fences.';
+      correction = 'Invalid/empty response. MUST web_search for VALID YouTube videos tailored to familiarity. Return STRICT JSON { "videos": [ { "url": "...", "title": "...", "duration_min": ..., "summary": "..." } ] }. No extras.';
       continue;
     }
 
-    const normalized = normalizeVideoJson(json);
-    if (normalized && isValidYouTubeVideoUrl(normalized.url)) {
-      return normalized;
+    // Validate videos array
+    if (!json || !Array.isArray(json.videos) || json.videos.length === 0) {
+      if (attempts >= 2) {
+        const e = new Error('Video JSON missing videos array after maximum retries');
+        e.statusCode = 502;
+        e.details = { json, attempts };
+        throw e;
+      }
+      attempts += 1;
+      correction = 'Still invalid URL(s). Re-search and ensure working formats. ONLY JSON as above.';
+      continue;
+    }
+
+    // Validate each video has valid YouTube URL
+    const validVideos = json.videos.filter(v => 
+      v && typeof v === 'object' && 
+      v.url && v.title && 
+      isValidYouTubeVideoUrl(v.url)
+    );
+
+    if (validVideos.length > 0) {
+      return { videos: validVideos };
     }
 
     if (attempts >= 2) {
-      const e = new Error('Video JSON missing required YouTube URL or fields');
+      const e = new Error('No valid YouTube URLs found after maximum retries');
       e.statusCode = 502;
-      e.details = { json };
+      e.details = { json, attempts };
       throw e;
     }
     attempts += 1;
-    correction = 'Your previous response did not include a valid YouTube video URL in "url" (accepted: youtube.com/watch?v=..., youtu.be/..., shorts, embed) or was missing required fields. Return STRICT JSON: { "url": "https://www.youtube.com/watch?v=...", "title": "...", "summary": "..." } only.';
+    correction = 'Still invalid URL(s). Re-search and ensure working formats. ONLY JSON as above.';
   }
 }
 
-function buildReadingPrompt({ className, moduleKey, desc }) {
-  const system = 'You are an expert educator writing a focused teaching article for learners. Always return strict JSON.';
+function buildReadingPrompt({ className, moduleKey, desc, familiarityLevel = 'medium' }) {
+  const system = 'You are an expert educator crafting concise, sourced articles. Use web_search/browse_page for 2-3 facts/examples; cite inline (e.g., [Source]). Structure for Bloom\'s: intro (understand), examples (apply), summary (analyze). Cap body ≤800 words.';
+  
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Write a single teaching article with:\n- a clear, concise title\n- a well-structured body using Markdown headings and paragraphs\n- math using LaTeX (inline $...$ or block $$...$$) when helpful',
-    'Return JSON exactly as: { "title": "...", "body": "..." }',
-    'No extra keys, no prose outside JSON, no code fences.',
+    `Familiarity: ${familiarityLevel} (scaffold more if low)`,
+    '',
+    'Write a focused article: title, body (Markdown: # Headings, paragraphs, LaTeX math $...$ or $$...$$).',
+    'Return JSON: { "title": "...", "body": "..." }',
+    'No extras.',
   ].join('\n');
   return { system, user };
 }
@@ -727,85 +854,161 @@ function normalizeReadingJson(json) {
   return { title, body };
 }
 
-async function callReadingJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+async function callReadingJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
   let attempts = 0;
   let correction = '';
-  while (attempts <= 2) {
-    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+  while (attempts <= 1) {
+    const userWithCorrection = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
     let json;
     try {
-      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+      const doExec = async ({ signal }) => {
+        const messages = [
+          { role: 'system', content: system },
+          { role: 'user', content: userWithCorrection },
+        ];
+
+        const { content, message } = await executeOpenRouterChat({
+          apiKey,
+          model: READING_MODEL,
+          temperature: 0.2,
+          maxTokens: 1000,
+          reasoning: { enabled: true, effort: 'medium' },
+          tools,
+          toolChoice: 'auto',
+          maxToolIterations: 2,
+          attachments,
+          responseFormat: { type: 'json_object' },
+          messages,
+          signal,
+        });
+
+        if (message?.parsed && typeof message.parsed === 'object') {
+          return message.parsed;
+        }
+
+        const raw = normalizeContentParts(content);
+        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+        }
+      };
+
+      json = await withTimeout((signal) => doExec({ signal }), timeoutMs, 'reading-json');
     } catch (err) {
-      if (attempts >= 2) throw err;
+      if (attempts >= 1) throw err;
       attempts += 1;
-      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "title": "...", "body": "..." }. No extra keys, no code fences, no prose.';
+      correction = 'Invalid/empty. Return STRICT JSON { "title": "...", "body": "..." } with sources cited. Cap ≤800 words.';
       continue;
     }
 
     const normalized = normalizeReadingJson(json);
     if (normalized) return normalized;
 
-    if (attempts >= 2) {
+    if (attempts >= 1) {
       const e = new Error('Reading JSON missing required fields');
       e.statusCode = 502;
       e.details = { json };
       throw e;
     }
     attempts += 1;
-    correction = 'Your previous response did not include both top-level fields "title" and "body". Return STRICT JSON: { "title": "...", "body": "..." } only.';
+    correction = 'Invalid. Return STRICT JSON { "title": "...", "body": "..." } with sources cited. Cap ≤800 words.';
   }
 }
 
-function buildFlashcardsPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a flashcard expert creating concise flashcards for long-term retention. Only include concept explanations, definitions, or key facts. Do not include practice problems or unrelated content. Use math or formulas only if directly relevant.';
+function buildFlashcardsPrompt({ className, moduleKey, desc, familiarityLevel = 'medium' }) {
+  const system = 'You create flashcards for active recall/spaced repetition (Anki-style). 5-8 cards: 20% cloze (e.g., "The slope in linear regression is {{c1::beta}}"). Focus: definitions, concepts, formulas (LaTeX). Add tag: difficulty (easy/medium/hard) based on familiarity.';
+  
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Generate 3–7 flashcards. Each card is exactly a triple: [question, answer, explanation].',
-    'Use Markdown for math: inline $...$; blocks $$...$$ when needed.',
-    'Return STRICT JSON exactly as: { "cards": [ ["question","answer","explanation"], ... ] }',
-    'No extra keys, no prose outside JSON, no code fences.',
+    `Familiarity: ${familiarityLevel}`,
+    '',
+    'Generate 5-8 cards as triples: [question/cloze, answer, explanation (≤20 words)]. Markdown math.',
+    'Return JSON: { "cards": [ ["question", "answer", "explanation", "tag": "easy"] , ... ] }',
+    'No extras.',
   ].join('\n');
   return { system, user };
 }
 
 function normalizeFlashcardsJson(json) {
-  // Accept { cards: [ [q,a,e], ... ] }
+  // Accept { cards: [ [q,a,e,tag], ... ] } - new format with tags
   if (json && typeof json === 'object' && Array.isArray(json.cards)) {
-    const ok = json.cards.every(
-      (c) => Array.isArray(c) && c.length === 3 && c.every((s) => typeof s === 'string' && s.trim() !== '')
-    );
-    if (ok) return { cards: json.cards.map((c) => c.map((s) => s.trim())) };
-  }
-  // Accept { cards: [ { question, answer, explanation } ] }
-  if (json && typeof json === 'object' && Array.isArray(json.cards)) {
-    const mapped = json.cards
-      .map((c) =>
-        c && typeof c === 'object'
-          ? [c.question, c.answer, c.explanation].filter((x) => typeof x === 'string')
-          : null
-      )
-      .filter(Boolean);
-    if (mapped.length > 0 && mapped.every((c) => c.length === 3)) {
-      return { cards: mapped.map((c) => c.map((s) => s.trim())) };
+    const mapped = json.cards.map(c => {
+      if (Array.isArray(c) && c.length >= 3) {
+        return [
+          typeof c[0] === 'string' ? c[0].trim() : '',
+          typeof c[1] === 'string' ? c[1].trim() : '',
+          typeof c[2] === 'string' ? c[2].trim() : '',
+          typeof c[3] === 'string' ? c[3].trim() : 'medium' // default tag
+        ];
+      }
+      // Accept { question, answer, explanation, tag } objects
+      if (c && typeof c === 'object') {
+        const q = typeof c.question === 'string' ? c.question.trim() : '';
+        const a = typeof c.answer === 'string' ? c.answer.trim() : '';
+        const e = typeof c.explanation === 'string' ? c.explanation.trim() : '';
+        const t = typeof c.tag === 'string' ? c.tag.trim() : 'medium';
+        if (q && a && e) return [q, a, e, t];
+      }
+      return null;
+    }).filter(Boolean);
+    
+    if (mapped.length > 0) {
+      return { cards: mapped };
     }
   }
   return null;
 }
 
-async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 45000 }) {
+async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
   let attempts = 0;
   let correction = '';
-  while (attempts <= 2) {
-    const userWithCorrection = correction ? `${user}\n\nIMPORTANT: ${correction}` : user;
+  while (attempts <= 1) {
+    const userWithCorrection = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
     let json;
     try {
-      json = await callModelJson({ apiKey, system, user: userWithCorrection, attachments, tools, timeoutMs, retries: 0 });
+      const doExec = async ({ signal }) => {
+        const messages = [
+          { role: 'system', content: system },
+          { role: 'user', content: userWithCorrection },
+        ];
+
+        const { content, message } = await executeOpenRouterChat({
+          apiKey,
+          model: FLASHCARDS_MODEL,
+          temperature: 0.2,
+          maxTokens: 800,
+          reasoning: { enabled: true, effort: 'medium' },
+          tools,
+          toolChoice: 'auto',
+          maxToolIterations: 2,
+          attachments,
+          responseFormat: { type: 'json_object' },
+          messages,
+          signal,
+        });
+
+        if (message?.parsed && typeof message.parsed === 'object') {
+          return message.parsed;
+        }
+
+        const raw = normalizeContentParts(content);
+        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+        }
+      };
+
+      json = await withTimeout((signal) => doExec({ signal }), timeoutMs, 'flashcards-json');
     } catch (err) {
-      if (attempts >= 2) throw err;
+      if (attempts >= 1) throw err;
       attempts += 1;
-      correction = 'Your previous response was invalid or empty. Return STRICT JSON exactly { "cards": [ ["question","answer","explanation"], ... ] }. No extra keys, no code fences, no prose.';
+      correction = 'Invalid. Return STRICT JSON { "cards": [ ["q", "a", "exp", "tag"] , ... ] } with 5-8 valid triples.';
       continue;
     }
 
@@ -814,40 +1017,110 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
       return normalized;
     }
 
-    if (attempts >= 2) {
+    if (attempts >= 1) {
       const e = new Error('Flashcards JSON missing required shape');
       e.statusCode = 502;
       e.details = { json };
       throw e;
     }
     attempts += 1;
-    correction = 'Your previous response did not include top-level { "cards": [ ["question","answer","explanation"], ... ] }. Ensure each card has exactly 3 non-empty strings.';
+    correction = 'Invalid. Return STRICT JSON { "cards": [ ["q", "a", "exp", "tag"] , ... ] } with 5-8 valid triples.';
   }
 }
 
-function buildMiniQuizPrompt({ className, moduleKey, desc }) {
-  const system = 'You are a careful quiz author. Always return strict JSON.';
+async function callPracticeExamJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
+  let attempts = 0;
+  let correction = '';
+  while (attempts <= 1) {
+    const userWithCorrection = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
+    let json;
+    try {
+      const doExec = async ({ signal }) => {
+        const messages = [
+          { role: 'system', content: system },
+          { role: 'user', content: userWithCorrection },
+        ];
+
+        const { content, message } = await executeOpenRouterChat({
+          apiKey,
+          model: PRACTICE_EXAM_MODEL,
+          temperature: 0.4,
+          maxTokens: 1000,
+          reasoning: { enabled: true, effort: 'high' },
+          tools,
+          toolChoice: 'auto',
+          maxToolIterations: 2,
+          attachments,
+          responseFormat: { type: 'json_object' },
+          messages,
+          signal,
+        });
+
+        if (message?.parsed && typeof message.parsed === 'object') {
+          return message.parsed;
+        }
+
+        const raw = normalizeContentParts(content);
+        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+        }
+      };
+
+      json = await withTimeout((signal) => doExec({ signal }), timeoutMs, 'practice-exam-json');
+    } catch (err) {
+      if (attempts >= 1) throw err;
+      attempts += 1;
+      correction = 'Invalid. Return STRICT JSON with mcq/frq arrays, including model answers.';
+      continue;
+    }
+
+    // Validate has mcq and frq arrays
+    if (json && typeof json === 'object' && (Array.isArray(json.mcq) || Array.isArray(json.frq))) {
+      return json;
+    }
+
+    if (attempts >= 1) {
+      const e = new Error('Practice exam JSON missing required structure');
+      e.statusCode = 502;
+      e.details = { json };
+      throw e;
+    }
+    attempts += 1;
+    correction = 'Invalid. Return STRICT JSON with mcq/frq arrays, including model answers.';
+  }
+}
+
+function buildMiniQuizPrompt({ className, moduleKey, desc, familiarityLevel = 'medium', examStructureText }) {
+  const system = 'You author quizzes for active retrieval. 3-5 MCQs: 4 plausible options (distractors from common errors), one correct, explanation. Scale difficulty to familiarity (easier if low). Mix with 1 short FRQ if fits.';
+  
   const user = [
     `Class: ${className}`,
     `Module: ${moduleKey}`,
     `Instruction: ${desc}`,
-    'Create 4–6 MCQ questions with exactly 4 options, one correct answer, and a short explanation. Follow the instructions the professor gave.',
-    'Return JSON: { "questions": [ { "question": "...", "options": ["A","B","C","D"], "answer": "B", "explanation": "..." } ] }',
-  ].join('\n');
+    `Familiarity: ${familiarityLevel}`,
+    examStructureText ? `Exam hints: ${examStructureText}` : '',
+    '',
+    'Create 3-5 questions. MCQ: {question, options:["A...","B..."], answer:"A", explanation}. FRQ: {prompt, model_answer, rubric}.',
+    'Return JSON: { "questions": [ {type: "mcq|frq", ...} ] }',
+  ].filter(Boolean).join('\n');
   return { system, user };
 }
 
-function buildPracticeExamPrompt({ className, moduleKey, desc, examStructureText }) {
-  const system = 'You are a university exam setter. Always return strict JSON.';
+function buildPracticeExamPrompt({ className, moduleKey, desc, familiarityLevel = 'medium', examStructureText }) {
+  const system = 'You set realistic practice exams mirroring exam structure. Interleave topics; scale to familiarity. MCQs: 4 options, plausible distractors. FRQs: detailed prompt, model answer, rubric (point breakdown). 8-12 total questions.';
+  
   const user = [
     `Class: ${className}`,
-    `Module: ${moduleKey}`,
+    `Module: ${moduleKey} (full scope if exam-level)`,
     `Instruction: ${desc}`,
+    `Familiarity: ${familiarityLevel}`,
     examStructureText ? `Exam hints: ${examStructureText}` : '',
-    'Create a practice exam that fits the exam structure or hints if they are specified. Follow the instructions the professor gave.',
-    'MCQ have 4 options, one correct answer, brief explanation.',
-    'FRQ provide a detailed prompt and a short rubric.',
-    'Return JSON: { "mcq": [ { "question": "...", "options": ["A","B","C","D"], "answer": "C", "explanation": "..." } ], "frq": [ { "prompt": "...", "rubric": "..." } ] }',
+    '',
+    'Create balanced exam. MCQ/FRQ as above, with model answers for FRQ.',
+    'Return JSON: { "mcq": [...], "frq": [ { "prompt": "...", "model_answer": "...", "rubric": "..." } ] }',
   ].filter(Boolean).join('\n');
   return { system, user };
 }
@@ -885,14 +1158,16 @@ async function saveFormatRow(supabase, table, row) {
   return data?.id;
 }
 
-async function generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset }) {
+async function generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset, familiarityLevel = 'medium' }) {
   const fmt = asset?.Format?.toLowerCase?.();
   const desc = asset?.content || '';
   const table = tableForFormat(fmt);
   if (!table) return null; // unsupported
 
+  const { createBrowsePageTool } = await import('./grokClient.js');
   let builder;
   let tools = [];
+  
   switch (fmt) {
     case 'video':
       builder = buildVideoPrompt;
@@ -900,32 +1175,36 @@ async function generateOneAsset({ apiKey, supabase, userId, courseId, className,
       break;
     case 'reading':
       builder = buildReadingPrompt;
-      tools = [createWebSearchTool()];
+      tools = [createWebSearchTool(), createBrowsePageTool()];
       break;
     case 'flashcards':
       builder = buildFlashcardsPrompt;
-      tools = [createWebSearchTool()];
+      tools = [createWebSearchTool(), createBrowsePageTool()];
       break;
     case 'mini quiz':
       builder = buildMiniQuizPrompt;
-      tools = [createWebSearchTool()];
+      tools = [createWebSearchTool(), createBrowsePageTool()];
       break;
     case 'practice exam':
-      builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText });
-      tools = [createWebSearchTool()];
+      builder = (ctx) => buildPracticeExamPrompt({ ...ctx, examStructureText, familiarityLevel });
+      tools = [createWebSearchTool(), createBrowsePageTool()];
       break;
     default:
       return null;
   }
 
-  const { system, user } = builder({ className, moduleKey, desc });
+  const { system, user } = builder({ className, moduleKey, desc, familiarityLevel, examStructureText });
+  
+  // Call appropriate model-specific validation function
   const json = fmt === 'video'
-    ? await callVideoJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
+    ? await callVideoJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 30000 })
     : fmt === 'reading'
-    ? await callReadingJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
+    ? await callReadingJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 30000 })
     : fmt === 'flashcards'
-    ? await callFlashcardsJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 45000 })
-    : await callModelJson({ apiKey, system, user, tools, timeoutMs: 45000, retries: 1 });
+    ? await callFlashcardsJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 30000 })
+    : fmt === 'mini quiz'
+    ? await callModelJson({ apiKey, system, user, tools, timeoutMs: 30000, retries: 1, model: MINI_QUIZ_MODEL, fallbackModel: MINI_QUIZ_FALLBACK })
+    : await callPracticeExamJsonWithValidation({ apiKey, system, user, tools, timeoutMs: 30000 });
 
   const id = await saveFormatRow(supabase, table, {
     course_id: courseId,
@@ -967,8 +1246,18 @@ async function runLimited(tasks, limit = 3) {
 }
 
 export async function generateAssetsContent(structure, ctx) {
-  const { supabase, userId, courseId, className, examStructureText, apiKey } = ctx;
+  const { supabase, userId, courseId, className, examStructureText, apiKey, topicFamiliarity } = ctx;
   if (!supabase || !userId || !courseId) return structure; // noop if not provided
+
+  // Calculate global familiarity level
+  let familiarityLevel = 'medium';
+  if (Array.isArray(topicFamiliarity) && topicFamiliarity.length > 0) {
+    const familiarityMap = { low: 1, medium: 2, high: 3 };
+    const avg = topicFamiliarity.reduce((sum, { familiarity }) => {
+      return sum + (familiarityMap[familiarity?.toLowerCase()] || 2);
+    }, 0) / topicFamiliarity.length;
+    familiarityLevel = avg < 1.7 ? 'low' : avg > 2.3 ? 'high' : 'medium';
+  }
 
   const moduleKeys = Object.keys(structure || {});
   const tasks = [];
@@ -989,7 +1278,17 @@ export async function generateAssetsContent(structure, ctx) {
       locations.push({ moduleKey, idx });
       tasks.push(async () => {
         try {
-          const id = await generateOneAsset({ apiKey, supabase, userId, courseId, className, examStructureText, moduleKey, asset });
+          const id = await generateOneAsset({ 
+            apiKey, 
+            supabase, 
+            userId, 
+            courseId, 
+            className, 
+            examStructureText, 
+            moduleKey, 
+            asset,
+            familiarityLevel 
+          });
           return { id };
         } catch (error) {
           // Log full details and mark as failed

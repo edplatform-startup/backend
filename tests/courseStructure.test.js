@@ -95,11 +95,15 @@ test('course structure generation route', async (t) => {
     setOpenRouterChatExecutor(async ({ messages }) => {
       const user = messages?.find((m) => m.role === 'user')?.content || '';
       let parsed;
-      if (typeof user === 'string' && user.includes('"videos"')) {
-        parsed = { videos: [{ title: 'CS101 Intro', outline: ['a'], watch_time_minutes: 7, key_points: ['k'] }] };
-      } else if (typeof user === 'string' && user.includes('"sections"')) {
-        parsed = { article: { title: 'Readings', sections: [{ heading: 'h', summary: 's' }] } };
-      } else {
+      // Check for video prompt (contains "videos" or "YouTube")
+      if (typeof user === 'string' && (user.includes('"videos"') || user.includes('YouTube'))) {
+        parsed = { videos: [{ url: 'https://www.youtube.com/watch?v=test123', title: 'CS101 Intro', duration_min: 12, summary: 'Introduction to CS fundamentals' }] };
+      } 
+      // Check for reading prompt (contains "title", "body")
+      else if (typeof user === 'string' && user.includes('"title"') && user.includes('"body"')) {
+        parsed = { title: 'Algorithms Overview', body: '# Algorithms\n\nThis article covers fundamental algorithms...' };
+      } 
+      else {
         parsed = { ok: true };
       }
       return { content: JSON.stringify(parsed), message: { parsed } };

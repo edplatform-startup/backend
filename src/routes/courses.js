@@ -183,17 +183,19 @@ router.get('/', async (req, res) => {
 // Body: {
 //   userId: "user-uuid-string",
 //   finishByDate?: string,
-//   courseSelection?: { code: string, title: string } | null,
+//   university?: string,
+//   courseTitle?: string,
 //   syllabusText?: string,
-//   syllabusFiles?: FileMeta[],
+//   syllabusFiles?: [],
 //   examFormatDetails?: string,
-//   examFiles?: FileMeta[]
+//   examFiles?: []
 // }
 router.post('/', async (req, res) => {
   const {
     userId,
     finishByDate,
-    courseSelection,
+    university,
+    courseTitle,
     syllabusText,
     syllabusFiles,
     examFormatDetails,
@@ -225,18 +227,12 @@ router.post('/', async (req, res) => {
   }
 
   let normalizedCourseSelection = null;
-  if (courseSelection != null) {
-    if (typeof courseSelection !== 'object' || Array.isArray(courseSelection)) {
-      return res.status(400).json({ error: 'courseSelection must be an object with code and title or null' });
-    }
-    const { code, title } = courseSelection;
-    if (typeof code !== 'string' || !code.trim()) {
-      return res.status(400).json({ error: 'courseSelection.code must be a non-empty string' });
-    }
-    if (typeof title !== 'string' || !title.trim()) {
-      return res.status(400).json({ error: 'courseSelection.title must be a non-empty string' });
-    }
-    normalizedCourseSelection = { code: code.trim(), title: title.trim() };
+  if (university || courseTitle) {
+    normalizedCourseSelection = {
+      college: university?.trim() || '',
+      title: courseTitle?.trim() || '',
+      code: ''
+    };
   }
 
   let normalizedSyllabusText = null;
@@ -244,7 +240,7 @@ router.post('/', async (req, res) => {
     if (typeof syllabusText !== 'string') {
       return res.status(400).json({ error: 'syllabusText must be a string when provided' });
     }
-    normalizedSyllabusText = syllabusText;
+    normalizedSyllabusText = syllabusText.trim() || null;
   }
 
   let normalizedExamFormatDetails = null;
@@ -252,9 +248,10 @@ router.post('/', async (req, res) => {
     if (typeof examFormatDetails !== 'string') {
       return res.status(400).json({ error: 'examFormatDetails must be a string when provided' });
     }
-    normalizedExamFormatDetails = examFormatDetails;
+    normalizedExamFormatDetails = examFormatDetails.trim() || null;
   }
 
+  // Parse files from frontend - they will be inlined as text for Grok 4 Fast (text/image only model)
   const syllabusFilesValidation = validateFileArray(syllabusFiles, 'syllabusFiles');
   if (!syllabusFilesValidation.valid) {
     return res.status(400).json({ error: syllabusFilesValidation.error });
@@ -301,6 +298,60 @@ router.post('/', async (req, res) => {
     if (e && e.name === 'FetchError') {
       return res.status(502).json({ error: 'Failed to reach study planner model', details: e.message });
     }
+    return res.status(500).json({ error: 'Internal server error', details: e.message });
+  }
+});
+
+// DELETE /courses?userId=xxx&courseId=yyy
+router.delete('/', async (req, res) => {
+  const { userId, courseId } = req.query;
+
+  if (!userId || !courseId) {
+    return res.status(400).json({ error: 'userId and courseId are required' });
+  }
+
+  const v1 = validateUuid(userId, 'userId');
+  if (!v1.valid) return res.status(400).json({ error: v1.error });
+
+  const v2 = validateUuid(courseId, 'courseId');
+  if (!v2.valid) return res.status(400).json({ error: v2.error });
+
+  try {
+    const supabase = getSupabase();
+    
+    // First verify the course exists and belongs to the user
+    const { data: course, error: fetchError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError) {
+      if (fetchError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Course not found or does not belong to this user' });
+      }
+      console.error('Supabase error verifying course:', fetchError);
+      return res.status(500).json({ error: 'Failed to verify course', details: fetchError.message });
+    }
+
+    // Delete the course (cascade will handle related content)
+    const { error: deleteError } = await supabase
+      .schema('api')
+      .from('courses')
+      .delete()
+      .eq('id', courseId)
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      console.error('Supabase error deleting course:', deleteError);
+      return res.status(500).json({ error: 'Failed to delete course', details: deleteError.message });
+    }
+
+    return res.status(200).json({ success: true, message: 'Course deleted successfully', courseId });
+  } catch (e) {
+    console.error('Unhandled error deleting course:', e);
     return res.status(500).json({ error: 'Internal server error', details: e.message });
   }
 });

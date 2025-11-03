@@ -315,6 +315,56 @@ export function createWebSearchTool() {
   };
 }
 
+export function createBrowsePageTool() {
+  return {
+    name: 'browse_page',
+    description: 'Fetch and read the full content of a specific webpage URL.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'The URL of the page to browse and extract content from.'
+        }
+      },
+      required: ['url']
+    },
+    handler: async (args) => {
+      const url = args?.url || '';
+      if (!url || !url.startsWith('http')) {
+        return 'Invalid URL provided for browse_page.';
+      }
+      
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; EdTechBot/1.0)',
+          },
+          signal: AbortSignal.timeout(10000), // 10s timeout
+        });
+        
+        if (!response.ok) {
+          return `Failed to fetch page: ${response.status} ${response.statusText}`;
+        }
+        
+        const text = await response.text();
+        // Simple text extraction - strip HTML tags and limit size
+        const cleanText = text
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 8000); // Limit to 8KB
+        
+        return cleanText || 'Page content could not be extracted.';
+      } catch (error) {
+        return `Error browsing page: ${error.message}`;
+      }
+    },
+  };
+}
+
 async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -618,6 +668,15 @@ export async function generateStudyTopics(input) {
   const model = input?.model || DEFAULT_MODEL;
   const prompt = buildStudyTopicsPrompt(input || {});
 
+  // Prepare attachments from syllabusFiles and examFiles
+  const attachments = [];
+  if (Array.isArray(input?.syllabusFiles)) {
+    attachments.push(...input.syllabusFiles);
+  }
+  if (Array.isArray(input?.examFiles)) {
+    attachments.push(...input.examFiles);
+  }
+
   const baseMessages = [
     { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
     { role: 'user', content: prompt },
@@ -636,6 +695,7 @@ export async function generateStudyTopics(input) {
       maxToolIterations: 6,
       requestTimeoutMs: 50000,
       messages,
+      attachments, // Pass file attachments (will be inlined for Grok models)
     });
 
     const text = Array.isArray(content)
