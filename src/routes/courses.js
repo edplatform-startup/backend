@@ -73,7 +73,8 @@ router.get('/data', async (req, res) => {
   }
 });
 
-const MODEL_NAME = 'anthropic/claude-sonnet-4';
+// Use Grok 4 Fast for topic generation to minimize cost and latency
+const MODEL_NAME = 'x-ai/grok-4-fast';
 
 function normalizeCourseRow(row) {
   const courseData = row.course_data ?? row.course_json ?? null;

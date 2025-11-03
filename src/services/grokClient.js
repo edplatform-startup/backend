@@ -252,7 +252,8 @@ async function defaultWebSearch(query, apiKey) {
   }
 
   const cacheKey = normalizedQuery.toLowerCase();
-  if (webSearchCache.has(cacheKey)) {
+  const useCache = process.env.NODE_ENV !== 'test';
+  if (useCache && webSearchCache.has(cacheKey)) {
     return webSearchCache.get(cacheKey);
   }
 
@@ -296,19 +297,15 @@ async function defaultWebSearch(query, apiKey) {
   const trimmed = (raw || '').trim();
   if (!trimmed) {
     // Return a benign string so the LLM can continue, instead of throwing
-    const benign = 'No results returned by web_search.';
-    webSearchCache.set(cacheKey, benign);
-    return benign;
+    return 'No results returned by web_search.';
   }
 
   let data;
   try {
     data = JSON.parse(trimmed);
   } catch {
-    // Fallback: return the raw text (truncated) so the model can still use it
-    const fallback = sanitizeToolContent(trimmed);
-    webSearchCache.set(cacheKey, fallback);
-    return fallback;
+    // Fallback: return the raw text (truncated) so the model can still use it (do not cache to avoid polluting cache)
+    return sanitizeToolContent(trimmed);
   }
 
   if (Array.isArray(data?.results) && data.results.length > 0) {
@@ -320,18 +317,20 @@ async function defaultWebSearch(query, apiKey) {
         })
         .join('\n')
     );
-    webSearchCache.set(cacheKey, result);
+    if (useCache) webSearchCache.set(cacheKey, result);
     return result;
   }
 
   // If JSON is valid but not in expected shape, return a compact JSON string
   try {
     const fallback = sanitizeToolContent(typeof data === 'string' ? data : JSON.stringify(data));
-    webSearchCache.set(cacheKey, fallback);
+    if (useCache && fallback && fallback.length > 0 && fallback !== 'No results returned by web_search.') {
+      webSearchCache.set(cacheKey, fallback);
+    }
     return fallback;
   } catch {
     const unknown = '[web_search] Unrecognized response format.';
-    webSearchCache.set(cacheKey, unknown);
+    if (useCache) webSearchCache.set(cacheKey, unknown);
     return unknown;
   }
 }
@@ -904,7 +903,8 @@ export async function generateStudyTopics(input) {
     attachments.push(...input.examFiles);
   }
 
-  const primaryModel = attachments.length > 0 ? 'anthropic/claude-sonnet-4' : requestedModel;
+  // Always respect the requested model for topics; we inline any attachments for Grok-compatible input
+  const primaryModel = requestedModel;
   let totalCallsUsed = 0;
   const consumeCall = () => {
     if (totalCallsUsed >= MAX_TOTAL_CALLS) {
