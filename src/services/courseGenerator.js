@@ -1260,7 +1260,7 @@ async function runLimited(tasks, limit = 3) {
 
 export async function generateAssetsContent(structure, ctx) {
   const { supabase, userId, courseId, className, examStructureText, apiKey, topicFamiliarity } = ctx;
-  if (!supabase || !userId || !courseId) return structure; // noop if not not provided
+  if (!supabase || !userId || !courseId) return structure; // noop if not provided
 
   // Calculate global familiarity level
   let familiarityLevel = 'medium';
