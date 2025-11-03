@@ -263,7 +263,7 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const topicsResponse = await generateStudyTopics({
+    const generationPayload = {
       finishByDate: normalizedFinishByDate,
       timeRemainingDays,
       courseSelection: normalizedCourseSelection,
@@ -272,14 +272,72 @@ router.post('/', async (req, res) => {
       examFormatDetails: normalizedExamFormatDetails,
       examFiles: examFilesValidation.value,
       model: MODEL_NAME,
+    };
+
+    const withTimeout = (promise, ms) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const timeoutError = new Error('Study topic generation timed out');
+        timeoutError.code = 'TOPIC_TIMEOUT';
+        reject(timeoutError);
+      }, ms);
+      promise
+        .then((value) => {
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
     });
 
-    const normalizedOutput = parseTopicsText(topicsResponse);
+    const TIMEOUT_MS = 60000;
+    const defaultTopicsFallback = [
+      'Course Logistics and Policies',
+      'Learning Objectives and Outcomes',
+      'Primary Textbook Units',
+      'Laboratory Project Milestones',
+      'Key Theoretical Frameworks',
+      'Core Analytical Techniques',
+      'Major Case Study Themes',
+      'Assessment Rubric Components',
+      'Supplementary Research Readings',
+      'Final Deliverable Expectations'
+    ];
 
-    if (!Array.isArray(normalizedOutput) || normalizedOutput.length === 0) {
-      return res.status(502).json({
-        error: 'Model did not return any study topics',
-      });
+    let attempt = 0;
+    const maxAttempts = 2;
+    let topicsResponse = '';
+    let normalizedOutput = [];
+
+    while (attempt < maxAttempts) {
+      try {
+        topicsResponse = await withTimeout(
+          generateStudyTopics({
+            ...generationPayload,
+            retryAttempt: attempt,
+          }),
+          TIMEOUT_MS,
+        );
+      } catch (err) {
+        console.error('[courses] study topic generation error:', err);
+        if (err?.code === 'TOPIC_TIMEOUT' && attempt + 1 < maxAttempts) {
+          attempt += 1;
+          continue;
+        }
+        throw err;
+      }
+
+      normalizedOutput = parseTopicsText(topicsResponse);
+      if (Array.isArray(normalizedOutput) && normalizedOutput.length > 0) {
+        break;
+      }
+
+      attempt += 1;
+      if (attempt >= maxAttempts) {
+        normalizedOutput = defaultTopicsFallback;
+        topicsResponse = JSON.stringify({ topics: defaultTopicsFallback });
+      }
     }
 
     return res.status(200).json({

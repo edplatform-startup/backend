@@ -1,7 +1,12 @@
 const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_WEB_SEARCH_ENDPOINT = process.env.OPENROUTER_WEB_SEARCH_URL || 'https://openrouter.ai/api/v1/tools/web_search';
 const DEFAULT_MODEL = 'x-ai/grok-4-fast';
-const DEFAULT_MAX_TOOL_ITERATIONS = 9;
+const DEFAULT_MAX_TOOL_ITERATIONS = 1;
+const MAX_TOTAL_CALLS = 6;
+const TOOL_RESULT_CHAR_LIMIT = 2000;
+
+const webSearchCache = new Map();
+const browsePageCache = new Map();
 
 let customStudyTopicsGenerator = null;
 let customWebSearchExecutor = null;
@@ -143,6 +148,12 @@ function parseToolArguments(rawArgs) {
   return {};
 }
 
+function sanitizeToolContent(content) {
+  if (content == null) return '';
+  const str = typeof content === 'string' ? content : JSON.stringify(content);
+  return str.length > TOOL_RESULT_CHAR_LIMIT ? `${str.slice(0, TOOL_RESULT_CHAR_LIMIT)}\n[truncated]` : str;
+}
+
 function isLikelyText(buffer) {
   if (!buffer || buffer.length === 0) return false;
   let printable = 0;
@@ -163,13 +174,20 @@ function isLikelyText(buffer) {
 function decodeBase64ToUtf8Safe(b64) {
   try {
     const buf = Buffer.from(b64, 'base64');
-    if (!isLikelyText(buf)) return null;
+    const isPdf = buf.slice(0, 4).toString('utf8') === '%PDF';
+    if (isPdf) {
+      return { text: '[PDF attachment detected; text extraction deferred to browse_page tool.]', isPdf: true };
+    }
+    if (!isLikelyText(buf)) {
+      return { text: '[content omitted: non-text or undecodable]', isPdf: false };
+    }
     const text = buf.toString('utf8');
-    // basic sanity: avoid lots of NULs
-    if (/\u0000/.test(text)) return null;
-    return text;
+    if (/\u0000/.test(text)) {
+      return { text: '[content omitted: undecodable binary data]', isPdf: false };
+    }
+    return { text, isPdf: false };
   } catch {
-    return null;
+    return { text: '[content omitted: failed to decode attachment]', isPdf: false };
   }
 }
 
@@ -187,16 +205,19 @@ function buildAttachmentsInlineText(attachments, opts = {}) {
     let header = `File ${index}: ${name} (${mime})`;
     let body = '';
     if (att.data) {
-      const text = decodeBase64ToUtf8Safe(att.data);
-      if (typeof text === 'string' && text.trim()) {
-        body = text.trim();
-      } else {
-        body = '[content omitted: non-text or undecodable]';
-      }
+      const decoded = decodeBase64ToUtf8Safe(att.data);
+      body = (decoded.text || '').trim();
     } else if (att.url) {
-      body = `URL provided: ${att.url}`;
+      const isPdfUrl = /\.pdf($|\?)/i.test(att.url);
+      body = isPdfUrl
+        ? `URL provided: ${att.url} (PDF detected; use browse_page for extraction)`
+        : `URL provided: ${att.url}`;
     } else {
       body = '[no data or url provided]';
+    }
+
+    if (!body.trim()) {
+      body = '[content omitted: empty attachment]';
     }
 
     if (body.length > maxPerFileChars) {
@@ -230,9 +251,14 @@ async function defaultWebSearch(query, apiKey) {
     return 'No search performed: empty query.';
   }
 
+  const cacheKey = normalizedQuery.toLowerCase();
+  if (webSearchCache.has(cacheKey)) {
+    return webSearchCache.get(cacheKey);
+  }
+
   // Add a defensive timeout for the web_search tool so tool calls don't hang the whole request
   const controller = new AbortController();
-  const TOOL_TIMEOUT_MS = 30000; // 30s per web_search call (increased for Claude Sonnet reasoning)
+  const TOOL_TIMEOUT_MS = 45000; // 45s per web_search call
   const timer = setTimeout(() => controller.abort(), TOOL_TIMEOUT_MS);
   let response;
   try {
@@ -248,9 +274,11 @@ async function defaultWebSearch(query, apiKey) {
   } catch (err) {
     clearTimeout(timer);
     if (err && err.name === 'AbortError') {
+      console.error('[web_search] aborted due to timeout:', normalizedQuery);
       // Return a benign string so the LLM can continue without failing the entire run
       return 'web_search timed out.';
     }
+    console.error('[web_search] error:', err);
     throw err;
   } finally {
     clearTimeout(timer);
@@ -258,7 +286,9 @@ async function defaultWebSearch(query, apiKey) {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`Web search failed: ${response.status} ${response.statusText} ${errorText}`);
+    const err = new Error(`Web search failed: ${response.status} ${response.statusText} ${errorText}`);
+    console.error('[web_search] non-OK response:', err);
+    throw err;
   }
 
   // Read as text first to gracefully handle empty/invalid JSON bodies
@@ -266,7 +296,9 @@ async function defaultWebSearch(query, apiKey) {
   const trimmed = (raw || '').trim();
   if (!trimmed) {
     // Return a benign string so the LLM can continue, instead of throwing
-    return 'No results returned by web_search.';
+    const benign = 'No results returned by web_search.';
+    webSearchCache.set(cacheKey, benign);
+    return benign;
   }
 
   let data;
@@ -274,23 +306,33 @@ async function defaultWebSearch(query, apiKey) {
     data = JSON.parse(trimmed);
   } catch {
     // Fallback: return the raw text (truncated) so the model can still use it
-    return trimmed.slice(0, 1000);
+    const fallback = sanitizeToolContent(trimmed);
+    webSearchCache.set(cacheKey, fallback);
+    return fallback;
   }
 
   if (Array.isArray(data?.results) && data.results.length > 0) {
-    return data.results
-      .map((item, index) => {
-        const snippet = item.snippet || item.description || '';
-        return `${index + 1}. ${item.title}${snippet ? ` - ${snippet}` : ''}`;
-      })
-      .join('\n');
+    const result = sanitizeToolContent(
+      data.results
+        .map((item, index) => {
+          const snippet = item.snippet || item.description || '';
+          return `${index + 1}. ${item.title}${snippet ? ` - ${snippet}` : ''}`;
+        })
+        .join('\n')
+    );
+    webSearchCache.set(cacheKey, result);
+    return result;
   }
 
   // If JSON is valid but not in expected shape, return a compact JSON string
   try {
-    return typeof data === 'string' ? data : JSON.stringify(data);
+    const fallback = sanitizeToolContent(typeof data === 'string' ? data : JSON.stringify(data));
+    webSearchCache.set(cacheKey, fallback);
+    return fallback;
   } catch {
-    return '[web_search] Unrecognized response format.';
+    const unknown = '[web_search] Unrecognized response format.';
+    webSearchCache.set(cacheKey, unknown);
+    return unknown;
   }
 }
 
@@ -334,74 +376,117 @@ export function createBrowsePageTool() {
       if (!url || !url.startsWith('http')) {
         return 'Invalid URL provided for browse_page.';
       }
+
+      if (browsePageCache.has(url)) {
+        return browsePageCache.get(url);
+      }
       
       try {
         const response = await fetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; EdTechBot/1.0)',
           },
-          signal: AbortSignal.timeout(20000), // 20s timeout (increased for Claude Sonnet reasoning)
+          signal: AbortSignal.timeout(30000), // 30s timeout for browse_page
         });
         
         if (!response.ok) {
-          return `Failed to fetch page: ${response.status} ${response.statusText}`;
+          const failure = `Failed to fetch page: ${response.status} ${response.statusText}`;
+          browsePageCache.set(url, failure);
+          return failure;
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        const isPdf = /pdf/i.test(contentType) || /\.pdf($|\?)/i.test(url);
+        if (isPdf) {
+          const simulated = `Simulated PDF extraction for ${url}. Use syllabus bullet points from PDF when forming topics.`;
+          browsePageCache.set(url, simulated);
+          return simulated;
         }
         
         const text = await response.text();
         // Simple text extraction - strip HTML tags and limit size
-        const cleanText = text
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 8000); // Limit to 8KB
-        
-        return cleanText || 'Page content could not be extracted.';
+        const cleanText = sanitizeToolContent(
+          text
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+        );
+
+        const finalText = cleanText || 'Page content could not be extracted.';
+        browsePageCache.set(url, finalText);
+        return finalText;
       } catch (error) {
-        return `Error browsing page: ${error.message}`;
+        console.error('[browse_page] error:', error);
+        const message = `Error browsing page: ${error.message}`;
+        browsePageCache.set(url, message);
+        return message;
       }
     },
   };
 }
 
 async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
-      'X-Title': 'EdTech Study Planner',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const MAX_RETRIES = 2;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const shouldRetry = attempt < MAX_RETRIES;
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
+          'X-Title': 'EdTech Study Planner',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => response.statusText);
-    const err = new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
-    err.details = errorText;
-    throw err;
-  }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        const err = new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
+        err.details = errorText;
+        err.statusCode = response.status;
+        if (shouldRetry && response.status === 502) {
+          const backoff = 2000 * (attempt + 1);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          continue;
+        }
+        throw err;
+      }
 
-  const text = await response.text();
-  if (!text || text.trim() === '') {
-    const err = new Error('OpenRouter returned empty response');
-    err.statusCode = 502;
-    err.details = 'The API returned a 200 OK but with no content';
-    throw err;
-  }
+      const text = await response.text();
+      if (!text || text.trim() === '') {
+        const err = new Error('OpenRouter returned empty response');
+        err.statusCode = 502;
+        err.details = 'The API returned a 200 OK but with no content';
+        throw err;
+      }
 
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    const err = new Error('OpenRouter returned invalid JSON');
-    err.statusCode = 502;
-    err.details = `Failed to parse response: ${error.message}`;
-    err.responsePreview = text.slice(0, 500);
-    throw err;
+      try {
+        return JSON.parse(text);
+      } catch (error) {
+        const err = new Error('OpenRouter returned invalid JSON');
+        err.statusCode = 502;
+        err.details = `Failed to parse response: ${error.message}`;
+        err.responsePreview = text.slice(0, 500);
+        throw err;
+      }
+    } catch (error) {
+      const isAbort = error?.name === 'AbortError';
+      if (shouldRetry && (isAbort || error?.statusCode === 502)) {
+        const backoff = 2000 * (attempt + 1);
+        console.warn('[openrouter] retrying after error:', error.message);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        continue;
+      }
+      console.error('[openrouter] request failed:', error);
+      throw error;
+    }
   }
+  throw new Error('OpenRouter request failed after retries');
 }
 
 export async function executeOpenRouterChat(options = {}) {
@@ -450,6 +535,8 @@ export async function executeOpenRouterChat(options = {}) {
   }
 
   let iterations = 0;
+  let forceFinalRun = false;
+  let finalRunAttempts = 0;
 
   while (true) {
     const requestBody = {
@@ -467,9 +554,11 @@ export async function executeOpenRouterChat(options = {}) {
       requestBody.response_format = responseFormat;
     }
 
-    if (toolDefinitions.length > 0) {
+    if (!forceFinalRun && toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
+    } else if (forceFinalRun) {
+      requestBody.tool_choice = 'none';
     }
 
     if (!shouldInlineAttachments && validatedAttachments.length > 0) {
@@ -530,8 +619,25 @@ export async function executeOpenRouterChat(options = {}) {
       };
     }
 
+    if (forceFinalRun) {
+      finalRunAttempts += 1;
+      conversation.push({
+        role: 'system',
+        content: 'Tool responses received but tool usage disabled. Provide final JSON response immediately.',
+      });
+      if (finalRunAttempts > 2) {
+        throw new Error('Model failed to provide final answer without tools.');
+      }
+      continue;
+    }
+
     if (iterations >= maxToolIterations) {
-      throw new Error('Exceeded maximum tool iterations without final answer');
+      forceFinalRun = true;
+      conversation.push({
+        role: 'system',
+        content: 'Tool limit reached. Respond next message with JSON { "topics": [...] } without calling tools.',
+      });
+      continue;
     }
 
     iterations += 1;
@@ -556,6 +662,7 @@ export async function executeOpenRouterChat(options = {}) {
           toolResult = `Tool "${toolName}" not supported.`;
         }
       } catch (error) {
+        console.error(`[tool:${toolName}] execution error:`, error);
         toolResult = `Tool ${toolName || 'unknown'} threw an error: ${error.message}`;
       }
 
@@ -563,7 +670,7 @@ export async function executeOpenRouterChat(options = {}) {
         role: 'tool',
         tool_call_id: call?.id || `${toolName || 'tool'}_${iterations}`,
         name: toolName,
-        content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult),
+        content: sanitizeToolContent(toolResult),
       });
     }
   }
@@ -592,13 +699,15 @@ function buildStudyTopicsPrompt({
     query = [code, title].filter(Boolean).join(' ');
   }
   if (query) {
-    lines.push(`2. Use web_search (query: "${query} syllabus site:.edu") and browse_page on syllabus/exam files (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") to compile exhaustive list.`);
+    lines.push(`2. Call web_search once (query: "${query} official syllabus outline site:.edu") to locate the official syllabus.`);
   } else {
-    lines.push('2. Use web_search and browse_page on syllabus/exam files (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") to compile exhaustive list.');
+    lines.push('2. Call web_search once (query: "official syllabus outline site:.edu" plus relevant keywords) to locate the official syllabus.');
   }
-  lines.push('3. Cross-reference for completeness: include all prerequisites, examples, and exam-covered concepts.');
-  lines.push('4. Ensure 15-30 topics covering every course element for exam success.');
-  lines.push('5. Respond with ONLY: { "topics": ["Topic1", "Topic2", ...] }');
+  lines.push('3. Call browse_page once on the best syllabus/exam link (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") to compile an exhaustive list.');
+  lines.push('4. Cross-reference for completeness: include prerequisites, examples, and exam-covered concepts while staying within the course scope.');
+  lines.push('5. Limit to one web_search call and one browse_page call total.');
+  lines.push('6. Ensure 15-30 topics covering every course element for exam success.');
+  lines.push('7. Respond with ONLY: { "topics": ["Topic1", "Topic2", ...] }');
   lines.push('');
   lines.push('Provided context:');
 
@@ -648,7 +757,13 @@ function buildStudyTopicsPrompt({
   return lines.join('\n');
 }
 
-const STUDY_TOPICS_SYSTEM_PROMPT = 'You are an AI study coach extracting exhaustive, accurate course topics. MUST use web_search to find official syllabus/outline (prefer .edu sites) and browse_page on provided files/URLs for full extraction. Focus ONLY on domain-specific concepts (e.g., "Two\'s Complement", "Stack Frames")—NEVER include meta-skills (study skills, time management, etc.). Err on over-coverage: list 15-30 subtopics to ensure all core/exam-relevant items are included, but stay within the exact course scope (no unrelated CS topics). Output ONLY a JSON array of topics for parsing.';
+const STUDY_TOPICS_SYSTEM_PROMPT = [
+  'You are an AI study coach extracting exhaustive, accurate course topics. ALWAYS call web_search at most once and browse_page at most once before giving the final answer.',
+  'Priorities: use web_search to find an official syllabus/outline (prefer .edu), use browse_page to extract every bullet/topic, focus strictly on domain concepts (e.g., "Two\'s Complement", "Stack Frames"). Never include meta-skills like study habits, time management, or revision strategies.',
+  'Good output example: {"topics":["Instruction Set Architecture","Two\'s Complement Arithmetic","Pipeline Hazards","Cache Coherence"]}',
+  'Bad output examples: {"topics":["Study Skills","Time Management"]} or "1. Topic One" (not JSON).',
+  'Return ONLY valid JSON shaped exactly as {"topics":["Topic1","Topic2",...]}. Ensure 15-30 precise, course-scoped topics, with no duplicates.'
+].join('\n\n');
 
 export function parseTopicsText(raw) {
   const original = (raw || '').toString();
@@ -665,10 +780,19 @@ export function parseTopicsText(raw) {
         ? parsed
         : (parsed && Array.isArray(parsed.topics) ? parsed.topics : null);
       if (Array.isArray(arr)) {
-        return arr
-          .map((t) => (typeof t === 'string' ? t.trim() : String(t)))
-          .filter((t) => t.length > 0)
-          .slice(0, 100);
+        const seen = new Set();
+        const deduped = [];
+        for (const entry of arr) {
+          if (entry == null) continue;
+          const value = typeof entry === 'string' ? entry.trim() : String(entry).trim();
+          if (!value) continue;
+          const key = value.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(value);
+          if (deduped.length >= 100) break;
+        }
+        return deduped;
       }
       // JSON parsed but not an array or { topics: [...] } → treat as invalid topics
       return [];
@@ -679,27 +803,37 @@ export function parseTopicsText(raw) {
   }
 
   // Plain text fallback: support simple comma-separated or newline/bullet lists
-  return stripped
+  const seen = new Set();
+  const deduped = [];
+  const candidates = stripped
     .replace(/\r?\n+/g, ',')
     .replace(/\s+-\s+/g, ',')
-    .split(',')
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .slice(0, 100);
+    .split(',');
+  for (const raw of candidates) {
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(value);
+    if (deduped.length >= 100) break;
+  }
+  return deduped;
 }
 
 function isGenericTopicList(topics) {
   if (!Array.isArray(topics) || topics.length === 0) return true;
   // List of generic/meta keywords to reject
   const banned = [
-    'study', 'time management', 'note', 'exam', 'review', 'revision', 'learning strategies', 'productivity', 'mindset', 'motivation', 'test-taking'
+    'study', 'time management', 'note', 'exam', 'review', 'revision', 'learning strategies', 'productivity', 'mindset', 'motivation', 'test-taking',
+    'introduction', 'intro', 'overview', 'basics', 'fundamentals', 'principles', 'concepts', 'summary', 'general tips'
   ];
   const lc = topics.map((t) => t.toLowerCase());
   // If any topic contains banned words, or if all topics are very short generic terms, flag it
   const hasBanned = lc.some((t) => banned.some((b) => t.includes(b)));
   if (hasBanned) return true;
   // Heuristic: if too few topics or too vague words
-  if (topics.length < 15) return true;
+  if (topics.length < 10 || topics.length > 40) return true;
   return false;
 }
 
@@ -757,7 +891,7 @@ export async function generateStudyTopics(input) {
   }
 
   const apiKey = resolveApiKey();
-  const primaryModel = input?.model || 'anthropic/claude-sonnet-4';
+  const requestedModel = input?.model || 'anthropic/claude-sonnet-4';
   const fallbackModel = 'x-ai/grok-4-fast';
   const prompt = buildStudyTopicsPrompt(input || {});
 
@@ -770,6 +904,15 @@ export async function generateStudyTopics(input) {
     attachments.push(...input.examFiles);
   }
 
+  const primaryModel = attachments.length > 0 ? 'anthropic/claude-sonnet-4' : requestedModel;
+  let totalCallsUsed = 0;
+  const consumeCall = () => {
+    if (totalCallsUsed >= MAX_TOTAL_CALLS) {
+      throw new Error('Study topics call budget exhausted');
+    }
+    totalCallsUsed += 1;
+  };
+
   const baseMessages = [
     { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
     { role: 'user', content: prompt },
@@ -777,20 +920,21 @@ export async function generateStudyTopics(input) {
 
   const runOnceWithModel = async (mdl, extraUserMessage, { requireTools = true } = {}) => {
     const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
-    const timeouts = [30000, 45000];
+  const timeouts = [35000];
     let lastErr;
 
     for (let idx = 0; idx < timeouts.length; idx += 1) {
       try {
+        consumeCall();
         const { content } = await executeOpenRouterChat({
           apiKey,
           model: mdl,
           reasoning: { enabled: true, effort: 'medium' },
           temperature: 0.2,
-          maxTokens: 800,
+          maxTokens: 1200,
           tools: requireTools ? [createWebSearchTool(), createBrowsePageTool()] : [],
           toolChoice: requireTools ? 'auto' : undefined,
-          maxToolIterations: requireTools ? 2 : 0,
+          maxToolIterations: requireTools ? 1 : 0,
           requestTimeoutMs: timeouts[idx],
           responseFormat: { type: 'json_object' },
           messages,
@@ -848,6 +992,7 @@ export async function generateStudyTopics(input) {
       'Correction: Previous output included generics, meta-skills, or insufficient coverage (fewer than 15 topics or missing syllabus elements).',
       'Requirements:',
       '- Re-call web_search/browse_page to extract FULL syllabus topics/subtopics (aim 15-30 within course scope).',
+      '- Limit to one web_search and one browse_page call.',
       '- Verify against official sources; exclude ALL meta-items.',
       'Respond ONLY with JSON: { "topics": ["Topic1", "Topic2", ...] }'
     ].join('\n');
