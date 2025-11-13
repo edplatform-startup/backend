@@ -1,3 +1,5 @@
+import { runtimeConfig } from '../config/env.js';
+
 const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'x-ai/grok-4-fast';
 const DEFAULT_MAX_TOOL_ITERATIONS = 1;
@@ -727,7 +729,7 @@ function isGenericTopicList(topics) {
 const __usageTotals = { prompt: 0, completion: 0, total: 0, usd: 0, calls: 0, perModel: {} };
 
 function getPriceForModel(model) {
-  const envMap = process.env.OPENROUTER_PRICE_MAP ? (() => { try { return JSON.parse(process.env.OPENROUTER_PRICE_MAP); } catch { return null; } })() : null;
+  const envMap = runtimeConfig.openrouterPriceMap;
   const defaultMap = {
     'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
     'x-ai/grok-4-fast': { in: 0.001, out: 0.002 },
@@ -775,9 +777,11 @@ export async function generateStudyTopics(input) {
     return await customStudyTopicsGenerator(input);
   }
 
+  const usageStart = getCostTotals();
+
   const apiKey = resolveApiKey();
-  const requestedModel = input?.model || 'anthropic/claude-sonnet-4';
-  const fallbackModel = 'x-ai/grok-4-fast';
+  const requestedModel = input?.model || runtimeConfig.stageModels.planner;
+  const fallbackModel = runtimeConfig.stageModels.critic;
   const prompt = buildStudyTopicsPrompt(input || {});
 
   // Prepare attachments from syllabusFiles and examFiles
@@ -811,6 +815,8 @@ export async function generateStudyTopics(input) {
     for (let idx = 0; idx < timeouts.length; idx += 1) {
       try {
         consumeCall();
+        const enableWebSearch = true;
+        const shouldRequestJson = !enableWebSearch && !requireTools;
         const { content } = await executeOpenRouterChat({
           apiKey,
           model: mdl,
@@ -821,10 +827,10 @@ export async function generateStudyTopics(input) {
           toolChoice: requireTools ? 'auto' : undefined,
           maxToolIterations: requireTools ? 1 : 0,
           requestTimeoutMs: timeouts[idx],
-          responseFormat: { type: 'json_object' },
+          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
           attachments,
-          enableWebSearch: true,
+          enableWebSearch,
         });
 
         const text = Array.isArray(content)
@@ -887,14 +893,17 @@ export async function generateStudyTopics(input) {
   }
 
   try {
-    const totals = getCostTotals();
-    console.log('[topics] usage:', {
-      prompt_tokens: totals.prompt,
-      completion_tokens: totals.completion,
-      total_tokens: totals.total,
-      estimated_usd: Number(totals.usd.toFixed(6)),
-      calls: totals.calls,
-    });
+    const usageEnd = getCostTotals();
+    if (usageStart && usageEnd) {
+      const delta = {
+        prompt: usageEnd.prompt - usageStart.prompt,
+        completion: usageEnd.completion - usageStart.completion,
+        total: usageEnd.total - usageStart.total,
+        usd: Number((usageEnd.usd - usageStart.usd).toFixed(6)),
+        calls: usageEnd.calls - usageStart.calls,
+      };
+      console.log('[topics] usage:', delta);
+    }
   } catch {}
 
   return last.text;

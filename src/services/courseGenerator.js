@@ -1,8 +1,9 @@
+import { runtimeConfig } from '../config/env.js';
 import { executeOpenRouterChat, createBrowsePageTool, getCostTotals } from './grokClient.js';
 
 // Optimized model configuration
-const COURSE_MODEL_NAME = 'anthropic/claude-sonnet-4';
-const FALLBACK_MODEL_NAME = 'x-ai/grok-4-fast';
+const COURSE_MODEL_NAME = runtimeConfig.stageModels.planner;
+const FALLBACK_MODEL_NAME = runtimeConfig.stageModels.critic;
 
 // Per-content-type model configuration (prefer providers supporting tools + JSON)
 const VIDEO_MODEL = 'openai/gpt-4o';
@@ -252,6 +253,8 @@ function buildCorrectionLineFromError(error) {
 
 async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
   
+  const enableWebSearch = true;
+  const shouldRequestJson = !enableWebSearch;
   const result = await executeOpenRouterChat({
     apiKey,
     model,
@@ -261,8 +264,8 @@ async function tryGeneratePlanOnce({ apiKey, model, messages, attachments }) {
     tools: [createBrowsePageTool()],
     toolChoice: 'auto',
     maxToolIterations: 2,
-    enableWebSearch: true,
-    responseFormat: { type: 'json_object' },
+    ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
+    enableWebSearch,
     attachments,
     messages,
   });
@@ -635,6 +638,8 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
     ];
     if (correction) messages.push({ role: 'user', content: correction });
 
+    const enableWebSearch = true;
+    const shouldRequestJson = !enableWebSearch && !(tools?.length);
     const { content, message } = await executeOpenRouterChat({
       apiKey,
       model: currentModel,
@@ -645,10 +650,10 @@ async function callModelJson({ apiKey, system, user, attachments = [], tools = [
       toolChoice: tools?.length ? 'auto' : undefined,
       maxToolIterations: 2,
       attachments,
-      responseFormat: { type: 'json_object' },
+      ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
       messages,
       signal,
-      enableWebSearch: true,
+      enableWebSearch,
     });
 
     // Prefer parsed JSON provided by the SDK if available
@@ -763,6 +768,8 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
           { role: 'user', content: userWithCorrection },
         ];
 
+        const enableWebSearch = true;
+        const shouldRequestJson = !enableWebSearch && !(tools?.length);
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: VIDEO_MODEL,
@@ -773,10 +780,10 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
           toolChoice: 'auto', // Avoid provider errors for forced tool calling
           maxToolIterations: 2,
           attachments,
-          responseFormat: { type: 'json_object' },
+          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
           signal,
-          enableWebSearch: true,
+          enableWebSearch,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -877,6 +884,8 @@ async function callReadingJsonWithValidation({ apiKey, system, user, attachments
           { role: 'user', content: userWithCorrection },
         ];
 
+        const enableWebSearch = true;
+        const shouldRequestJson = !enableWebSearch && !(tools?.length);
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: READING_MODEL,
@@ -887,10 +896,10 @@ async function callReadingJsonWithValidation({ apiKey, system, user, attachments
           toolChoice: 'auto',
           maxToolIterations: 2,
           attachments,
-          responseFormat: { type: 'json_object' },
+          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
           signal,
-          enableWebSearch: true,
+          enableWebSearch,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -987,6 +996,8 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
           { role: 'user', content: userWithCorrection },
         ];
 
+        const enableWebSearch = true;
+        const shouldRequestJson = !enableWebSearch && !(tools?.length);
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: FLASHCARDS_MODEL,
@@ -997,10 +1008,10 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
           toolChoice: 'auto',
           maxToolIterations: 2,
           attachments,
-          responseFormat: { type: 'json_object' },
+          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
           signal,
-          enableWebSearch: true,
+          enableWebSearch,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -1053,6 +1064,8 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
           { role: 'user', content: userWithCorrection },
         ];
 
+        const enableWebSearch = true;
+        const shouldRequestJson = !enableWebSearch && !(tools?.length);
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: PRACTICE_EXAM_MODEL,
@@ -1063,10 +1076,10 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
           toolChoice: 'auto',
           maxToolIterations: 2,
           attachments,
-          responseFormat: { type: 'json_object' },
+          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
           signal,
-          enableWebSearch: true,
+          enableWebSearch,
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {

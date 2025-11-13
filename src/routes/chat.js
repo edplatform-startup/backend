@@ -66,6 +66,7 @@ router.post('/', async (req, res) => {
     messages.push({ role: 'user', content: user.trim() });
 
     const tools = useWebSearch ? [createWebSearchTool()] : [];
+    const shouldRequestJson = responseFormat === 'json' && !useWebSearch && tools.length === 0;
     const result = await executeOpenRouterChat({
       messages,
       model: 'x-ai/grok-4-fast',
@@ -75,7 +76,7 @@ router.post('/', async (req, res) => {
       toolChoice: useWebSearch ? 'auto' : undefined,
       attachments,
       reasoning,
-      responseFormat: responseFormat === 'json' ? { type: 'json_object' } : undefined,
+      ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
     });
 
     // Normalize content to string for convenience

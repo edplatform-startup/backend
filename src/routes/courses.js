@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSupabase } from '../supabaseClient.js';
-import { generateStudyTopics, parseTopicsText } from '../services/grokClient.js';
+import { getCostTotals } from '../services/grokClient.js';
+import { generateCourseV2 } from '../services/courseV2.js';
 import {
   isValidIsoDate,
   validateFileArray,
@@ -8,7 +9,8 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
-// GET /courses/ids?userId=...
+const COURSE_V2_MODEL = 'course-v2';
+
 router.get('/ids', async (req, res) => {
   const { userId } = req.query;
 
@@ -37,177 +39,144 @@ router.get('/ids', async (req, res) => {
   }
 });
 
-// GET /courses/data?userId=...&courseId=...
 router.get('/data', async (req, res) => {
-  const { userId, courseId } = req.query;
+  const { userId, courseId } = req.query || {};
+
   if (!userId || !courseId) {
-    return res.status(400).json({ error: 'userId and courseId are required' });
+    return res.status(400).json({ error: 'Missing required query parameters: userId and courseId' });
   }
-  const v1 = validateUuid(userId, 'userId');
-  if (!v1.valid) return res.status(400).json({ error: v1.error });
-  const v2 = validateUuid(courseId, 'courseId');
-  if (!v2.valid) return res.status(400).json({ error: v2.error });
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
 
   try {
     const supabase = getSupabase();
     const { data, error } = await supabase
       .schema('api')
       .from('courses')
-      .select('id,user_id,course_data')
-      .eq('id', courseId)
+      .select('id, user_id, course_data')
       .eq('user_id', userId)
+      .eq('id', courseId)
       .single();
 
     if (error) {
       if (error.code === 'PGRST116') {
-        return res.status(404).json({ error: 'Course not found for user' });
+        return res.status(404).json({ error: 'Course not found' });
       }
-      console.error('Supabase error fetching course_data:', error);
-      return res.status(500).json({ error: 'Failed to fetch course_data', details: error.message });
+      console.error('Supabase error fetching course data:', error);
+      return res.status(500).json({ error: 'Failed to fetch course data', details: error.message || error });
     }
 
-    return res.json({ courseId: data.id, userId: data.user_id, course_data: data.course_data });
-  } catch (e) {
-    console.error('Unhandled error fetching course_data:', e);
-    return res.status(500).json({ error: 'Internal server error', details: e.message });
+    if (!data) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    return res.json({
+      courseId: data.id,
+      userId: data.user_id,
+      course_data: data.course_data ?? null,
+    });
+  } catch (error) {
+    console.error('Unhandled error fetching course data:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
-// Use Grok 4 Fast for topic generation to minimize cost and latency
-const MODEL_NAME = 'x-ai/grok-4-fast';
-
-function normalizeCourseRow(row) {
-  const courseData = row.course_data ?? row.course_json ?? null;
-  const normalizedUserId = row.user_id ?? row.user_id ?? null;
-  const normalizedUserUuid = row.user_id ?? row.user_id ?? null;
-  return {
-    id: row.id,
-    user_id: normalizedUserId,
-    user_id: normalizedUserUuid,
-    course_data: courseData,
-    course_json: courseData,
-    created_at: row.created_at,
-    finish_by_date: row.finish_by_date ?? null,
-    course_selection: row.course_selection ?? null,
-    syllabus_text: row.syllabus_text ?? null,
-    syllabus_files: Array.isArray(row.syllabus_files) ? row.syllabus_files : [],
-    exam_format_details: row.exam_format_details ?? null,
-    exam_files: Array.isArray(row.exam_files) ? row.exam_files : [],
-  };
-}
-
-// GET /courses?userId=xxx OR /courses?userId=xxx&courseId=yyy
-// Query parameters: userId (required if courseId not provided), courseId (optional, requires userId)
 router.get('/', async (req, res) => {
-  const { userId, courseId } = req.query;
+  const { userId, courseId } = req.query || {};
 
-  // Validate that at least one parameter is provided
-  if (!userId && !courseId) {
-    return res.status(400).json({ 
-      error: 'Missing required query parameters. Provide at least userId or both userId and courseId.' 
-    });
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing required query parameters: userId' });
   }
 
-  // If courseId is provided, userId must also be provided
-  if (courseId && !userId) {
-    return res.status(400).json({ 
-      error: 'userId is required when courseId is provided.' 
-    });
-  }
-
-  // Validate UUID format
-  if (userId) {
-    const validation = validateUuid(userId, 'userId');
-    if (!validation.valid) {
-      return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
-    }
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
   }
 
   if (courseId) {
-    const validation = validateUuid(courseId, 'courseId');
-    if (!validation.valid) {
-      return res.status(400).json({ error: 'Invalid courseId format. Must be a valid UUID.' });
+    const courseValidation = validateUuid(courseId, 'courseId');
+    if (!courseValidation.valid) {
+      return res.status(400).json({ error: courseValidation.error });
     }
   }
 
   try {
     const supabase = getSupabase();
-    let query = supabase.schema('api').from('courses').select('*');
-
-    // Case 1: Both userId and courseId provided - get specific course if it belongs to user
-    if (userId && courseId) {
-      query = query.eq('id', courseId).or(`user_id.eq.${userId},user_id.eq.${userId}`).single();
-      
-      const { data, error } = await query;
+    if (courseId) {
+      const { data, error } = await supabase
+        .schema('api')
+        .from('courses')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', courseId)
+        .single();
 
       if (error) {
         if (error.code === 'PGRST116') {
-          // No rows returned
-          return res.status(404).json({ 
-            error: 'Course not found or does not belong to this user.' 
-          });
+          return res.status(404).json({ error: 'Course not found' });
         }
         console.error('Supabase error fetching course:', error);
-        return res.status(500).json({ error: 'Failed to fetch course', details: error.message });
+        return res.status(500).json({
+          error: 'Failed to fetch course',
+          details: error.message || error,
+        });
       }
 
-      return res.json({
-        success: true,
-        course: normalizeCourseRow(data)
+      if (!data) {
+        return res.status(404).json({ error: 'Course not found' });
+      }
+
+      return res.json({ success: true, course: data });
+    }
+
+    const { data, error } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error listing courses:', error);
+      return res.status(500).json({
+        error: 'Failed to list courses',
+        details: error.message || error,
       });
     }
 
-    // Case 2: Only userId provided - get all courses for this user
-    if (userId) {
-      query = query.or(`user_id.eq.${userId},user_id.eq.${userId}`).order('created_at', { ascending: false });
-      
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('Supabase error fetching courses:', error);
-        return res.status(500).json({ error: 'Failed to fetch courses', details: error.message });
-      }
-
-      return res.json({
-        success: true,
-        count: data.length,
-        courses: data.map(normalizeCourseRow)
-      });
-    }
-  } catch (e) {
-    console.error('Unhandled error fetching courses:', e);
-    return res.status(500).json({ error: 'Internal server error', details: e.message });
+    const courses = Array.isArray(data) ? data : [];
+    return res.json({ success: true, count: courses.length, courses });
+  } catch (error) {
+    console.error('Unhandled error fetching courses:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
-// POST /courses
-// Body: {
-//   userId: "user-uuid-string",
-//   finishByDate?: string,
-//   university?: string,
-//   courseTitle?: string,
-//   syllabusText?: string,
-//   syllabusFiles?: [],
-//   examFormatDetails?: string,
-//   examFiles?: []
-// }
 router.post('/', async (req, res) => {
   const {
     userId,
     finishByDate,
     university,
     courseTitle,
+    courseSelection,
     syllabusText,
     syllabusFiles,
     examFormatDetails,
     examFiles,
   } = req.body || {};
-  
+
   if (!userId) {
     return res.status(400).json({ error: 'Missing required field: userId' });
   }
 
-  // Validate UUID format (basic validation)
   const uuidValidation = validateUuid(userId, 'userId');
   if (!uuidValidation.valid) {
     return res.status(400).json({ error: 'Invalid userId format. Must be a valid UUID.' });
@@ -221,19 +190,10 @@ router.post('/', async (req, res) => {
     }
     normalizedFinishByDate = new Date(finishByDate).toISOString();
     const finishDateMs = new Date(normalizedFinishByDate).getTime();
-    const nowMs = Date.now();
     if (!Number.isNaN(finishDateMs)) {
-      timeRemainingDays = Math.max(0, Math.round((finishDateMs - nowMs) / (1000 * 60 * 60 * 24)));
+      const diff = finishDateMs - Date.now();
+      timeRemainingDays = Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
     }
-  }
-
-  let normalizedCourseSelection = null;
-  if (university || courseTitle) {
-    normalizedCourseSelection = {
-      college: university?.trim() || '',
-      title: courseTitle?.trim() || '',
-      code: ''
-    };
   }
 
   let normalizedSyllabusText = null;
@@ -252,162 +212,184 @@ router.post('/', async (req, res) => {
     normalizedExamFormatDetails = examFormatDetails.trim() || null;
   }
 
-  // Parse files from frontend - they will be inlined as text for Grok 4 Fast (text/image only model)
   const syllabusFilesValidation = validateFileArray(syllabusFiles, 'syllabusFiles');
   if (!syllabusFilesValidation.valid) {
     return res.status(400).json({ error: syllabusFilesValidation.error });
   }
-
   const examFilesValidation = validateFileArray(examFiles, 'examFiles');
   if (!examFilesValidation.valid) {
     return res.status(400).json({ error: examFilesValidation.error });
   }
 
+  const normalizedCourseSelection = normalizeCourseSelection({
+    university,
+    courseTitle,
+    rawSelection: courseSelection,
+  });
+
+  const usageStart = getCostTotals();
+
   try {
-    const generationPayload = {
-      finishByDate: normalizedFinishByDate,
-      timeRemainingDays,
-      courseSelection: normalizedCourseSelection,
-      syllabusText: normalizedSyllabusText,
-      syllabusFiles: syllabusFilesValidation.value,
-      examFormatDetails: normalizedExamFormatDetails,
-      examFiles: examFilesValidation.value,
-      model: MODEL_NAME,
-    };
+    const course = await generateCourseV2(normalizedCourseSelection, req.body?.userPrefs || {});
 
-    const withTimeout = (promise, ms) => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const timeoutError = new Error('Study topic generation timed out');
-        timeoutError.code = 'TOPIC_TIMEOUT';
-        reject(timeoutError);
-      }, ms);
-      promise
-        .then((value) => {
-          clearTimeout(timer);
-          resolve(value);
-        })
-        .catch((error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
-    });
+    try {
+      const usageEnd = getCostTotals();
+      const delta = {
+        prompt: usageEnd.prompt - usageStart.prompt,
+        completion: usageEnd.completion - usageStart.completion,
+        total: usageEnd.total - usageStart.total,
+        usd: Number((usageEnd.usd - usageStart.usd).toFixed(6)),
+        calls: usageEnd.calls - usageStart.calls,
+      };
+      console.log('[course] usage:', delta);
+    } catch {}
 
-    const TIMEOUT_MS = 60000;
-    const defaultTopicsFallback = [
-      'Course Logistics and Policies',
-      'Learning Objectives and Outcomes',
-      'Primary Textbook Units',
-      'Laboratory Project Milestones',
-      'Key Theoretical Frameworks',
-      'Core Analytical Techniques',
-      'Major Case Study Themes',
-      'Assessment Rubric Components',
-      'Supplementary Research Readings',
-      'Final Deliverable Expectations'
-    ];
-
-    let attempt = 0;
-    const maxAttempts = 2;
-    let topicsResponse = '';
-    let normalizedOutput = [];
-
-    while (attempt < maxAttempts) {
-      try {
-        topicsResponse = await withTimeout(
-          generateStudyTopics({
-            ...generationPayload,
-            retryAttempt: attempt,
-          }),
-          TIMEOUT_MS,
-        );
-      } catch (err) {
-        console.error('[courses] study topic generation error:', err);
-        if (err?.code === 'TOPIC_TIMEOUT' && attempt + 1 < maxAttempts) {
-          attempt += 1;
-          continue;
-        }
-        throw err;
-      }
-
-      normalizedOutput = parseTopicsText(topicsResponse);
-      if (Array.isArray(normalizedOutput) && normalizedOutput.length > 0) {
-        break;
-      }
-
-      attempt += 1;
-      if (attempt >= maxAttempts) {
-        normalizedOutput = defaultTopicsFallback;
-        topicsResponse = JSON.stringify({ topics: defaultTopicsFallback });
-      }
-    }
+    const topics = extractTopicsFromCourse(course);
+    const rawTopicsText = topics.join(', ');
 
     return res.status(200).json({
       success: true,
-      topics: normalizedOutput,
-      rawTopicsText: topicsResponse,
-      model: MODEL_NAME,
+      topics,
+      rawTopicsText,
+      model: COURSE_V2_MODEL,
+      course,
     });
-  } catch (e) {
-    console.error('Unhandled error creating course:', e);
-    if (e && e.name === 'FetchError') {
-      return res.status(502).json({ error: 'Failed to reach study planner model', details: e.message });
-    }
-    return res.status(500).json({ error: 'Internal server error', details: e.message });
+  } catch (error) {
+    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 502;
+    console.error('Course generation failed:', error);
+    return res.status(statusCode).json({
+      error: error.message || 'Failed to generate course',
+      details: error.details,
+    });
   }
 });
 
-// DELETE /courses?userId=xxx&courseId=yyy
 router.delete('/', async (req, res) => {
-  const { userId, courseId } = req.query;
+  const { userId, courseId } = req.query || {};
 
   if (!userId || !courseId) {
-    return res.status(400).json({ error: 'userId and courseId are required' });
+    return res.status(400).json({ error: 'Missing required query parameters: userId and courseId' });
   }
 
-  const v1 = validateUuid(userId, 'userId');
-  if (!v1.valid) return res.status(400).json({ error: v1.error });
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
 
-  const v2 = validateUuid(courseId, 'courseId');
-  if (!v2.valid) return res.status(400).json({ error: v2.error });
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
 
   try {
     const supabase = getSupabase();
-    
-    // First verify the course exists and belongs to the user
+
     const { data: course, error: fetchError } = await supabase
       .schema('api')
       .from('courses')
       .select('id')
-      .eq('id', courseId)
       .eq('user_id', userId)
+      .eq('id', courseId)
       .single();
 
     if (fetchError) {
       if (fetchError.code === 'PGRST116') {
-        return res.status(404).json({ error: 'Course not found or does not belong to this user' });
+        return res.status(404).json({ error: 'Course not found' });
       }
-      console.error('Supabase error verifying course:', fetchError);
-      return res.status(500).json({ error: 'Failed to verify course', details: fetchError.message });
+      console.error('Supabase error verifying course before delete:', fetchError);
+      return res.status(500).json({ error: 'Failed to verify course before delete', details: fetchError.message || fetchError });
     }
 
-    // Delete the course (cascade will handle related content)
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
     const { error: deleteError } = await supabase
       .schema('api')
       .from('courses')
       .delete()
+      .eq('user_id', userId)
       .eq('id', courseId)
-      .eq('user_id', userId);
+      .select('id')
+      .single();
 
     if (deleteError) {
       console.error('Supabase error deleting course:', deleteError);
-      return res.status(500).json({ error: 'Failed to delete course', details: deleteError.message });
+      return res.status(500).json({ error: 'Failed to delete course', details: deleteError.message || deleteError });
     }
 
-    return res.status(200).json({ success: true, message: 'Course deleted successfully', courseId });
-  } catch (e) {
-    console.error('Unhandled error deleting course:', e);
-    return res.status(500).json({ error: 'Internal server error', details: e.message });
+    return res.json({ success: true, courseId });
+  } catch (error) {
+    console.error('Unhandled error deleting course:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
+
+function normalizeCourseSelection({ university, courseTitle, rawSelection }) {
+  let normalized = null;
+
+  if (university || courseTitle) {
+    normalized = {
+      college: toTrimmedString(university),
+      title: toTrimmedString(courseTitle),
+      code: '',
+    };
+  }
+
+  if (!normalized && rawSelection) {
+    const code = toTrimmedString(rawSelection.code ?? rawSelection.id);
+    const title = toTrimmedString(
+      rawSelection.title ?? rawSelection.name ?? rawSelection.course ?? rawSelection.courseTitle,
+    );
+    const college = toTrimmedString(rawSelection.college ?? rawSelection.university);
+
+    if (code || title || college) {
+      normalized = {
+        code,
+        title,
+        college,
+      };
+    }
+  }
+
+  if (normalized) {
+    normalized.code = normalized.code || '';
+    normalized.title = normalized.title || '';
+    normalized.college = normalized.college || '';
+  }
+
+  return normalized;
+}
+
+function toTrimmedString(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).trim();
+  }
+  return '';
+}
+
+function extractTopicsFromCourse(course) {
+  if (!course) return [];
+
+  const nodeTitles = Array.isArray(course?.syllabus?.topic_graph?.nodes)
+    ? course.syllabus.topic_graph.nodes
+        .map((node) => (typeof node?.title === 'string' ? node.title.trim() : ''))
+        .filter(Boolean)
+    : [];
+
+  if (nodeTitles.length > 0) {
+    return nodeTitles;
+  }
+
+  const moduleTitles = Array.isArray(course?.modules?.modules)
+    ? course.modules.modules
+        .map((module) => (typeof module?.title === 'string' ? module.title.trim() : ''))
+        .filter(Boolean)
+    : [];
+
+  return moduleTitles;
+}
 
 export default router;
