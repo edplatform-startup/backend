@@ -252,7 +252,6 @@ router.post('/', async (req, res) => {
       topics,
       rawTopicsText,
       model: COURSE_V2_MODEL,
-      course,
     });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 502;

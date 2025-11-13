@@ -174,7 +174,7 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C, Topic D');
     assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C', 'Topic D']);
     assert.equal(res.body.model, 'course-v2');
-    assert.deepEqual(res.body.course, createSampleCoursePackage());
+    assert.ok(!('course' in res.body));
     assert.deepEqual(capturedSelection, {
       code: 'CSE142',
       title: 'Foundations of CS',

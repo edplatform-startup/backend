@@ -281,6 +281,10 @@ router.post('/', async (req, res) => {
     ...buildAttachmentList('exam-structure', examFilesValidation.value),
   ];
 
+  const trimmedClassName = className.trim();
+  const topicsList = normalizedTopics.value;
+  const familiarityList = topicFamiliarityValidation.value;
+
   try {
     const supabase = getSupabase();
     const courseId = randomUUID();
@@ -292,6 +296,9 @@ router.post('/', async (req, res) => {
       created_at: createdAt,
       // Some databases enforce NOT NULL on course_data; use empty object as placeholder
       course_data: {},
+      title: trimmedClassName,
+      topics: topicsList,
+      topic_familiarity: familiarityList.length ? familiarityList : null,
     };
 
     const preInsert = await supabase
@@ -310,15 +317,15 @@ router.post('/', async (req, res) => {
     }
 
     const result = await generateCourseStructureWithAssets({
-      topics: normalizedTopics.value,
-      className: className.trim(),
+      topics: topicsList,
+      className: trimmedClassName,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
       syllabusText: normalizedSyllabusText,
       syllabusFiles: syllabusFilesValidation.value,
       examStructureText: normalizedExamStructureText,
       examStructureFiles: examFilesValidation.value,
-      topicFamiliarity: topicFamiliarityValidation.value,
+      topicFamiliarity: familiarityList,
       attachments,
       // new params for per-asset generation and persistence
       userId,
@@ -336,6 +343,7 @@ router.post('/', async (req, res) => {
     }
 
     // Update placeholder with final course_data
+    // Only update the course_data blob so earlier placeholder fields (title/topics/topic_familiarity) stay intact
     const { data: updated, error: updateError } = await supabase
       .schema('api')
       .from('courses')

@@ -148,6 +148,17 @@ test('course structure generation route', async (t) => {
     // Expect 3 inserts: one placeholder course row + two content rows
     assert.equal(insertedPayloads.length, 3);
 
+    const placeholderBatch = insertedPayloads[0];
+    assert.ok(Array.isArray(placeholderBatch));
+    assert.equal(placeholderBatch.length, 1);
+    const placeholderRow = placeholderBatch[0];
+    assert.equal(placeholderRow.title, validBody.className.trim());
+    assert.deepEqual(placeholderRow.topics, validBody.topics);
+    assert.deepEqual(placeholderRow.topic_familiarity, [
+      { topic: 'Foundations', familiarity: 'novice' },
+      { topic: 'Algorithms', familiarity: 'intermediate' },
+    ]);
+
     // The last two inserts are content tables with module_key/content_prompt/data
     for (let i = 1; i < 3; i++) {
       const batch = insertedPayloads[i];
@@ -168,6 +179,7 @@ test('course structure generation route', async (t) => {
     const augmented = updateBatch.course_data;
     assert.ok(augmented['Module 1/Basics'][0].id, 'video asset should have id');
     assert.ok(augmented['Module 2/Practice'][0].id, 'reading asset should have id');
+    assert.deepEqual(Object.keys(updateBatch), ['course_data']);
   });
 
   await t.test('rejects topic familiarity entries for unknown topics', async () => {
