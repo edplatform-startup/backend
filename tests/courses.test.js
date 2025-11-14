@@ -4,7 +4,8 @@ import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
-import { setCourseV2Generator, clearCourseV2Generator } from '../src/services/courseV2.js';
+import { setCourseBuilder, clearCourseBuilder } from '../src/services/courseBuilder.js';
+import { setStudyTopicsGenerator, clearStudyTopicsGenerator } from '../src/services/grokClient.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
@@ -23,7 +24,6 @@ const courseData = {
 const sampleCourseRow = {
   id: '11111111-1111-1111-1111-111111111111',
   user_id: '22222222-2222-2222-2222-222222222222',
-  user_id: '22222222-2222-2222-2222-222222222222',
   course_data: courseData,
   course_json: courseData,
   created_at: '2025-10-17T12:34:56.789Z',
@@ -38,7 +38,8 @@ const sampleCourseRow = {
 test('courses route validations and behaviors', async (t) => {
   t.afterEach(() => {
     clearSupabaseClient();
-    clearCourseV2Generator();
+    clearCourseBuilder();
+    clearStudyTopicsGenerator();
   });
 
   await t.test('rejects missing query parameters', async () => {
@@ -128,7 +129,7 @@ test('courses route validations and behaviors', async (t) => {
 
   await t.test('prevents invalid file metadata on creation', async () => {
     const res = await request(app)
-      .post('/courses')
+      .post('/courses/topics')
       .set('Content-Type', 'application/json')
       .send({
         userId: sampleCourseRow.user_id,
@@ -139,141 +140,120 @@ test('courses route validations and behaviors', async (t) => {
     assert.match(res.body.error, /must include a non-empty "name"/);
   });
 
-  await t.test('returns generated course package without persistence', async () => {
-    let capturedSelection;
-    let capturedPrefs;
-
-    setCourseV2Generator((selection, prefs) => {
-      capturedSelection = selection;
-      capturedPrefs = prefs;
-      return createSampleCoursePackage();
+  await t.test('generates study topics via dedicated endpoint', async () => {
+    let capturedInput;
+    setStudyTopicsGenerator(async (input) => {
+      capturedInput = input;
+      return JSON.stringify({ topics: ['Topic A', 'Topic B', 'Topic C'] });
     });
 
     const reqBody = {
       userId: sampleCourseRow.user_id,
       finishByDate: sampleCourseRow.finish_by_date,
       courseSelection: {
-        code: '  CSE142 ',
-        title: '  Foundations of CS  ',
-        college: ' University of Washington ',
+        code: ' CSE142 ',
+        title: ' Foundations of CS ',
       },
       syllabusText: sampleCourseRow.syllabus_text,
       syllabusFiles: sampleCourseRow.syllabus_files,
       examFormatDetails: sampleCourseRow.exam_format_details,
       examFiles: sampleCourseRow.exam_files,
-      userPrefs: { readingSpeed: 260 },
     };
 
     const res = await request(app)
-      .post('/courses')
+      .post('/courses/topics')
       .set('Content-Type', 'application/json')
       .send(reqBody);
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C, Topic D');
-    assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C', 'Topic D']);
-    assert.equal(res.body.model, 'course-v2');
-    assert.ok(!('course' in res.body));
-    assert.deepEqual(capturedSelection, {
+    assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C']);
+    assert.equal(res.body.model, 'openai/gpt-5.1-codex');
+    assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C');
+    assert.equal(capturedInput.finishByDate, sampleCourseRow.finish_by_date);
+    assert.equal(capturedInput.syllabusText, sampleCourseRow.syllabus_text);
+    assert.equal(capturedInput.examFormatDetails, sampleCourseRow.exam_format_details);
+    assert.deepEqual(capturedInput.courseSelection, {
       code: 'CSE142',
       title: 'Foundations of CS',
-      college: 'University of Washington',
+      college: '',
     });
-    assert.deepEqual(capturedPrefs, reqBody.userPrefs);
+  });
+
+  await t.test('requires topics before generating a course package', async () => {
+    const res = await request(app)
+      .post('/courses')
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        courseSelection: sampleCourseRow.course_selection,
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /topics must contain at least one topic/);
+  });
+
+  await t.test('persists placeholder and updates course data with assets', async () => {
+    const insertPayloads = [];
+    const updatePayloads = [];
+    let builderOptions;
+
+    setCourseBuilder(async (options) => {
+      builderOptions = options;
+      return {
+        course: { syllabus: { outcomes: [] } },
+        assets: { summary: 'asset-bundle' },
+      };
+    });
+
+    setSupabaseClient(
+      createSupabaseStub({
+        insertResponses: [{
+          data: { id: 'new-course' },
+          error: null,
+          onInsert: (payload) => insertPayloads.push(payload),
+        }],
+        updateResponses: [{
+          data: { id: 'new-course' },
+          error: null,
+          onUpdate: (payload) => updatePayloads.push(payload),
+        }],
+      })
+    );
+
+    const res = await request(app)
+      .post('/courses')
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        topics: ['Topic A', 'Topic B'],
+        topicFamiliarity: { 'Topic B': 'expert' },
+        className: 'Custom Prep',
+        syllabusText: sampleCourseRow.syllabus_text,
+        examFormatDetails: sampleCourseRow.exam_format_details,
+      });
+
+    assert.equal(res.status, 201);
+    assert.match(res.body.courseId, /^[0-9a-f-]{36}$/i);
+
+    assert.equal(insertPayloads.length, 1);
+    const placeholder = insertPayloads[0][0];
+    assert.equal(placeholder.title, 'Custom Prep');
+    assert.deepEqual(placeholder.topics, ['Topic A', 'Topic B']);
+    assert.deepEqual(placeholder.topic_familiarity, [{ topic: 'Topic B', familiarity: 'expert' }]);
+    assert.equal(res.body.courseId, placeholder.id);
+
+    assert.ok(builderOptions);
+    assert.deepEqual(builderOptions.topics, ['Topic A', 'Topic B']);
+    assert.deepEqual(builderOptions.topicFamiliarity, [{ topic: 'Topic B', familiarity: 'expert' }]);
+    assert.equal(builderOptions.className, 'Custom Prep');
+    assert.equal(builderOptions.userId, sampleCourseRow.user_id);
+    assert.equal(builderOptions.courseId, placeholder.id);
+
+    assert.equal(updatePayloads.length, 1);
+    const updateBody = updatePayloads[0];
+    assert.ok(updateBody.course_data);
+    assert.equal(updateBody.course_data.version, '2.0');
+    assert.deepEqual(updateBody.course_data.assets, { summary: 'asset-bundle' });
   });
 });
-
-function createSampleCoursePackage() {
-  return {
-    syllabus: {
-      outcomes: ['Outcome 1', 'Outcome 2', 'Outcome 3'],
-      topic_graph: {
-        nodes: [
-          { id: 'n1', title: 'Topic A', summary: 'Summary A', refs: ['https://example.com/a'] },
-          { id: 'n2', title: 'Topic B', summary: 'Summary B', refs: ['https://example.com/b'] },
-          { id: 'n3', title: 'Topic C', summary: 'Summary C', refs: ['https://example.com/c'] },
-          { id: 'n4', title: 'Topic D', summary: 'Summary D', refs: ['https://example.com/d'] },
-        ],
-        edges: [],
-      },
-      sources: [{ url: 'https://example.com/source', title: 'Source 1' }],
-    },
-    modules: {
-      modules: [
-        { id: 'module-1', title: 'Module 1', dependsOn: [], outcomes: ['Outcome 1'], hours_estimate: 5, covers_nodes: ['n1'] },
-        { id: 'module-2', title: 'Module 2', dependsOn: ['module-1'], outcomes: ['Outcome 2'], hours_estimate: 5, covers_nodes: ['n2'] },
-        { id: 'module-3', title: 'Module 3', dependsOn: ['module-2'], outcomes: ['Outcome 3'], hours_estimate: 5, covers_nodes: ['n3'] },
-        { id: 'module-4', title: 'Module 4', dependsOn: ['module-3'], outcomes: ['Outcome 1'], hours_estimate: 5, covers_nodes: ['n4'] },
-      ],
-    },
-    lessons: {
-      lessons: [
-        createLesson('lesson-1', 'module-1', 'https://example.com/r1'),
-        createLesson('lesson-2', 'module-1', 'https://example.com/r2', 'problem_set'),
-        createLesson('lesson-3', 'module-2', 'https://example.com/r3'),
-        createLesson('lesson-4', 'module-2', 'https://example.com/r4', 'discussion'),
-        createLesson('lesson-5', 'module-3', 'https://example.com/r5'),
-        createLesson('lesson-6', 'module-3', 'https://example.com/r6', 'project_work'),
-        createLesson('lesson-7', 'module-4', 'https://example.com/r7'),
-        createLesson('lesson-8', 'module-4', 'https://example.com/r8', 'problem_set'),
-      ],
-    },
-    assessments: {
-      weekly_quizzes: [
-        {
-          moduleId: 'module-1',
-          items: createQuizItems(['lesson-1', 'lesson-2', 'lesson-3']),
-        },
-        {
-          moduleId: 'module-2',
-          items: createQuizItems(['lesson-4', 'lesson-5', 'lesson-6']),
-        },
-      ],
-      project: {
-        title: 'Capstone Project',
-        brief: 'Build something impressive.',
-        milestones: ['Proposal', 'Implementation'],
-        rubric: 'Assessed on creativity and completeness.',
-      },
-      exam_blueprint: {
-        sections: [
-          { title: 'Section 1', weight_pct: 50, outcomes: ['Outcome 1'] },
-          { title: 'Section 2', weight_pct: 50, outcomes: ['Outcome 2'] },
-        ],
-      },
-    },
-    study_time_min: {
-      reading: 96,
-      video: 0,
-      practice: 133,
-      total: 229,
-    },
-  };
-}
-
-function createLesson(id, moduleId, readingUrl, activityType = 'guided_example') {
-  return {
-    id,
-    moduleId,
-    title: `Lesson for ${moduleId}`,
-    objectives: ['Understand the concept'],
-    duration_min: 45,
-    reading: [{ title: `Reading for ${id}`, url: readingUrl, est_min: 12 }],
-    activities: [{ type: activityType, goal: 'Apply the concept' }],
-    bridge_from: [],
-    bridge_to: [],
-    cross_refs: [],
-  };
-}
-
-function createQuizItems(anchorLessons) {
-  return anchorLessons.map((anchor, index) => ({
-    type: 'mcq',
-    question: `Question ${index + 1}`,
-    options: ['Option A', 'Option B', 'Option C'],
-    answerIndex: 0,
-    explanation: 'Option A is correct.',
-    anchors: [anchor],
-  }));
-}

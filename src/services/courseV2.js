@@ -233,15 +233,16 @@ function enforceAssessmentConstraints(assessmentsPlan, modulesPlan, lessonsPlan,
   }
 }
 
-export async function synthesizeSyllabus({ university, courseName }) {
+export async function synthesizeSyllabus({ university, courseName, syllabusText, examFormatDetails, topics, attachments = [] }) {
   const usageStart = captureUsageTotals();
   try {
-    const messages = plannerSyllabus(university, courseName);
+    const messages = plannerSyllabus({ university, courseName, syllabusText, examFormatDetails, topics });
     const { result } = await callStageLLM({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
       maxTokens: 1800,
+      attachments,
     });
 
     const rawContent = result?.content;
@@ -268,6 +269,7 @@ Return corrected JSON only.`,
       messages: criticMessages,
       allowWeb: false,
       maxTokens: 1500,
+      attachments,
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
@@ -844,13 +846,49 @@ export function packageCourse(course) {
   return CoursePackageSchema.parse(packaged);
 }
 
-export async function generateCourseV2(courseSelection, userPrefs = {}) {
+function normalizeGeneratorOptions(input, maybeUserPrefs = {}) {
+  if (input && typeof input === 'object' && !Array.isArray(input) && (
+    input.courseSelection ||
+    input.syllabusText ||
+    input.examFormatDetails ||
+    input.attachments ||
+    input.topics ||
+    input.topicFamiliarity ||
+    input.finishByDate ||
+    input.userPrefs
+  )) {
+    return {
+      ...input,
+      userPrefs: input.userPrefs ?? maybeUserPrefs ?? {},
+    };
+  }
+
+  return {
+    courseSelection: input || {},
+    userPrefs: maybeUserPrefs || {},
+  };
+}
+
+export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) {
+  const options = normalizeGeneratorOptions(optionsOrSelection, maybeUserPrefs);
   if (customCourseGenerator) {
-    const result = await customCourseGenerator(courseSelection, userPrefs);
+    const result = await customCourseGenerator(options);
     return CoursePackageSchema.parse(result);
   }
+
+  const {
+    courseSelection = {},
+    userPrefs = {},
+    topics = [],
+    topicFamiliarity = [],
+    syllabusText,
+    examFormatDetails,
+    attachments = [],
+    finishByDate,
+  } = options;
+
   const { college: university, title: courseName } = courseSelection || {};
-  const syllabus = await synthesizeSyllabus({ university, courseName });
+  const syllabus = await synthesizeSyllabus({ university, courseName, syllabusText, examFormatDetails, topics, attachments });
   const modules = await planModulesFromGraph(syllabus);
   const lessons = await designLessons(modules, syllabus);
   const assessments = await generateAssessments(modules, lessons, syllabus);

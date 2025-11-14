@@ -1,4 +1,17 @@
-export function plannerSyllabus(university, courseName) {
+export function plannerSyllabus({ university, courseName, syllabusText, examFormatDetails, topics } = {}) {
+  const context = [];
+  if (syllabusText) {
+    context.push(`Syllabus notes: ${syllabusText}`);
+  }
+  if (examFormatDetails) {
+    context.push(`Exam format: ${examFormatDetails}`);
+  }
+  if (Array.isArray(topics) && topics.length > 0) {
+    context.push(`Preferred topics (student ranked): ${topics.join(', ')}`);
+  }
+
+  const contextBlock = context.length ? `\n\nContext:\n${context.join('\n')}` : '';
+
   return [
     {
       role: 'system',
@@ -7,7 +20,7 @@ export function plannerSyllabus(university, courseName) {
     },
     {
       role: 'user',
-      content: `University: ${university || 'N/A'}\nCourse: ${courseName || 'N/A'}\nTask: Produce syllabus JSON with outcomes (3+), concept nodes (id,title,summary,refs), prerequisite edges (from,to,reason), and sources (title,url).`,
+      content: `University: ${university || 'N/A'}\nCourse: ${courseName || 'N/A'}\nTask: Produce syllabus JSON with outcomes (3+), concept nodes (id,title,summary,refs), prerequisite edges (from,to,reason), and sources (title,url).${contextBlock}`,
     },
   ];
 }

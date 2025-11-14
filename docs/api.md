@@ -87,22 +87,22 @@ Base URL (production): https://edtech-backend-api.onrender.com
     }
     ```
 
--### GET /courses
-  - `userId` (string, required) – UUID of the caller; validated server-side.
-  - `courseId` (string, required) – UUID of the course; must belong to the user.
-  - Responses:
-  - 200 OK → `{ "courseId": "...", "userId": "...", "course_data": { ... } }`
-  - 400 Bad Request → Missing parameters or invalid UUID formats.
-  - 404 Not Found → Course not found for that user.
-  - 500 Internal Server Error → Supabase request failed.
-    }
-      "success": true,
-    - Requires `userId` query param (UUID).
-  - 200 OK → `{ "success": true, "courseId": "..." }`
-  - 400 Bad Request → Missing parameters or invalid UUID formats.
-  - 404 Not Found → Course not found or does not belong to the user.
-  - 500 Internal Server Error → Database error.
-- Purpose: Return all course IDs for a given user.
+### GET /courses
+- Purpose: List stored courses for a user or fetch a specific course row (including persisted `course_data`).
+- Query parameters:
+  - `userId` (string, required) – UUID of the caller.
+  - `courseId` (string, optional) – UUID of a specific course owned by the caller.
+- Responses:
+  - 200 OK →
+    - With `courseId`: `{ "success": true, "course": CourseRow }`
+    - Without `courseId`: `{ "success": true, "count": n, "courses": [CourseRow, ...] }`
+  - 400 Bad Request → Missing `userId` or invalid UUID(s).
+  - 404 Not Found → `courseId` not found for that user.
+  - 500 Internal Server Error → Supabase failure.
+
+### GET /courses/ids
+- Purpose: Return only the ordered list of course IDs for a user.
+- Query parameters:
   - `userId` (string, required) – UUID of the user.
 - Responses:
   - 200 OK → `{ "userId": "...", "count": n, "courseIds": ["uuid", ...] }`
@@ -110,26 +110,26 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 500 Internal Server Error → Database error.
 
 ### GET /courses/data
-- Purpose: Return only the `course_data` JSON for a specific course, verifying ownership.
+- Purpose: Fetch just the `course_data` JSON for a given `courseId`, verifying ownership.
 - Query parameters:
-  - `userId` (string, required) – UUID of the caller.
-  - `courseId` (string, required) – UUID of the course belonging to the caller.
+  - `userId` (string, required)
+  - `courseId` (string, required)
 - Responses:
   - 200 OK → `{ "courseId": "...", "userId": "...", "course_data": { ... } }`
   - 400 Bad Request → Missing parameters or invalid UUID formats.
-  - 404 Not Found → Course not found for that user.
+  - 404 Not Found → No matching record for the user.
   - 500 Internal Server Error → Supabase query failure.
 
 ### DELETE /courses
-- Purpose: Delete a specific course for a user.
+- Purpose: Delete a stored course row (and its linked assets) for a user.
 - Query parameters:
-  - `userId` (string, required) – UUID of the user.
-  - `courseId` (string, required) – UUID of the course to delete.
+  - `userId` (string, required)
+  - `courseId` (string, required)
 - Responses:
   - 200 OK → `{ "success": true, "courseId": "..." }`
   - 400 Bad Request → Missing parameters or invalid UUID formats.
-  - 404 Not Found → Course not found or does not belong to the user.
-  - 500 Internal Server Error → Database error.
+  - 404 Not Found → Course absent or belongs to another user.
+  - 500 Internal Server Error → Supabase delete failure.
 
 ### GET /content
 - Purpose: Fetch the stored per-format content JSON by format and id.
@@ -143,119 +143,45 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 404 Not Found → No content with that id in the specified format.
   - 500 Internal Server Error → Database error.
 
-### POST /courses
-- Purpose: Generate a validated Course V2 package (syllabus, modules, lessons, assessments) and return it to the caller without persisting.
+### POST /courses/topics
+- Purpose: Fast topic discovery endpoint. Extracts a high-quality topic list from syllabus/exam signals before full course generation.
 - Request body (JSON):
-  ```json
-  {
-    "userId": "550e8400-e29b-41d4-a716-446655440000",
-    "finishByDate": "2025-12-01T00:00:00.000Z",
-    "university": "University of Washington",
-    "courseTitle": "Introduction to Computer Science",
-    "courseSelection": {
-      "code": "CSE 142",
-      "title": "Computer Programming I",
-      "college": "University of Washington"
-    },
-    "syllabusText": "Optional syllabus text...",
-    "syllabusFiles": [
-      { "name": "syllabus.pdf", "url": "https://example.com/syllabus.pdf", "type": "application/pdf", "data": "<base64>" }
-    ],
-    "examFormatDetails": "Preferred exam format: MCQ | Notes: 2 midterms + 1 final",
-    "examFiles": [
-      { "name": "exam-guide.pdf", "url": "https://...", "type": "application/pdf" }
-    ]
-  }
-  ```
-- Field requirements:
-  - `userId` (string, required) – UUID; rejects non-UUID values.
-  - `finishByDate` (string, optional) – ISO 8601 date/time.
-  - `university` (string, optional) – Name of the university/college.
-  - `courseTitle` (string, optional) – Title of the course.
-  - `courseSelection` (object, optional) – Course metadata `{ code?, title?, college? }`; used when `university`/`courseTitle` are omitted.
-  - `syllabusText` (string, optional) – Free-form syllabus text.
-  - `syllabusFiles` (FileMeta[], optional) – Array of file objects with `name`, `type`, and either `url` or `data` (base64). Files are validated and content is extracted when possible.
-  - `examFormatDetails` (string, optional) – Combined exam format and notes (e.g., "Preferred exam format: MCQ | Notes: 2 midterms").
-  - `examFiles` (FileMeta[], optional) – Array of exam-related files.
+  - `userId` (string, required)
+  - `finishByDate` (string, optional ISO date)
+  - `university`, `courseTitle`, or `courseSelection` (optional) – any combination used to describe the class
+  - `syllabusText` (string, optional)
+  - `syllabusFiles` (FileMeta[], optional) – `{ name, type?, url? | data? }`, validated server-side
+  - `examFormatDetails` (string, optional)
+  - `examFiles` (FileMeta[], optional)
 - Behavior:
-  - Validates file metadata (non-empty name, valid type, url or data present).
-  - Normalizes `courseSelection` from either the top-level `university`/`courseTitle` fields or the embedded `courseSelection` object.
-  - Invokes the staged Course V2 pipeline (planner, selector, writer, assessor, critic) to synthesize a syllabus, module plan, full lesson set, assessments, and study time estimates. The pipeline respects environment defaults such as reading speed and activity durations.
-  - Accepts optional `userPrefs` payload (currently forwarded for future personalization; unused preferences are safely ignored).
-  - Derives `topics` from the syllabus topic graph node titles and returns a comma-separated `rawTopicsText` for legacy consumers.
-  - Returns only topic metadata to clients; the full generated plan is kept server-side for later workflows.
-  - Does **not** persist the generated course to Supabase.
+  - Validates user/file metadata and normalizes course selection fields.
+  - Calls GPT-5.1-Codex (via OpenRouter) with web tools enabled to find 15–30 domain-specific topics.
+  - Returns deduplicated topics plus the raw comma-separated string for legacy consumers.
 - Responses:
-  - 200 OK →
-    ```json
-    {
-      "success": true,
-      "topics": ["Topic A", "Topic B", "Topic C", "Topic D"],
-      "rawTopicsText": "Topic A, Topic B, Topic C, Topic D",
-      "model": "course-v2"
-    }
-    ```
-  - 400 Bad Request → Missing `userId`, invalid UUID/date formats, or invalid file metadata (empty name, missing url/data).
-  - 500 Internal Server Error → Unexpected exception inside the Course V2 pipeline.
-  - 502 Bad Gateway → Model call failed or returned invalid JSON at any stage of the pipeline.
+  - 200 OK → `{ "success": true, "topics": ["Topic A", ...], "rawTopicsText": "Topic A, ...", "model": "openai/gpt-5.1-codex" }`
+  - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
+  - 502 Bad Gateway → Model failure or unusable response.
 
-### POST /course-structure
-- Purpose: Generate and persist a full course learning plan leveraging xAI Grok 4 Fast via OpenRouter.
+### POST /courses
+- Purpose: Persist a full Course V2 package (syllabus, modules, lessons, assessments) plus per-format study assets after the user submits curated topics/familiarity.
 - Request body (JSON):
-  ```json
-  {
-    "topics": ["Supervised Learning", "Optimization"],
-    "topicFamiliarity": {
-      "Supervised Learning": "confident",
-      "Optimization": "needs review"
-    },
-    "className": "Machine Learning Final",
-    "startDate": "2025-10-01T00:00:00.000Z",
-    "endDate": "2025-12-15T00:00:00.000Z",
-    "userId": "550e8400-e29b-41d4-a716-446655440000",
-    "syllabusText": "Optional free-form syllabus overview",
-    "syllabusFiles": [
-      { "name": "syllabus.pdf", "url": "https://example.com/syllabus.pdf", "type": "application/pdf" }
-    ],
-    "examStructureText": "Optional description of exam structure",
-    "examStructureFiles": [
-      { "name": "exam-guide.pdf", "content": "<base64>", "type": "application/pdf" }
-    ]
-  }
-  ```
-- Field requirements:
-  - `topics` (string[], required) – Non-empty array of topic names.
-  - `topicFamiliarity` (object | array, optional) – Learner self-assessed familiarity per topic. Provide either an object map (`{ "topic": "beginner" }`) or array of `{ topic, familiarity }`. Topics outside the `topics` list are rejected.
-  - `className` (string, required) – Name of the class or exam being prepared for.
-  - `startDate` & `endDate` (string, required) – ISO 8601 timestamps; `startDate` must be before `endDate`.
-  - `userId` (string, required) – UUID of the learner the course belongs to.
-  - `syllabusText` (string, optional) – Additional syllabus description.
-  - `syllabusFiles` (FileMetaWithContent[], optional) – Uploaded syllabus documents. Each file may include either a `url` or `content` (base64 payload).
-  - `examStructureText` (string, optional) – Description of the exam format.
-  - `examStructureFiles` (FileMetaWithContent[], optional) – Exam references with optional `url` or `content`.
+  - `userId` (string, required)
+  - `topics` (string[], required) – trimmed, non-empty topics from `/courses/topics`
+  - `topicFamiliarity` (object or `{ topic, familiarity }[]`, optional) – levels such as `beginner`, `expert`; entries outside `topics` are rejected
+  - `className` (string, optional) – overrides course title stored in Supabase
+  - Shared fields from `/courses/topics`: `finishByDate`, `courseSelection`/`university`/`courseTitle`, `syllabusText`, `syllabusFiles`, `examFormatDetails`, `examFiles`, `userPrefs`
 - Behavior:
-  - Validates inputs and forwards contextual data, including file attachments, to Gemini 2.5 Pro (primary) with Grok 4 Fast fallback for course structure generation.
-  - **Video generation uses Gemini 2.5 Pro exclusively with enforced web search to find real, working YouTube URLs.**
-  - For models that do not support file inputs, the server automatically inlines textual file content into the prompt (when decodable) and includes URLs for non-text files.
-  - Incorporates the learner's familiarity levels to tailor pacing and depth for each topic.
-  - The model produces a concise plan parsed into the course structure: top-level object keyed by `Module/Submodule` with arrays of `{ "Format", "content" }`.
-  - Supported formats: `video`, `reading`, `flashcards`, `mini quiz`, `practice exam`. `project` and `lab` are ignored if present.
-  - Persists a placeholder `api.courses` row before generation, storing `title`, `topics`, and `topic_familiarity` alongside the new course id while the full plan is assembled.
-  - For each asset, the backend calls the model again to generate format-specific JSON content, persists it into dedicated tables, and attaches the inserted row id to the asset as `asset.id`.
-    - Tables: `api.video_items`, `api.reading_articles`, `api.flashcard_sets`, `api.mini_quizzes`, `api.practice_exams`.
-    - Each row includes: `course_id`, `user_id`, `module_key`, `content_prompt` (the asset `content`), and `data` (the JSON returned by the model).
-    - Data shapes:
-      - `video_items.data`: `{ "url": string, "title": string, "summary": string }` - **URL is guaranteed to be a valid, working YouTube video** (youtube.com/watch?v=..., youtu.be/..., shorts, or embed). Gemini 2.5 Pro uses web search with up to 4 retry attempts to ensure valid URLs.
-      - `reading_articles.data`: `{ "title": string, "body": string }` (Markdown, may include LaTeX inline $...$ and block $$...$$)
-  - `flashcard_sets.data`: `{ "cards": [ [question, answer, explanation], ... ] }`
-      - Other formats remain unchanged from earlier behavior (mini_quizzes with questions[], practice_exams with mcq[]/frq[]).
-  - Finally, the augmented `course_data` (now with per-asset `id` fields) is saved into `api.courses` using the same `courseId` that ties all content rows together.
+  1. Validates payload and inserts a placeholder `api.courses` row containing `title`, `topics`, and normalized `topic_familiarity`.
+  2. Runs `generateCoursePackageWithAssets`, which orchestrates the Course V2 pipeline and the new asset builder:
+     - `package` – structured syllabus/modules/lessons/assessments + study time estimates.
+     - `assets` – generated JSON for `video`, `reading`, `flashcards`, `mini quiz`, and `practice exam` per module (also persisted in their respective tables, with IDs stored in `course_data.assets`).
+  3. Updates the stored course row with `{ version: "2.0", model: "openai/gpt-5.1-codex", generated_at, inputs, package, assets }`.
+  4. On failure the placeholder row is deleted so retries can reuse the inputs.
 - Responses:
   - 201 Created → `{ "courseId": "<uuid>" }`
-  - 400 Bad Request → Invalid inputs (missing topics/userId, bad dates, malformed file metadata, etc.).
-  - 413 Payload Too Large → Request body exceeds configured limit; prefer URLs for files.
-  - 502 Bad Gateway → Model returned empty/invalid JSON structure or persistence failed.
-  - 500 Internal Server Error → Unexpected failure calling OpenRouter.
+  - 400 Bad Request → Missing `topics`, invalid familiarity map, or invalid shared fields.
+  - 502 Bad Gateway → LLM orchestration or Supabase persistence failed.
+  - 500 Internal Server Error → Unexpected exception.
 
 ### POST /flashcards
 - Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).
@@ -339,7 +265,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
 
 ## Notes
-- Every response uses JSON. Successful `POST /course-structure` requests return only the persisted `courseId`.
+- Every response uses JSON. Successful `POST /courses` requests return only the persisted `courseId`.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
 - Supabase schema: reads from and writes to `api.courses`. `course_data` is the canonical JSON column for stored syllabi.
 
@@ -350,6 +276,9 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - Response: `{ "success": true, "course": Course }`
 - Search catalog → `GET https://edtech-backend-api.onrender.com/college-courses?query=cs50`
   - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
-- Create topics → `POST https://edtech-backend-api.onrender.com/courses`
-  - Body: see example above.
-  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "x-ai/grok-4-fast" }`
+- Generate topics → `POST https://edtech-backend-api.onrender.com/courses/topics`
+  - Body: see `/courses/topics` section.
+  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "openai/gpt-5.1-codex" }`
+- Persist course → `POST https://edtech-backend-api.onrender.com/courses`
+  - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
+  - Response: `{ "courseId": "<uuid>" }`
