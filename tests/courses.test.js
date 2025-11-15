@@ -5,7 +5,7 @@ import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
 import { setCourseBuilder, clearCourseBuilder } from '../src/services/courseBuilder.js';
-import { setStudyTopicsGenerator, clearStudyTopicsGenerator } from '../src/services/grokClient.js';
+import { __setSyllabusSynthesizer, __clearSyllabusSynthesizer } from '../src/services/courseV2.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
@@ -39,7 +39,7 @@ test('courses route validations and behaviors', async (t) => {
   t.afterEach(() => {
     clearSupabaseClient();
     clearCourseBuilder();
-    clearStudyTopicsGenerator();
+    __clearSyllabusSynthesizer();
   });
 
   await t.test('rejects missing query parameters', async () => {
@@ -140,11 +140,23 @@ test('courses route validations and behaviors', async (t) => {
     assert.match(res.body.error, /must include a non-empty "name"/);
   });
 
-  await t.test('generates study topics via dedicated endpoint', async () => {
-    let capturedInput;
-    setStudyTopicsGenerator(async (input) => {
-      capturedInput = input;
-      return JSON.stringify({ topics: ['Topic A', 'Topic B', 'Topic C'] });
+  await t.test('generates study topics via syllabus graph', async () => {
+    let synthOptions;
+    __setSyllabusSynthesizer(async (options) => {
+      synthOptions = options;
+      return {
+        outcomes: ['Outcome 1', 'Outcome 2', 'Outcome 3'],
+        topic_graph: {
+          nodes: [
+            { id: 'n1', title: 'Asymptotic Analysis' },
+            { id: 'n2', title: 'Midterm Exam Review' },
+            { id: 'n3', title: 'Divide and Conquer Strategies' },
+            { id: 'n4', title: 'Asymptotic Analysis' },
+          ],
+          edges: [],
+        },
+        sources: [{ title: 'Official syllabus', url: 'https://example.edu/syllabus' }],
+      };
     });
 
     const reqBody = {
@@ -153,6 +165,7 @@ test('courses route validations and behaviors', async (t) => {
       courseSelection: {
         code: ' CSE142 ',
         title: ' Foundations of CS ',
+        college: ' UW ',
       },
       syllabusText: sampleCourseRow.syllabus_text,
       syllabusFiles: sampleCourseRow.syllabus_files,
@@ -167,17 +180,12 @@ test('courses route validations and behaviors', async (t) => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.deepEqual(res.body.topics, ['Topic A', 'Topic B', 'Topic C']);
-    assert.equal(res.body.model, 'openai/gpt-5.1-codex');
-    assert.equal(res.body.rawTopicsText, 'Topic A, Topic B, Topic C');
-    assert.equal(capturedInput.finishByDate, sampleCourseRow.finish_by_date);
-    assert.equal(capturedInput.syllabusText, sampleCourseRow.syllabus_text);
-    assert.equal(capturedInput.examFormatDetails, sampleCourseRow.exam_format_details);
-    assert.deepEqual(capturedInput.courseSelection, {
-      code: 'CSE142',
-      title: 'Foundations of CS',
-      college: '',
-    });
+    assert.deepEqual(res.body.topics, ['Asymptotic Analysis', 'Divide and Conquer Strategies']);
+    assert.equal(res.body.model, 'courseV2/syllabus');
+    assert.equal(res.body.rawTopicsText, 'Asymptotic Analysis, Divide and Conquer Strategies');
+    assert.ok(Array.isArray(synthOptions.attachments) && synthOptions.attachments.length >= 2);
+    assert.equal(synthOptions.university, 'UW');
+    assert.equal(synthOptions.courseName, 'Foundations of CS');
   });
 
   await t.test('requires topics before generating a course package', async () => {

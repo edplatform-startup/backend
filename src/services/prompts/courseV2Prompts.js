@@ -16,7 +16,7 @@ export function plannerSyllabus({ university, courseName, syllabusText, examForm
     {
       role: 'system',
       content:
-        'You are a meticulous university course architect. Use authoritative curriculum/syllabus sources when tools are enabled.\nReturn ONLY JSON conforming to: outcomes[], topic_graph{nodes[],edges[]}, sources[].',
+        'You are a meticulous university syllabus architect focused on exam alignment.\n- Locate and rely on the official syllabus/outline for the specified university + course whenever possible (web_search/browse_page allowed).\n- Integrate examFormatDetails to emphasize tested competencies.\n- topic_graph.nodes MUST be exam-relevant conceptual units (e.g., "Asymptotic Analysis"), not logistics/meta items (no "Exam Review", "Study Habits"). Include prerequisite units only when the exam depends on them.\n- Return ONLY JSON with outcomes[], topic_graph{nodes[],edges[]}, sources[].',
     },
     {
       role: 'user',
@@ -40,7 +40,7 @@ export function writerLessons() {
     {
       role: 'system',
       content:
-        'Design concrete lessons for each module.\nEach lesson: id, moduleId, title, objectives(1–3), duration_min(40–60),\nreadings (<=3, each {title,url,est_min?}), activities(1–2 of: guided_example | problem_set | discussion),\nbridge_from[], bridge_to[], cross_refs[].\nWhen tools are enabled you may find readings. Return ONLY JSON.',
+        'Design concrete lessons for each module.\nSTRICT JSON RULES:\n- Response MUST be valid JSON that JSON.parse can consume with zero errors.\n- No comments, trailing commas, prose, or extra text before/after JSON.\n- Every URL must be a JSON string wrapped in double quotes (e.g. "url": "https://...").\n- Never emit bare URLs, markdown, or code fences.\n- Either return an object { "lessons": [ ... ] } or return just an array [ ... ].\nLESSON REQUIREMENTS:\n- Produce 2-4 lessons per module and ensure course total lessons >= 6.\n- Each lesson object MUST include: id (string), moduleId (string), title (string), objectives (non-empty array of strings), duration_min (number between 40-60 target), reading (array <=3 of {title,url,est_min?}), activities (array of 1-2 objects with allowed types guided_example | problem_set | discussion | project_work), bridge_from[], bridge_to[], cross_refs[].\n- Keep readings credible; use placeholder like "https://example.com/placeholder" only if no source is available.\n- Activities should include clear goal (string) and optional steps[].\n- Honor module outcomes and keep lessons cohesive.\nReturn ONLY the JSON payload, no explanation.',
     },
   ];
 }

@@ -56,6 +56,8 @@ function logStageUsage(label, startTotals) {
 }
 
 let customCourseGenerator = null;
+let courseV2LLMCaller = callStageLLM;
+let customSyllabusSynthesizer = null;
 
 export function setCourseV2Generator(fn) {
   customCourseGenerator = typeof fn === 'function' ? fn : null;
@@ -63,6 +65,22 @@ export function setCourseV2Generator(fn) {
 
 export function clearCourseV2Generator() {
   customCourseGenerator = null;
+}
+
+export function __setSyllabusSynthesizer(fn) {
+  customSyllabusSynthesizer = typeof fn === 'function' ? fn : null;
+}
+
+export function __clearSyllabusSynthesizer() {
+  customSyllabusSynthesizer = null;
+}
+
+export function __setCourseV2LLMCaller(fn) {
+  courseV2LLMCaller = typeof fn === 'function' ? fn : callStageLLM;
+}
+
+export function __resetCourseV2LLMCaller() {
+  courseV2LLMCaller = callStageLLM;
 }
 
 function tryParseJson(content) {
@@ -78,6 +96,28 @@ function tryParseJson(content) {
       return JSON.parse(stripped);
     } catch (error) {
       console.error('[courseV2] Failed to parse JSON:', error);
+      const firstBrace = Math.min(
+        ...['{', '[']
+          .map((token) => {
+            const idx = stripped.indexOf(token);
+            return idx === -1 ? Number.POSITIVE_INFINITY : idx;
+          })
+          .filter((idx) => Number.isFinite(idx)),
+      );
+      const lastBrace = Math.max(
+        ...['}', ']']
+          .map((token) => stripped.lastIndexOf(token))
+          .filter((idx) => idx >= 0),
+      );
+
+      if (Number.isFinite(firstBrace) && lastBrace >= firstBrace) {
+        const core = stripped.slice(firstBrace, lastBrace + 1);
+        try {
+          return JSON.parse(core);
+        } catch (secondaryError) {
+          console.error('[courseV2] Core JSON parse failed:', secondaryError);
+        }
+      }
       return null;
     }
   }
@@ -276,6 +316,94 @@ function enforceLessonConstraints(lessonsPlan, modulesPlan) {
   }
 }
 
+function buildFallbackLessons(modulesPlan, syllabus) {
+  const modules = Array.isArray(modulesPlan?.modules) ? modulesPlan.modules : [];
+  if (modules.length === 0) {
+    throw new Error('Cannot build fallback lessons: no modules provided.');
+  }
+
+  const nodeMap = new Map((syllabus?.topic_graph?.nodes || []).map((node) => [node.id, node]));
+  const lessons = [];
+  const placeholderUrl = 'https://example.com/placeholder';
+  const activityTypes = ['guided_example', 'problem_set', 'discussion', 'project_work'];
+
+  modules.forEach((module, moduleIdx) => {
+    const moduleNodes = (module?.covers_nodes || []).map((nodeId) => nodeMap.get(nodeId)).filter(Boolean);
+    const lessonCount = Math.min(4, Math.max(2, moduleNodes.length ? Math.ceil(moduleNodes.length / 2) : 2));
+
+    for (let i = 0; i < lessonCount; i += 1) {
+      const focusNodes = moduleNodes.slice(i * 2, i * 2 + 2);
+      const objectiveSources = focusNodes.length
+        ? focusNodes
+        : moduleNodes.length
+          ? moduleNodes
+          : [{ title: module.title }];
+
+      const objectives = objectiveSources.slice(0, 3).map((node) => {
+        const nodeTitle = node?.title || node?.name || node?.id || module.title;
+        return `Understand ${nodeTitle}`;
+      });
+      if (objectives.length === 0) {
+        objectives.push(`Understand ${module.title}`);
+      }
+      if (objectives.length === 1) {
+        objectives.push(`Apply ${module.title} concepts`);
+      }
+
+      const readings = [];
+      for (const node of objectiveSources) {
+        if (!Array.isArray(node?.refs)) continue;
+        for (const ref of node.refs) {
+          if (typeof ref === 'string' && readings.length < 3) {
+            readings.push({
+              title: `${node.title || module.title} reference ${readings.length + 1}`,
+              url: ref,
+              est_min: 12,
+            });
+          }
+        }
+        if (readings.length >= 3) break;
+      }
+      if (readings.length === 0) {
+        readings.push({ title: `${module.title} primer`, url: placeholderUrl, est_min: 12 });
+      }
+
+      const activityType = activityTypes[(moduleIdx + i) % activityTypes.length];
+      lessons.push({
+        id: `${module.id}-fallback-lesson-${i + 1}`,
+        moduleId: module.id,
+        title: `${module.title}: Part ${i + 1}`,
+        objectives,
+        duration_min: 45,
+        reading: readings.slice(0, 3),
+        activities: [
+          {
+            type: activityType,
+            goal: `Reinforce ${module.title} concepts via ${activityType.replace('_', ' ')}`,
+            steps: [
+              'Review key ideas from the lesson summary.',
+              'Apply the concept to a realistic scenario.',
+            ],
+          },
+        ],
+        bridge_from: [],
+        bridge_to: [],
+        cross_refs: [],
+      });
+    }
+  });
+
+  const payload = { lessons };
+  try {
+    const validated = LessonsSchema.parse(payload);
+    enforceLessonConstraints(validated, modulesPlan);
+    return validated;
+  } catch (error) {
+    console.error('[courseV2] Fallback lesson builder produced invalid plan:', error);
+    throw error;
+  }
+}
+
 function enforceAssessmentConstraints(assessmentsPlan, modulesPlan, lessonsPlan, syllabus) {
   const moduleIds = new Set((modulesPlan.modules || []).map((module) => module.id));
   const lessonIds = new Set((lessonsPlan.lessons || []).map((lesson) => lesson.id));
@@ -305,11 +433,87 @@ function enforceAssessmentConstraints(assessmentsPlan, modulesPlan, lessonsPlan,
   }
 }
 
+function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
+  const modules = Array.isArray(modulesPlan?.modules) ? modulesPlan.modules : [];
+  if (modules.length === 0) {
+    throw new Error('Cannot build fallback assessments: no modules provided.');
+  }
+
+  const lessonsByModule = new Map();
+  (lessonsPlan?.lessons || []).forEach((lesson) => {
+    if (!lesson?.moduleId) return;
+    if (!lessonsByModule.has(lesson.moduleId)) {
+      lessonsByModule.set(lesson.moduleId, []);
+    }
+    lessonsByModule.get(lesson.moduleId).push(lesson);
+  });
+
+  const fallbackLessonId = lessonsPlan?.lessons?.[0]?.id;
+  const quizModules = modules.slice(0, Math.max(2, Math.min(modules.length, 6)));
+  const weekly_quizzes = quizModules.map((module) => {
+    const lessonAnchors = (lessonsByModule.get(module.id) || []).map((lesson) => lesson.id);
+    const anchor = lessonAnchors[0] || module.covers_nodes?.[0] || fallbackLessonId;
+    const items = Array.from({ length: 3 }, (_, idx) => ({
+      type: 'mcq',
+      question: `${module.title}: concept check ${idx + 1}`,
+      options: [
+        'Reinforce the primary concept.',
+        'Introduce a distractor example.',
+        'Explore an edge case.',
+        'Clarify a misconception.',
+      ],
+      answerIndex: 0,
+      explanation: `Review fundamentals for ${module.title}.`,
+      anchors: anchor ? [anchor] : [],
+    }));
+    return {
+      moduleId: module.id,
+      items,
+    };
+  });
+
+  const outcomes = Array.isArray(syllabus?.outcomes) && syllabus.outcomes.length > 0 ? syllabus.outcomes : ['Demonstrate mastery'];
+  const project = {
+    title: 'Applied Course Project',
+    brief: 'Synthesize key learnings into a concise deliverable tying together module outcomes.',
+    milestones: ['Outline goals and success criteria', 'Produce final artifact aligned to outcomes'],
+    rubric: 'Assess clarity, conceptual mastery, and evidence of practice.',
+  };
+
+  const exam_blueprint = {
+    sections: [
+      {
+        title: 'Concept Mastery',
+        weight_pct: 60,
+        outcomes: outcomes.slice(0, 2),
+      },
+      {
+        title: 'Applied Practice',
+        weight_pct: 40,
+        outcomes: outcomes.slice(2, 4).length ? outcomes.slice(2, 4) : outcomes.slice(0, 2),
+      },
+    ],
+  };
+
+  const payload = { weekly_quizzes, project, exam_blueprint };
+  try {
+    const validated = AssessmentsSchema.parse(payload);
+    enforceAssessmentConstraints(validated, modulesPlan, lessonsPlan, syllabus);
+    return validated;
+  } catch (error) {
+    console.error('[courseV2] Fallback assessment builder produced invalid plan:', error);
+    throw error;
+  }
+}
+
 export async function synthesizeSyllabus({ university, courseName, syllabusText, examFormatDetails, topics, attachments = [] }) {
+  if (customSyllabusSynthesizer) {
+    return await customSyllabusSynthesizer({ university, courseName, syllabusText, examFormatDetails, topics, attachments });
+  }
   const usageStart = captureUsageTotals();
   try {
     const messages = plannerSyllabus({ university, courseName, syllabusText, examFormatDetails, topics });
-    const { result } = await callStageLLM({
+    const { result } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
@@ -336,7 +540,7 @@ Return corrected JSON only.`,
       },
     ];
 
-    const { result: repairedResult } = await callStageLLM({
+    const { result: repairedResult } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
       messages: criticMessages,
       allowWeb: false,
@@ -374,7 +578,7 @@ Task: Propose 6-10 modules covering all nodes.`;
 
     const candidates = [];
     for (let i = 0; i < 3; i += 1) {
-      const { result } = await callStageLLM({
+      const { result } = await courseV2LLMCaller({
         stage: STAGES.PLANNER,
         messages: [...systemPrompt, { role: 'user', content: userContent }],
         maxTokens: 1600,
@@ -400,7 +604,7 @@ Choose or merge into the best single module plan JSON.`,
       },
     ];
 
-    const { result: selected } = await callStageLLM({
+    const { result: selected } = await courseV2LLMCaller({
       stage: STAGES.SELECTOR,
       messages: selectorMessages,
       maxTokens: 1600,
@@ -423,7 +627,7 @@ Original: ${selected?.content ?? ''}`,
       },
     ];
 
-    const { result: repaired } = await callStageLLM({
+    const { result: repaired } = await courseV2LLMCaller({
       stage: STAGES.SELECTOR,
       messages: repairMessages,
       maxTokens: 1400,
@@ -477,7 +681,7 @@ Return ONLY JSON lessons array for this module.`,
         },
       ];
 
-      const { result } = await callStageLLM({
+      const { result } = await courseV2LLMCaller({
         stage: STAGES.WRITER,
         messages: modulePrompt,
         maxTokens: 2000,
@@ -487,7 +691,8 @@ Return ONLY JSON lessons array for this module.`,
       const parsedLessons = tryParseJson(result?.content);
       const moduleLessons = normalizeLessonsOutput(parsedLessons, module.id);
       if (moduleLessons.length === 0) {
-        throw new Error(`Lesson generation returned no lessons for module ${module.id}`);
+        console.warn(`[courseV2] Lesson generation returned no lessons for module ${module.id}; using fallback.`);
+        return buildFallbackLessons(modules, syllabus);
       }
       lessons.push(...moduleLessons);
     }
@@ -505,7 +710,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
         },
       ];
 
-      const { result: repaired } = await callStageLLM({
+      const { result: repaired } = await courseV2LLMCaller({
         stage: STAGES.WRITER,
         messages: repairMessages,
         maxTokens: 1800,
@@ -514,13 +719,27 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
       const repairedRaw = tryParseJson(repaired?.content);
       const repairedPayload = normalizeLessonsContainer(repairedRaw);
       parsed = LessonsSchema.safeParse(repairedPayload);
-      if (!parsed.success) {
-        throw new Error(`Lesson design failed validation: ${parsed.error.toString()}`);
-      }
     }
 
-    enforceLessonConstraints(parsed.data, modules);
-    return parsed.data;
+    if (!parsed.success || parsed.data.lessons.length < 6) {
+      const reason = parsed.success
+        ? 'too few lessons'
+        : parsed.error.toString();
+      console.warn(`[courseV2] Lesson plan invalid after repair (${reason}); using fallback lessons.`);
+      const fallback = buildFallbackLessons(modules, syllabus);
+      parsed = { success: true, data: fallback };
+    }
+
+    try {
+      enforceLessonConstraints(parsed.data, modules);
+      return parsed.data;
+    } catch (error) {
+      console.warn('[courseV2] Lesson constraint enforcement failed, using fallback lessons:', error);
+      const fallback = buildFallbackLessons(modules, syllabus);
+      const validatedFallback = LessonsSchema.parse(fallback);
+      enforceLessonConstraints(validatedFallback, modules);
+      return validatedFallback;
+    }
   } finally {
     logStageUsage('LESSONS', usageStart);
   }
@@ -568,7 +787,7 @@ Return ONLY JSON.`,
       },
     ];
 
-    const { result } = await callStageLLM({
+    const { result } = await courseV2LLMCaller({
       stage: STAGES.ASSESSOR,
       messages,
       maxTokens: 2200,
@@ -600,7 +819,7 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
         },
       ];
 
-      const { result: repaired } = await callStageLLM({
+      const { result: repaired } = await courseV2LLMCaller({
         stage: STAGES.ASSESSOR,
         messages: repairMessages,
         maxTokens: 2000,
@@ -829,7 +1048,7 @@ Return critique with minimal revision_patch adhering to schemas.`,
       },
     ];
 
-    const { result } = await callStageLLM({
+    const { result } = await courseV2LLMCaller({
       stage: STAGES.CRITIC,
       messages,
       maxTokens: 2000,
@@ -964,8 +1183,21 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
   const { college: university, title: courseName } = courseSelection || {};
   const syllabus = await synthesizeSyllabus({ university, courseName, syllabusText, examFormatDetails, topics, attachments });
   const modules = await planModulesFromGraph(syllabus);
-  const lessons = await designLessons(modules, syllabus);
-  const assessments = await generateAssessments(modules, lessons, syllabus);
+  let lessons;
+  try {
+    lessons = await designLessons(modules, syllabus);
+  } catch (error) {
+    console.error('[courseV2] designLessons failed, using fallback lessons:', error);
+    lessons = buildFallbackLessons(modules, syllabus);
+  }
+
+  let assessments;
+  try {
+    assessments = await generateAssessments(modules, lessons, syllabus);
+  } catch (error) {
+    console.warn('[courseV2] Assessment generation failed, using fallback assessments:', error);
+    assessments = buildFallbackAssessments(modules, lessons, syllabus);
+  }
   let course = { syllabus, modules, lessons, assessments };
   course = crossLink(course);
   course = await criticAndRepair(course);
@@ -976,4 +1208,6 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
 export const __courseV2Internals = {
   validateModuleCoverage,
   buildFallbackModulePlanFromTopics,
+  buildFallbackLessons,
+  buildFallbackAssessments,
 };

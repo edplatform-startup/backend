@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { getSupabase } from '../supabaseClient.js';
-import { getCostTotals, generateStudyTopics, parseTopicsText } from '../services/grokClient.js';
+import { getCostTotals } from '../services/grokClient.js';
+import { synthesizeSyllabus } from '../services/courseV2.js';
 import { generateCoursePackageWithAssets } from '../services/courseBuilder.js';
 import {
   isValidIsoDate,
@@ -10,7 +11,7 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
-const TOPIC_MODEL = 'openai/gpt-5.1-codex';
+const TOPIC_MODEL = 'courseV2/syllabus';
 const COURSE_GENERATOR_MODEL = 'openai/gpt-5.1-codex';
 
 router.get('/ids', async (req, res) => {
@@ -171,19 +172,34 @@ router.post('/topics', async (req, res) => {
   const usageStart = getCostTotals();
 
   try {
-    const raw = await generateStudyTopics({
-      finishByDate: shared.finishByDateIso,
-      timeRemainingDays: shared.timeRemainingDays,
-      courseSelection: shared.courseSelection,
+    const selection = shared.courseSelection || {};
+    const university = selection.college || selection.university || null;
+    const bodyCourseTitle = toTrimmedString(req.body?.courseTitle) || toTrimmedString(req.body?.className);
+    const courseName = bodyCourseTitle || toTrimmedString(selection.title) || 'Custom Course';
+
+    const syllabus = await synthesizeSyllabus({
+      university,
+      courseName,
       syllabusText: shared.syllabusText,
-      syllabusFiles: shared.syllabusFiles,
       examFormatDetails: shared.examFormatDetails,
-      examFiles: shared.examFiles,
+      topics: [],
+      attachments: shared.attachments || [],
     });
 
-    const topics = parseTopicsText(raw);
-    if (!Array.isArray(topics) || topics.length === 0) {
-      return res.status(502).json({ error: 'Model returned no usable topics' });
+    const nodes = Array.isArray(syllabus?.topic_graph?.nodes) ? syllabus.topic_graph.nodes : [];
+    let rawTopics = nodes
+      .map((node) => node?.title || node?.name || node?.id || '')
+      .map((title) => (typeof title === 'string' ? title.trim() : ''))
+      .filter(Boolean);
+
+    const META_RE = /(exam|midterm|final|review|revision|study skills|time management)/i;
+    rawTopics = rawTopics.filter((topic) => !META_RE.test(topic));
+
+    const deduped = Array.from(new Set(rawTopics));
+    const topics = deduped.length > 30 ? deduped.slice(0, 30) : deduped;
+
+    if (!topics.length) {
+      return res.status(502).json({ error: 'Syllabus topic graph produced no usable topics' });
     }
 
     try {

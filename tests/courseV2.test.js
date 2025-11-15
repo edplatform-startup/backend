@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { __courseV2Internals } from '../src/services/courseV2.js';
+import {
+  designLessons,
+  generateCourseV2,
+  __courseV2Internals,
+  __setCourseV2LLMCaller,
+  __resetCourseV2LLMCaller,
+} from '../src/services/courseV2.js';
+import { CoursePackageSchema } from '../src/schemas/courseV2.js';
 
 const { validateModuleCoverage, buildFallbackModulePlanFromTopics } = __courseV2Internals;
 
@@ -12,10 +19,12 @@ function createSyllabus(nodeCount = 12) {
     refs: [],
   }));
   return {
+    outcomes: ['Outcome 1', 'Outcome 2', 'Outcome 3'],
     topic_graph: {
       nodes,
       edges: [],
     },
+    sources: [{ title: 'Primary Source', url: 'https://example.com/source' }],
   };
 }
 
@@ -72,4 +81,109 @@ test('buildFallbackModulePlanFromTopics produces deterministic coverage', () => 
     assert.ok(Array.isArray(module.outcomes) && module.outcomes.length > 0);
     assert.ok(Number.isInteger(module.hours_estimate) && module.hours_estimate > 0);
   }
+});
+
+test('designLessons falls back when JSON contains bare URLs', async (t) => {
+  const syllabus = createSyllabus();
+  const modules = buildModulePlan(4, syllabus);
+  const brokenContent = '{ "lessons": [ { "id": "l1", "moduleId": "module-1", "title": "Bad", "objectives": ["o"], "duration_min": 45, "reading": [ { "title": "Doc", "url": https://broken.example/bad } ], "activities": [] } ] }';
+  __setCourseV2LLMCaller(async () => ({ result: { content: brokenContent } }));
+  t.after(() => __resetCourseV2LLMCaller());
+
+  const lessonsPlan = await designLessons(modules, syllabus);
+  assert.ok(lessonsPlan.lessons.length >= 6, 'fallback ensured minimum lesson count');
+  for (const module of modules.modules) {
+    const perModule = lessonsPlan.lessons.filter((lesson) => lesson.moduleId === module.id);
+    assert.ok(perModule.length >= 2 && perModule.length <= 4);
+  }
+});
+
+test('designLessons falls back when aggregated lessons stay under schema minimum', async (t) => {
+  const syllabus = createSyllabus();
+  const modules = buildModulePlan(3, syllabus);
+  const singleLessonFor = (moduleId, index) => ({
+    id: `${moduleId}-lesson-${index + 1}`,
+    moduleId,
+    title: `Lesson ${index + 1}`,
+    objectives: ['Objective'],
+    duration_min: 45,
+    reading: [{ title: 'Ref', url: 'https://example.com/ref' }],
+    activities: [],
+    bridge_from: [],
+    bridge_to: [],
+    cross_refs: [],
+  });
+  const responses = modules.modules.map((module, index) => JSON.stringify([singleLessonFor(module.id, index)]));
+  responses.push('[]');
+  let callIndex = 0;
+  __setCourseV2LLMCaller(async () => ({ result: { content: responses[callIndex++] ?? '[]' } }));
+  t.after(() => __resetCourseV2LLMCaller());
+
+  const lessonsPlan = await designLessons(modules, syllabus);
+  assert.ok(lessonsPlan.lessons.length >= 6);
+  for (const module of modules.modules) {
+    const perModule = lessonsPlan.lessons.filter((lesson) => lesson.moduleId === module.id);
+    assert.ok(perModule.length >= 2 && perModule.length <= 4);
+  }
+});
+
+test('generateCourseV2 returns a valid course when lesson JSON is broken', async (t) => {
+  const syllabusPayload = createSyllabus();
+  const modulePlan = buildModulePlan(4, syllabusPayload);
+  const fallbackLessonId = 'module-1-fallback-lesson-1';
+  const assessmentsPayload = {
+    weekly_quizzes: [
+      {
+        moduleId: modulePlan.modules[0].id,
+        items: Array.from({ length: 3 }, (_, idx) => ({
+          type: 'mcq',
+          question: `Check ${idx + 1}`,
+          options: ['A', 'B', 'C'],
+          answerIndex: 0,
+          anchors: [fallbackLessonId],
+        })),
+      },
+      {
+        moduleId: modulePlan.modules[1].id,
+        items: Array.from({ length: 3 }, (_, idx) => ({
+          type: 'mcq',
+          question: `Check ${idx + 1}`,
+          options: ['A', 'B', 'C'],
+          answerIndex: 0,
+          anchors: [fallbackLessonId],
+        })),
+      },
+    ],
+    project: {
+      title: 'Capstone',
+      brief: 'Apply everything.',
+      milestones: ['Draft', 'Submit'],
+      rubric: 'Clarity and depth.',
+    },
+    exam_blueprint: {
+      sections: [
+        { title: 'Concepts', weight_pct: 60, outcomes: [syllabusPayload.outcomes[0]] },
+        { title: 'Application', weight_pct: 40, outcomes: [syllabusPayload.outcomes[1]] },
+      ],
+    },
+  };
+
+  const brokenLessonContent = '{ "lessons": [ { "id": "bad", "moduleId": "module-1", "title": "Bad", "objectives": ["o"], "duration_min": 45, "reading": [ { "title": "Doc", "url": https://broken.example/bad } ] } ] }';
+  const responses = [
+    { content: JSON.stringify(syllabusPayload) },
+    { content: JSON.stringify(modulePlan) },
+    { content: JSON.stringify(modulePlan) },
+    { content: JSON.stringify(modulePlan) },
+    { content: JSON.stringify(modulePlan) },
+    { content: brokenLessonContent },
+    { content: JSON.stringify(assessmentsPayload) },
+    { content: JSON.stringify({ revision_patch: {} }) },
+  ];
+
+  __setCourseV2LLMCaller(async () => ({ result: responses.shift() || { content: '{}' } }));
+  t.after(() => __resetCourseV2LLMCaller());
+
+  const course = await generateCourseV2({ courseSelection: { college: 'Test U', title: 'Fallback 101' } });
+  assert.ok(course.lessons.lessons.length >= 6);
+  CoursePackageSchema.parse(course);
 });

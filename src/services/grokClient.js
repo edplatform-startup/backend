@@ -471,6 +471,7 @@ export async function executeOpenRouterChat(options = {}) {
     apiKey: explicitApiKey,
     signal,
     attachments = [],
+    attachmentsInlineOptions,
     responseFormat,
     requestTimeoutMs = 55000,
     enableWebSearch = false,
@@ -490,7 +491,7 @@ export async function executeOpenRouterChat(options = {}) {
   const isAnthropicModel = model.startsWith('anthropic/');
   const shouldInlineAttachments = typeof model === 'string' && /^x-ai\/grok/.test(model);
   if (shouldInlineAttachments && validatedAttachments.length > 0) {
-    const inlineText = buildAttachmentsInlineText(validatedAttachments);
+    const inlineText = buildAttachmentsInlineText(validatedAttachments, attachmentsInlineOptions);
     if (inlineText) {
       conversation.push({ role: 'user', content: inlineText });
     }
@@ -671,73 +672,33 @@ function buildStudyTopicsPrompt({
   examFiles,
 } = {}) {
   const lines = [];
-  lines.push('You are an AI study planner extracting topics. Output ONLY a JSON array of domain-specific topics (strings, no extras).');
-  lines.push('Prohibited: meta-skills like study skills, time management, note-taking, exam strategies, revision, productivity.');
-  lines.push('Tasks:');
-  lines.push('1. Analyze provided syllabus text/files and exam details.');
-  // Build web_search query from courseSelection
-  let query = '';
-  if (courseSelection) {
-    const cs = courseSelection || {};
-    const code = cs.code || cs.id || '';
-    const title = cs.title || cs.course || cs.name || cs.courseTitle || '';
-    query = [code, title].filter(Boolean).join(' ');
-  }
-  if (query) {
-    lines.push(`2. Use your built-in web search for: "${query} official syllabus outline site:.edu" to locate and incorporate the official syllabus.`);
-  } else {
-    lines.push('2. Use your built-in web search for "official syllabus outline site:.edu" plus relevant keywords to locate and incorporate the official syllabus.');
-  }
-  lines.push('3. Call browse_page once on the best syllabus/exam link (instructions: "Extract all listed topics, subtopics, and learning objectives as bullet points") if needed for full extraction.');
-  lines.push('4. Cross-reference for completeness: include prerequisites, examples, and exam-covered concepts while staying within the course scope.');
-  lines.push('5. Limit to at most one browse_page call.');
-  lines.push('6. Ensure 15-30 topics covering every course element for exam success.');
-  lines.push('7. Respond with ONLY: { "topics": ["Topic1", "Topic2", ...] }');
-  lines.push('');
-  lines.push('Provided context:');
+  const cs = courseSelection || {};
+  const college = cs.college || cs.institution || cs.university || cs.school || '';
+  const title = cs.title || cs.course || cs.name || cs.courseTitle || '';
+  const code = cs.code || cs.id || '';
+  const courseLabel = [college, [code, title].filter(Boolean).join(' ')].filter(Boolean).join(' — ') || 'this course';
 
-  if (courseSelection) {
-    const cs = courseSelection || {};
-    const college = cs.college || cs.institution || cs.university || cs.school || '';
-    const title = cs.title || cs.course || cs.name || cs.courseTitle || '';
-    const code = cs.code || cs.id || '';
-    const courseLabel = [college, [code, title].filter(Boolean).join(' ')].filter(Boolean).join(' — ');
-    if (courseLabel) {
-      lines.push(`- Course: ${courseLabel}`);
-    }
-  }
-  if (finishByDate) {
-    lines.push(`- Target Exam/Completion Date: ${finishByDate}`);
-  }
-  if (typeof timeRemainingDays === 'number') {
-    lines.push(`- Time remaining (days): ${timeRemainingDays}`);
-  }
+  lines.push(`Derive exam topics directly from the official syllabus for ${courseLabel}.`);
+  lines.push('Always prioritize primary sources (.edu syllabus, handbook, exam brief). Search the web if attachments/text are insufficient, then browse the best syllabus link once to extract bullet topics.');
+  lines.push('Topics must be domain concepts or prerequisite knowledge needed on the exam. Strictly exclude logistics or meta items (no "Exam Review", "Study Skills", etc.).');
+  lines.push('Return ONLY valid JSON shaped as { "topics": ["Topic1", ...] } with 15-30 distinct entries ordered by syllabus flow.');
+  lines.push('');
+  lines.push('Context for alignment:');
+  if (finishByDate) lines.push(`- Target exam date: ${finishByDate}`);
+  if (typeof timeRemainingDays === 'number') lines.push(`- Days remaining: ${timeRemainingDays}`);
   if (syllabusText) {
-    lines.push('- Syllabus Text:');
+    lines.push('- Syllabus notes:');
     lines.push(syllabusText);
   }
   if (Array.isArray(syllabusFiles) && syllabusFiles.length) {
-    lines.push('- Syllabus Files:');
-    lines.push(
-      syllabusFiles
-        .map((file, index) => `  ${index + 1}. ${file.name}${file.url ? ` (${file.url})` : ''}`)
-        .join('\n')
-    );
+    lines.push('- Syllabus files provided.');
   }
   if (examFormatDetails) {
-    lines.push(`- Exam Format Details: ${examFormatDetails}`);
+    lines.push(`- Exam format: ${examFormatDetails}`);
   }
   if (Array.isArray(examFiles) && examFiles.length) {
-    lines.push('- Exam Files:');
-    lines.push(
-      examFiles
-        .map((file, index) => `  ${index + 1}. ${file.name}${file.url ? ` (${file.url})` : ''}`)
-        .join('\n')
-    );
+    lines.push('- Exam files provided.');
   }
-
-  lines.push('');
-  lines.push('Use built-in search before final output.');
 
   return lines.join('\n');
 }
@@ -867,120 +828,117 @@ export async function generateStudyTopics(input) {
   }
 
   const usageStart = getCostTotals();
-
-  const apiKey = resolveApiKey();
-  const requestedModel = input?.model || runtimeConfig.stageModels.planner;
-  const fallbackModel = runtimeConfig.stageModels.critic;
   const prompt = buildStudyTopicsPrompt(input || {});
+  const model = input?.model || runtimeConfig.stageModels?.planner || DEFAULT_MODEL;
 
-  // Prepare attachments from syllabusFiles and examFiles
-  const attachments = [];
-  if (Array.isArray(input?.syllabusFiles)) {
-    attachments.push(...input.syllabusFiles);
-  }
-  if (Array.isArray(input?.examFiles)) {
-    attachments.push(...input.examFiles);
-  }
+  const normalizedAttachments = (Array.isArray(input?.attachments) ? input.attachments : [])
+    .filter((att) => att && typeof att === 'object');
 
-  const primaryModel = requestedModel.includes(':online') ? requestedModel : `${requestedModel}:online`;
-  let totalCallsUsed = 0;
-  const consumeCall = () => {
-    if (totalCallsUsed >= MAX_TOTAL_CALLS) {
-      throw new Error('Study topics call budget exhausted');
-    }
-    totalCallsUsed += 1;
-  };
+  const fallbackFromFiles = (files = [], label = 'file') =>
+    files
+      .filter((file) => file && typeof file === 'object')
+      .map((file, index) => ({
+        type: 'file',
+        name: `${label}-${index + 1}-${file.name || 'attachment'}`,
+        mimeType: file.type,
+        data: file.content,
+        url: file.url,
+      }));
 
-  const baseMessages = [
+  const attachments = normalizedAttachments.length
+    ? normalizedAttachments
+    : [
+        ...fallbackFromFiles(input?.syllabusFiles, 'syllabus'),
+        ...fallbackFromFiles(input?.examFiles, 'exam'),
+      ].filter((att) => att.url || att.data);
+
+  const primaryMessages = [
     { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
     { role: 'user', content: prompt },
   ];
 
-  const runOnceWithModel = async (mdl, extraUserMessage, { requireTools = true } = {}) => {
-    const messages = extraUserMessage ? [...baseMessages, { role: 'user', content: extraUserMessage }] : baseMessages;
-    const timeouts = [35000];
-    let lastErr;
-
-    for (let idx = 0; idx < timeouts.length; idx += 1) {
-      try {
-        consumeCall();
-        const enableWebSearch = true;
-        const toolList = requireTools ? (enableWebSearch ? [] : [createBrowsePageTool()]) : [];
-        const shouldRequestJson = !enableWebSearch && toolList.length === 0;
-        const maxToolIterations = enableWebSearch || toolList.length > 0 ? DEFAULT_MAX_TOOL_ITERATIONS : 0;
-        const { content } = await executeOpenRouterChat({
-          apiKey,
-          model: mdl,
-          reasoning: { enabled: true, effort: 'medium' },
-          temperature: 0.2,
-          maxTokens: 1200,
-          tools: toolList,
-          toolChoice: toolList.length ? 'auto' : undefined,
-          maxToolIterations,
-          requestTimeoutMs: timeouts[idx],
-          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
-          messages,
-          attachments,
-          enableWebSearch,
-        });
-
-        const text = Array.isArray(content)
-          ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
-          : typeof content === 'string' ? content.trim() : '';
-
-        const topics = parseTopicsText(text);
-        return { text, topics };
-      } catch (err) {
-        lastErr = err;
-        if (err?.name === 'AbortError' && idx < timeouts.length - 1) {
-          continue;
-        }
-        throw err;
-      }
-    }
-
-    if (lastErr) throw lastErr;
-
-    return { text: '', topics: [] };
+  const chatArgs = {
+    model: model.includes(':online') ? model : `${model}:online`,
+    temperature: 0.45,
+    maxTokens: 900,
+    tools: [createWebSearchTool(), createBrowsePageTool()],
+    maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    enableWebSearch: true,
+    attachments,
+    attachmentsInlineOptions: { maxPerFileChars: 4000, maxTotalChars: 12000 },
+    messages: primaryMessages,
   };
 
-  const runOnce = async (extraUserMessage) => {
+  const first = await executeOpenRouterChat(chatArgs);
+  const firstText = Array.isArray(first.content)
+    ? first.content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+    : typeof first.content === 'string'
+      ? first.content.trim()
+      : '';
+
+  const coerceTopics = (raw) => {
+    const stripped = stripCodeFences(raw);
+    if (!stripped) {
+      throw new Error('Empty response');
+    }
+    let json;
     try {
-      return await runOnceWithModel(primaryModel, extraUserMessage, { requireTools: true });
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        try {
-          return await runOnceWithModel(primaryModel, extraUserMessage, { requireTools: false });
-        } catch {/* ignore and fall through */}
-      }
-      try {
-        return await runOnceWithModel(fallbackModel, extraUserMessage, { requireTools: true });
-      } catch (e2) {
-        if (e2?.name === 'AbortError') {
-          return await runOnceWithModel(fallbackModel, extraUserMessage, { requireTools: false });
-        }
-        throw e2;
-      }
+      json = JSON.parse(stripped);
+    } catch (error) {
+      throw new Error(`Invalid JSON: ${error.message}`);
     }
+    const arr = Array.isArray(json)
+      ? json
+      : (json && Array.isArray(json.topics) ? json.topics : null);
+    if (!Array.isArray(arr) || arr.length === 0) {
+      throw new Error('topics array missing or empty');
+    }
+    const deduped = [];
+    const seen = new Set();
+    for (const entry of arr) {
+      if (entry == null) continue;
+      const value = typeof entry === 'string' ? entry.trim() : String(entry).trim();
+      if (!value) continue;
+      const lower = value.toLowerCase();
+      if (seen.has(lower)) continue;
+      if (/exam|review|study skills|time management|revision/i.test(value)) continue;
+      seen.add(lower);
+      deduped.push(value);
+      if (deduped.length >= 30) break;
+    }
+    if (!deduped.length) {
+      throw new Error('topics array became empty after filtering');
+    }
+    return deduped;
   };
 
-  let attempt = 0;
-  let last = await runOnce();
-  while (attempt < 1 && isGenericTopicList(last.topics)) {
-    attempt += 1;
-    const correction = [
-      'Correction: Previous output included generics, meta-skills, or insufficient coverage (fewer than 15 topics or missing syllabus elements).',
-      'Requirements:',
-      '- Use built-in web search to extract FULL syllabus topics/subtopics (aim 15-30 within course scope).',
-      '- Limit to one browse_page call if needed.',
-      '- Verify against official sources; exclude ALL meta-items.',
-      'Respond ONLY with JSON: { "topics": ["Topic1", "Topic2", ...] }'
-    ].join('\n');
-    last = await runOnce(correction);
+  let topics;
+  try {
+    topics = coerceTopics(firstText);
+  } catch (error) {
+    const repairMessages = [
+      { role: 'system', content: 'You repair JSON into valid {"topics":[...]} format. Return ONLY corrected JSON.' },
+      {
+        role: 'user',
+        content: `Original response:\n${firstText || '[empty]'}\n\nError: ${error.message}`,
+      },
+    ];
+    const repair = await executeOpenRouterChat({
+      model,
+      temperature: 0.2,
+      maxTokens: 400,
+      messages: repairMessages,
+    });
+    const repairText = Array.isArray(repair.content)
+      ? repair.content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+      : typeof repair.content === 'string'
+        ? repair.content.trim()
+        : '';
+    topics = coerceTopics(repairText);
   }
 
-  if (!last.text) {
-    throw new Error('OpenRouter returned unexpected content format for study topics');
+  if (!topics || topics.length === 0) {
+    throw new Error('Model returned no usable topics');
   }
 
   try {
@@ -997,6 +955,6 @@ export async function generateStudyTopics(input) {
     }
   } catch {}
 
-  return last.text;
+  return JSON.stringify({ topics });
 }
 

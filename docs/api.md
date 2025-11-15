@@ -155,11 +155,11 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examFiles` (FileMeta[], optional)
 - Behavior:
   - Validates user/file metadata and normalizes course selection fields.
-  - Calls GPT-5.1-Codex (via OpenRouter) with web tools enabled to find 15–30 domain-specific topics.
-  - Routes OpenRouter plugin tool calls (`web_search`, `browse_page`) through the backend so the request never defines duplicate tools, preventing OpenRouter "duplicate tool" errors even on Anthropic models.
-  - Returns deduplicated topics plus the raw comma-separated string for legacy consumers.
+  - Invokes the CourseV2 `synthesizeSyllabus` stage (the same engine used for full course generation) to build an exam-aligned syllabus + topic graph.
+  - Extracts topic labels from `topic_graph.nodes`, filters meta/logistics entries (e.g., “Exam Review”), deduplicates while preserving order, and caps to ~30 items.
+  - Logs usage via Grok client cost tracking and returns topics plus a comma-separated string for legacy consumers.
 - Responses:
-  - 200 OK → `{ "success": true, "topics": ["Topic A", ...], "rawTopicsText": "Topic A, ...", "model": "openai/gpt-5.1-codex" }`
+  - 200 OK → `{ "success": true, "topics": ["Topic A", ...], "rawTopicsText": "Topic A, ...", "model": "courseV2/syllabus" }`
   - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
   - 502 Bad Gateway → Model failure or unusable response.
 
@@ -177,6 +177,8 @@ Base URL (production): https://edtech-backend-api.onrender.com
      - `package` – structured syllabus/modules/lessons/assessments + study time estimates.
      - `assets` – generated JSON for `video`, `reading`, `flashcards`, `mini quiz`, and `practice exam` per module (also persisted in their respective tables, with IDs stored in `course_data.assets`).
       - Module planning keeps the 6-10 module target as a soft guideline; if the model proposes zero modules, the backend deterministically builds a fallback plan from the topic graph so module count alone never triggers a server error.
+      - Lesson design enforces strict JSON (quoted URLs, no trailing text) and, if parsing/validation fails or produces <6 lessons, it deterministically builds a compliant fallback plan so every module keeps 2–4 lessons.
+      - Assessment generation similarly falls back to deterministic weekly quizzes, capstone, and exam blueprint whenever LLM output cannot be repaired, so the full course package is always returned.
     - Tool calls originating from OpenRouter plugins (e.g., xAI web search) are intercepted server-side and resolved without redefining the same tools in the payload, so Anthropic and xAI runs both succeed.
   3. Updates the stored course row with `{ version: "2.0", model: "openai/gpt-5.1-codex", generated_at, inputs, package, assets }`.
   4. On failure the placeholder row is deleted so retries can reuse the inputs.
