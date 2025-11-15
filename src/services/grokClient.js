@@ -303,6 +303,91 @@ export function createBrowsePageTool() {
   };
 }
 
+export function createWebSearchTool() {
+  return {
+    name: 'web_search',
+    description: 'Run a quick web search and summarize the top suggestions for further browsing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query to run on DuckDuckGo suggestions.' },
+      },
+      required: ['query'],
+    },
+    handler: async (args) => {
+      const query = (args?.query || '').trim();
+      if (!query) return 'No query provided to web_search.';
+
+      const endpoint = `https://duckduckgo.com/ac/?q=${encodeURIComponent(query)}`;
+      try {
+        const response = await fetch(endpoint, {
+          headers: { 'User-Agent': 'EdTechBot/1.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+
+        if (!response.ok) {
+          return `web_search failed: ${response.status} ${response.statusText}`;
+        }
+
+        let suggestions;
+        try {
+          suggestions = await response.json();
+        } catch (error) {
+          console.error('[web_search] failed to parse suggestions:', error);
+          return 'web_search could not parse results.';
+        }
+
+        if (!Array.isArray(suggestions) || suggestions.length === 0) {
+          return `No web search suggestions found for "${query}".`;
+        }
+
+        const lines = suggestions
+          .map((entry, index) => {
+            const phrase = (entry?.phrase || entry?.text || entry?.value || '').trim();
+            if (!phrase) return null;
+            return `${index + 1}. ${phrase}`;
+          })
+          .filter(Boolean)
+          .slice(0, 5);
+
+        if (lines.length === 0) {
+          return `No web search suggestions found for "${query}".`;
+        }
+
+        return [
+          `Top web search suggestions for "${query}":`,
+          ...lines,
+          'Use browse_page on one of these results (if a concrete URL is known) to gather details.',
+        ].join('\n');
+      } catch (error) {
+        console.error('[web_search] error:', error);
+        return `Error running web_search: ${error.message}`;
+      }
+    },
+  };
+}
+
+const pluginToolHandlerCache = new Map();
+
+function getPluginToolHandler(name) {
+  if (pluginToolHandlerCache.has(name)) {
+    return pluginToolHandlerCache.get(name);
+  }
+
+  let handler = null;
+  if (name === 'browse_page') {
+    handler = createBrowsePageTool().handler;
+  } else if (name === 'web_search') {
+    handler = createWebSearchTool().handler;
+  }
+
+  if (handler) {
+    pluginToolHandlerCache.set(name, handler);
+  }
+
+  return handler;
+}
+
 async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
   const MAX_RETRIES = 2;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
@@ -529,7 +614,11 @@ export async function executeOpenRouterChat(options = {}) {
 
       let toolResult;
       try {
-        const handler = toolHandlers.get(toolName);
+        let handler = toolHandlers.get(toolName);
+        if (!handler) {
+          handler = getPluginToolHandler(toolName);
+        }
+
         if (handler) {
           toolResult = await handler(args, {
             apiKey,
@@ -816,16 +905,18 @@ export async function generateStudyTopics(input) {
       try {
         consumeCall();
         const enableWebSearch = true;
-        const shouldRequestJson = !enableWebSearch && !requireTools;
+        const toolList = requireTools ? (enableWebSearch ? [] : [createBrowsePageTool()]) : [];
+        const shouldRequestJson = !enableWebSearch && toolList.length === 0;
+        const maxToolIterations = enableWebSearch || toolList.length > 0 ? DEFAULT_MAX_TOOL_ITERATIONS : 0;
         const { content } = await executeOpenRouterChat({
           apiKey,
           model: mdl,
           reasoning: { enabled: true, effort: 'medium' },
           temperature: 0.2,
           maxTokens: 1200,
-          tools: requireTools ? [createBrowsePageTool()] : [],
-          toolChoice: requireTools ? 'auto' : undefined,
-          maxToolIterations: requireTools ? 1 : 0,
+          tools: toolList,
+          toolChoice: toolList.length ? 'auto' : undefined,
+          maxToolIterations,
           requestTimeoutMs: timeouts[idx],
           ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
@@ -909,46 +1000,3 @@ export async function generateStudyTopics(input) {
   return last.text;
 }
 
-export function createWebSearchTool() {
-  return {
-    name: 'web_search',
-    description: 'Run a simple web search and return top results formatted as brief bullets.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query' },
-      },
-      required: ['query'],
-    },
-    handler: async (args) => {
-      const query = (args && args.query) || '';
-      if (!query) return 'No query provided to web_search.';
-      try {
-        const response = await fetch(`https://example.com/search?q=${encodeURIComponent(query)}`, {
-          headers: { 'User-Agent': 'EdTechBot/1.0' },
-        });
-        const text = await response.text();
-        if (!text || text.trim() === '') {
-          return 'No results returned by web_search.';
-        }
-        try {
-          const parsed = JSON.parse(text);
-          const results = Array.isArray(parsed.results) ? parsed.results : [];
-          if (results.length === 0) return text;
-          const lines = results.map((r, i) => {
-            const title = r.title || r.name || 'Untitled';
-            const snippet = r.snippet || r.description || '';
-            const tail = snippet ? ` - ${snippet}` : '';
-            return `${i + 1}. ${title}${tail}`;
-          });
-          return lines.join('\n');
-        } catch (err) {
-          // not JSON - return raw text
-          return text;
-        }
-      } catch (error) {
-        return `Error running web_search: ${error.message}`;
-      }
-    },
-  };
-}

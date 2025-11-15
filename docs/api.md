@@ -156,6 +156,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Behavior:
   - Validates user/file metadata and normalizes course selection fields.
   - Calls GPT-5.1-Codex (via OpenRouter) with web tools enabled to find 15–30 domain-specific topics.
+  - Routes OpenRouter plugin tool calls (`web_search`, `browse_page`) through the backend so the request never defines duplicate tools, preventing OpenRouter "duplicate tool" errors even on Anthropic models.
   - Returns deduplicated topics plus the raw comma-separated string for legacy consumers.
 - Responses:
   - 200 OK → `{ "success": true, "topics": ["Topic A", ...], "rawTopicsText": "Topic A, ...", "model": "openai/gpt-5.1-codex" }`
@@ -175,6 +176,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   2. Runs `generateCoursePackageWithAssets`, which orchestrates the Course V2 pipeline and the new asset builder:
      - `package` – structured syllabus/modules/lessons/assessments + study time estimates.
      - `assets` – generated JSON for `video`, `reading`, `flashcards`, `mini quiz`, and `practice exam` per module (also persisted in their respective tables, with IDs stored in `course_data.assets`).
+    - Tool calls originating from OpenRouter plugins (e.g., xAI web search) are intercepted server-side and resolved without redefining the same tools in the payload, so Anthropic and xAI runs both succeed.
   3. Updates the stored course row with `{ version: "2.0", model: "openai/gpt-5.1-codex", generated_at, inputs, package, assets }`.
   4. On failure the placeholder row is deleted so retries can reuse the inputs.
 - Responses:

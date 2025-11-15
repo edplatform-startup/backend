@@ -96,16 +96,17 @@ async function callModelJson({
     ];
 
     const enableWebSearch = true;
-    const shouldRequestJson = !enableWebSearch && !(tools?.length);
+    const effectiveTools = enableWebSearch ? [] : (tools || []);
+    const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
     const { content, message } = await executeOpenRouterChat({
       apiKey,
       model: currentModel,
       temperature: 0.4,
       maxTokens: 800,
       reasoning: { enabled: true, effort: 'medium' },
-      tools,
-      toolChoice: tools?.length ? 'auto' : undefined,
-      maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+      tools: effectiveTools,
+      toolChoice: effectiveTools.length ? 'auto' : undefined,
+      maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
       attachments,
       ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
       messages,
@@ -224,16 +225,17 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
         ];
 
         const enableWebSearch = true;
-        const shouldRequestJson = !enableWebSearch && !(tools?.length);
+        const effectiveTools = enableWebSearch ? [] : (tools || []);
+        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: VIDEO_MODEL,
           temperature: 0.4,
           maxTokens: 1000,
           reasoning: { enabled: true, effort: 'medium' },
-          tools,
-          toolChoice: 'auto',
-          maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+          tools: effectiveTools,
+          toolChoice: effectiveTools.length ? 'auto' : undefined,
+          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
           attachments,
           ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
@@ -321,16 +323,17 @@ async function callReadingJsonWithValidation({ apiKey, system, user, attachments
         ];
 
         const enableWebSearch = true;
-        const shouldRequestJson = !enableWebSearch && !(tools?.length);
+        const effectiveTools = enableWebSearch ? [] : (tools || []);
+        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: READING_MODEL,
           temperature: 0.2,
           maxTokens: 1000,
           reasoning: { enabled: true, effort: 'medium' },
-          tools,
-          toolChoice: 'auto',
-          maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+          tools: effectiveTools,
+          toolChoice: effectiveTools.length ? 'auto' : undefined,
+          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
           attachments,
           ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
@@ -429,16 +432,17 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
         ];
 
         const enableWebSearch = true;
-        const shouldRequestJson = !enableWebSearch && !(tools?.length);
+        const effectiveTools = enableWebSearch ? [] : (tools || []);
+        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: FLASHCARDS_MODEL,
           temperature: 0.2,
           maxTokens: 800,
           reasoning: { enabled: true, effort: 'medium' },
-          tools,
-          toolChoice: 'auto',
-          maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+          tools: effectiveTools,
+          toolChoice: effectiveTools.length ? 'auto' : undefined,
+          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
           attachments,
           ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
@@ -495,16 +499,17 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
         ];
 
         const enableWebSearch = true;
-        const shouldRequestJson = !enableWebSearch && !(tools?.length);
+        const effectiveTools = enableWebSearch ? [] : (tools || []);
+        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
         const { content, message } = await executeOpenRouterChat({
           apiKey,
           model: PRACTICE_EXAM_MODEL,
           temperature: 0.4,
           maxTokens: 1200,
           reasoning: { enabled: true, effort: 'high' },
-          tools,
-          toolChoice: 'auto',
-          maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+          tools: effectiveTools,
+          toolChoice: effectiveTools.length ? 'auto' : undefined,
+          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
           attachments,
           ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
           messages,
@@ -628,7 +633,7 @@ async function generateOneAsset({
   if (!table) return null;
 
   let builder;
-  let tools = [createBrowsePageTool()];
+  const tools = [createBrowsePageTool()];
   switch (fmt) {
     case 'video':
       builder = buildVideoPrompt;

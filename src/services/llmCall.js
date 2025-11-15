@@ -15,7 +15,10 @@ export async function callStageLLM({ stage, messages, attachments = [], maxToken
       presence_penalty: presencePenalty,
     } = pickModel(stage);
     const chosenModel = fallbackModel || model;
-    const useTools = shouldUseTools(stage) || allowWeb;
+    const stageNeedsTools = shouldUseTools(stage);
+    const useTools = stageNeedsTools || allowWeb;
+    const enableWebSearch = allowWeb || /:online\b/.test(chosenModel);
+    const toolList = useTools && !enableWebSearch ? [createBrowsePageTool()] : [];
 
     try {
       const response = await executeOpenRouterChat({
@@ -25,10 +28,10 @@ export async function callStageLLM({ stage, messages, attachments = [], maxToken
         frequencyPenalty,
         presencePenalty,
         maxTokens,
-        tools: useTools ? [createBrowsePageTool()] : [],
-        toolChoice: useTools ? 'auto' : undefined,
-        maxToolIterations: useTools ? 1 : undefined,
-        enableWebSearch: useTools || allowWeb,
+        tools: toolList,
+        toolChoice: toolList.length ? 'auto' : undefined,
+        maxToolIterations: toolList.length ? 1 : undefined,
+        enableWebSearch,
         messages,
         attachments,
       });
