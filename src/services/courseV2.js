@@ -1,3 +1,5 @@
+// src/services/courseV2.js
+
 import { callStageLLM } from './llmCall.js';
 import { STAGES, nextFallback } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
@@ -13,7 +15,6 @@ import {
   SyllabusSchema,
   ModulesSchema,
   LessonsSchema,
-  LessonSchema,
   AssessmentsSchema,
   CoursePackageSchema,
 } from '../schemas/courseV2.js';
@@ -29,6 +30,7 @@ const IDEAL_MIN_MODULES = 6;
 const IDEAL_MAX_MODULES = 10;
 const FALLBACK_MIN_MODULES = 4;
 const FALLBACK_MAX_MODULES = 10;
+
 const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
 
 function captureUsageTotals() {
@@ -53,7 +55,7 @@ function logStageUsage(label, startTotals) {
     };
     console.log(`[courseV2][${label}] usage:`, delta);
   } catch {
-    /* ignore logging errors */
+    /* ignore */
   }
 }
 
@@ -71,7 +73,7 @@ function logTopicsUsage(startTotals) {
     };
     console.log('[topicsV2] usage:', delta);
   } catch {
-    /* ignore logging errors */
+    /* ignore */
   }
 }
 
@@ -103,15 +105,21 @@ export function __resetCourseV2LLMCaller() {
   courseV2LLMCaller = callStageLLM;
 }
 
+/**
+ * Best-effort JSON parser.
+ */
 function tryParseJson(content) {
   if (content == null) return null;
+
   if (typeof content === 'string') {
     const stripped = content
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/```\s*$/i, '')
       .trim();
+
     if (!stripped) return null;
+
     try {
       return JSON.parse(stripped);
     } catch (error) {
@@ -129,7 +137,6 @@ function tryParseJson(content) {
           .map((token) => stripped.lastIndexOf(token))
           .filter((idx) => idx >= 0),
       );
-
       if (Number.isFinite(firstBrace) && lastBrace >= firstBrace) {
         const core = stripped.slice(firstBrace, lastBrace + 1);
         try {
@@ -140,7 +147,7 @@ function tryParseJson(content) {
             const fixed = core.replace(/,\s*(?=[}\]])/g, '');
             return JSON.parse(fixed);
           } catch (tertiaryError) {
-            console.error('[courseV2] JSON parse failed after removing trailing commas:', tertiaryError);
+            console.error('[courseV2] JSON parse failed after trailing comma fix:', tertiaryError);
           }
         }
       }
@@ -185,9 +192,7 @@ function ensureSyllabusMinimums(syllabus) {
 }
 
 function extractTopicNodesFromSyllabus(syllabus) {
-  if (!Array.isArray(syllabus?.topic_graph?.nodes)) {
-    return [];
-  }
+  if (!Array.isArray(syllabus?.topic_graph?.nodes)) return [];
   return syllabus.topic_graph.nodes;
 }
 
@@ -214,6 +219,7 @@ function buildFallbackModulePlanFromTopics(topicNodes) {
     const primaryLabel = first.title || first.name || first.id || `Concept ${moduleNumber}`;
     const coveredTitles = slice.map((node) => node.title || node.name || node.id);
     const previousId = modules.length === 0 ? null : modules[modules.length - 1].id;
+
     modules.push({
       id: `fallback_module_${moduleNumber}`,
       title: `Module ${moduleNumber}: ${primaryLabel}`,
@@ -236,8 +242,7 @@ function ensureModulePlanHasModules(plan, syllabus) {
   if (Array.isArray(plan?.modules) && plan.modules.length > 0) {
     return plan;
   }
-
-  console.warn('[courseV2] Module planner returned 0 modules, falling back to deterministic plan.');
+  console.warn('[courseV2] Module planner returned 0 modules, using fallback module plan.');
   const topics = extractTopicNodesFromSyllabus(syllabus);
   return buildFallbackModulePlanFromTopics(topics);
 }
@@ -257,7 +262,7 @@ function validateModuleCoverage(modulesPlan, syllabus) {
   }
 
   const nodeIds = new Set((syllabus?.topic_graph?.nodes || []).map((node) => node.id));
-  for (const module of modulesPlan.modules) {
+  for (const module of modules) {
     if (!Array.isArray(module?.covers_nodes) || module.covers_nodes.length === 0) {
       throw new Error(`Module ${module?.id || '<unknown>'} missing covers_nodes.`);
     }
@@ -278,9 +283,11 @@ function normalizeLessonsOutput(rawLessons, fallbackModuleId) {
 
   const lessons = [];
   let counter = 0;
+
   for (const entry of rawArray) {
     if (!entry || typeof entry !== 'object') continue;
     counter += 1;
+
     const normalized = { ...entry };
     if (typeof normalized.id !== 'string' || !normalized.id.trim()) {
       normalized.id = `${fallbackModuleId || 'module'}-lesson-${counter}`;
@@ -288,15 +295,50 @@ function normalizeLessonsOutput(rawLessons, fallbackModuleId) {
     if (typeof normalized.moduleId !== 'string' || !normalized.moduleId.trim()) {
       normalized.moduleId = fallbackModuleId;
     }
+
     if (normalized.duration_min != null) {
       normalized.duration_min = Number(normalized.duration_min);
       if (Number.isNaN(normalized.duration_min)) normalized.duration_min = 45;
       else if (normalized.duration_min < 35) normalized.duration_min = 40;
       else if (normalized.duration_min > 70) normalized.duration_min = 60;
     }
-    if (Array.isArray(normalized.reading) && normalized.reading.length > 3) {
+
+    if (!Array.isArray(normalized.objectives) || normalized.objectives.length === 0) {
+      normalized.objectives = [`Understand the key ideas in ${normalized.title || 'this lesson'}.`];
+    }
+
+    if (!Array.isArray(normalized.reading)) {
+      normalized.reading = [];
+    }
+    if (normalized.reading.length > 3) {
       normalized.reading = normalized.reading.slice(0, 3);
     }
+    normalized.reading = normalized.reading.map((r, idx) => {
+      if (!r || typeof r !== 'object') {
+        return {
+          title: `Reading ${idx + 1}`,
+          url: 'https://example.com/placeholder',
+          est_min: 12,
+        };
+      }
+      const url =
+        typeof r.url === 'string' && r.url.trim().startsWith('http')
+          ? r.url.trim()
+          : 'https://example.com/placeholder';
+      return {
+        title: r.title || `Reading ${idx + 1}`,
+        url,
+        est_min: Number.isInteger(r.est_min) ? r.est_min : 12,
+      };
+    });
+
+    if (!Array.isArray(normalized.activities)) {
+      normalized.activities = [];
+    }
+    if (!Array.isArray(normalized.bridge_from)) normalized.bridge_from = [];
+    if (!Array.isArray(normalized.bridge_to)) normalized.bridge_to = [];
+    if (!Array.isArray(normalized.cross_refs)) normalized.cross_refs = [];
+
     lessons.push(normalized);
   }
 
@@ -343,6 +385,10 @@ function enforceLessonConstraints(lessonsPlan, modulesPlan) {
       throw new Error(`Module ${moduleId} must have between 2 and 4 lessons (found ${count}).`);
     }
   }
+
+  if (lessonsPlan.lessons.length < 6) {
+    throw new Error('Array must contain at least 6 element(s) in lessons.');
+  }
 }
 
 function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
@@ -376,12 +422,8 @@ function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
         const nodeTitle = node?.title || node?.name || node?.id || module.title;
         return `Understand ${nodeTitle}`;
       });
-      if (objectives.length === 0) {
-        objectives.push(`Understand ${module.title}`);
-      }
-      if (objectives.length === 1) {
-        objectives.push(`Apply ${module.title} concepts`);
-      }
+      if (objectives.length === 0) objectives.push(`Understand ${module.title}`);
+      if (objectives.length === 1) objectives.push(`Apply ${module.title} concepts`);
 
       const readings = [];
       for (const node of objectiveSources) {
@@ -427,20 +469,18 @@ function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
   });
 
   const payload = { lessons };
+  const parsed = LessonsSchema.safeParse(payload);
+  if (!parsed.success) {
+    console.error('[courseV2][LESSONS] Fallback lesson builder produced invalid plan:', parsed.error);
+    throw parsed.error;
+  }
   try {
-    if (!limitModuleIds) {
-      const validated = LessonsSchema.parse(payload);
-      enforceLessonConstraints(validated, modulesPlan);
-      return validated;
-    }
-
-    lessons.forEach((lesson) => LessonSchema.parse(lesson));
-    enforceLessonConstraints(payload, { modules });
-    return payload;
+    enforceLessonConstraints(parsed.data, modulesPlan);
   } catch (error) {
-    console.error('[courseV2][LESSONS] Fallback lesson builder produced invalid plan:', error);
+    console.error('[courseV2][LESSONS] Fallback lesson plan failed lesson constraints:', error);
     throw error;
   }
+  return parsed.data;
 }
 
 function buildModuleLessonPrompt(module, relatedNodes, correctionDirective = '') {
@@ -541,7 +581,9 @@ function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
     };
   });
 
-  const outcomes = Array.isArray(syllabus?.outcomes) && syllabus.outcomes.length > 0 ? syllabus.outcomes : ['Demonstrate mastery'];
+  const outcomes = Array.isArray(syllabus?.outcomes) && syllabus.outcomes.length > 0
+    ? syllabus.outcomes
+    : ['Demonstrate mastery'];
   const project = {
     title: 'Applied Course Project',
     brief: 'Synthesize key learnings into a concise deliverable tying together module outcomes.',
@@ -565,14 +607,18 @@ function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
   };
 
   const payload = { weekly_quizzes, project, exam_blueprint };
+  const parsed = AssessmentsSchema.safeParse(payload);
+  if (!parsed.success) {
+    console.error('[courseV2] Fallback assessment builder produced invalid plan:', parsed.error);
+    throw parsed.error;
+  }
   try {
-    const validated = AssessmentsSchema.parse(payload);
-    enforceAssessmentConstraints(validated, modulesPlan, lessonsPlan, syllabus);
-    return validated;
+    enforceAssessmentConstraints(parsed.data, modulesPlan, lessonsPlan, syllabus);
   } catch (error) {
-    console.error('[courseV2] Fallback assessment builder produced invalid plan:', error);
+    console.error('[courseV2] Fallback assessment plan failed constraints:', error);
     throw error;
   }
+  return parsed.data;
 }
 
 async function attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus, modelOverride = null }) {
@@ -603,13 +649,100 @@ async function attemptAssessmentRepair({ repairMessages, modules, lessons, sylla
   }
 }
 
-export async function synthesizeSyllabus({ university, courseName, syllabusText, examFormatDetails, topics, attachments = [] }) {
-  if (customSyllabusSynthesizer) {
-    return await customSyllabusSynthesizer({ university, courseName, syllabusText, examFormatDetails, topics, attachments });
+function coerceTopicString(value, defaultValue = '') {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+    return defaultValue;
   }
+  if (value == null) return defaultValue;
+  return String(value);
+}
+
+function normalizeOverviewTopics(rawOverviewTopics) {
+  if (!Array.isArray(rawOverviewTopics)) return [];
+  const normalized = [];
+
+  rawOverviewTopics.forEach((ot, index) => {
+    if (!ot || typeof ot !== 'object') return;
+
+    const id =
+      typeof ot.id === 'string' && ot.id.trim()
+        ? ot.id.trim()
+        : `overview_${index + 1}`;
+    const title = coerceTopicString(ot.title, `Topic group ${index + 1}`);
+    const description = coerceTopicString(ot.description, '');
+    const likelyOnExam = Boolean(ot.likelyOnExam);
+
+    const subtopicsRaw = Array.isArray(ot.subtopics) ? ot.subtopics : [];
+    const subtopics = [];
+
+    subtopicsRaw.forEach((st, subIdx) => {
+      if (!st || typeof st !== 'object') return;
+      const sid =
+        typeof st.id === 'string' && st.id.trim()
+          ? st.id.trim()
+          : `${id}_subtopic_${subIdx + 1}`;
+      const overviewId = coerceTopicString(st.overviewId, id);
+      const stTitle = coerceTopicString(st.title, `Subtopic ${subIdx + 1}`);
+      const stDescription = coerceTopicString(st.description, '');
+      const rawDiff = coerceTopicString(st.difficulty, 'intermediate').toLowerCase();
+      const difficulty = VALID_TOPIC_DIFFICULTIES.has(rawDiff) ? rawDiff : 'intermediate';
+      const stLikelyOnExam = Boolean(st.likelyOnExam);
+
+      subtopics.push({
+        id: sid,
+        overviewId,
+        title: stTitle,
+        description: stDescription,
+        difficulty,
+        likelyOnExam: stLikelyOnExam,
+      });
+    });
+
+    if (subtopics.length === 0) return;
+
+    normalized.push({
+      id,
+      title,
+      description,
+      likelyOnExam,
+      subtopics,
+    });
+  });
+
+  return normalized;
+}
+
+export async function synthesizeSyllabus({
+  university,
+  courseName,
+  syllabusText,
+  examFormatDetails,
+  topics,
+  attachments = [],
+}) {
+  if (customSyllabusSynthesizer) {
+    return customSyllabusSynthesizer({
+      university,
+      courseName,
+      syllabusText,
+      examFormatDetails,
+      topics,
+      attachments,
+    });
+  }
+
   const usageStart = captureUsageTotals();
   try {
-    const messages = plannerSyllabus({ university, courseName, syllabusText, examFormatDetails, topics });
+    const messages = plannerSyllabus({
+      university,
+      courseName,
+      syllabusText,
+      examFormatDetails,
+      topics,
+    });
+
     const { result } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
       messages,
@@ -621,6 +754,7 @@ export async function synthesizeSyllabus({ university, courseName, syllabusText,
     const rawContent = result?.content;
     const parsed = tryParseJson(rawContent);
     const firstPass = SyllabusSchema.safeParse(parsed);
+
     if (firstPass.success) {
       ensureSyllabusMinimums(firstPass.data);
       return firstPass.data;
@@ -681,9 +815,7 @@ Task: Propose 6-10 modules covering all nodes.`;
         maxTokens: 1600,
       });
       const candidate = tryParseJson(result?.content);
-      if (candidate) {
-        candidates.push(candidate);
-      }
+      if (candidate) candidates.push(candidate);
     }
 
     if (candidates.length === 0) {
@@ -769,7 +901,7 @@ export async function designLessons(modules, syllabus) {
 
       if (moduleLessons.length === 0) {
         console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id}; retrying with correction prompt.`);
-        var correctionPrompt = buildModuleLessonPrompt(
+        const correctionPrompt = buildModuleLessonPrompt(
           module,
           relatedNodes,
           'The previous output was invalid JSON or contained zero lessons. Return ONLY a JSON array (or {"lessons": [...]}) of lessons for this module with all required fields (id, moduleId, title, objectives, duration_min, reading[], activities[], bridge_from[], bridge_to[], cross_refs[]). No commentary, markdown, or extra text.',
@@ -781,32 +913,30 @@ export async function designLessons(modules, syllabus) {
           allowWeb: false,
         });
         moduleLessons = normalizeLessonsOutput(tryParseJson(retryResult?.content), module.id);
+
+        if (moduleLessons.length === 0) {
+          const fallbackModel = nextFallback(0);
+          if (fallbackModel) {
+            console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id} persisted; trying fallback model ${fallbackModel}.`);
+            const { result: altResult } = await courseV2LLMCaller({
+              stage: STAGES.WRITER,
+              messages: correctionPrompt,
+              maxTokens: 1600,
+              allowWeb: false,
+              modelOverride: fallbackModel,
+            });
+            moduleLessons = normalizeLessonsOutput(tryParseJson(altResult?.content), module.id);
+          }
+        }
       }
 
       if (moduleLessons.length === 0) {
-        const fallbackModel = nextFallback(0);
-        if (fallbackModel) {
-          console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id} persisted; trying fallback model ${fallbackModel}.`);
-          const { result: altResult } = await courseV2LLMCaller({
-            stage: STAGES.WRITER,
-            messages: correctionPrompt,
-            maxTokens: 1600,
-            allowWeb: false,
-            modelOverride: fallbackModel,
-          });
-          const altLessons = normalizeLessonsOutput(tryParseJson(altResult?.content), module.id);
-          if (altLessons.length > 0) {
-            lessons.push(...altLessons);
-            continue;
-          }
-        }
         console.warn(`[courseV2][LESSONS] Lesson generation returned no lessons for module ${module.id}; using fallback.`);
         const fallback = buildFallbackLessons(modules, syllabus, [module.id]);
         lessons.push(...fallback.lessons);
-        continue;
+      } else {
+        lessons.push(...moduleLessons);
       }
-
-      lessons.push(...moduleLessons);
     }
 
     const lessonsPayload = { lessons };
@@ -834,9 +964,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
     }
 
     if (!parsed.success || parsed.data.lessons.length < 6) {
-      const reason = parsed.success
-        ? 'too few lessons'
-        : parsed.error.toString();
+      const reason = parsed.success ? 'too few lessons' : parsed.error.toString();
       console.warn(`[courseV2][LESSONS] Lesson plan invalid after repair (${reason}); using fallback lessons.`);
       const fallback = buildFallbackLessons(modules, syllabus);
       parsed = { success: true, data: fallback };
@@ -847,65 +975,8 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
       return parsed.data;
     } catch (error) {
       console.warn('[courseV2][LESSONS] Lesson constraint enforcement failed:', error?.message || error);
-      const errMsg = error?.message || '';
-      let patchedLessons = parsed.data.lessons;
-      let constraintFixed = false;
-      // Handle lesson count per module constraints
-      const countMatch = errMsg.match(/Module\s+([^ ]+)\s+must have between 2 and 4 lessons \(found (\d+)\)/);
-      if (countMatch) {
-        const moduleId = countMatch[1];
-        const foundCount = Number(countMatch[2] || 0);
-        if (foundCount < 2) {
-          console.warn(`[courseV2][LESSONS] Adding fallback lessons to module ${moduleId} to reach minimum lessons.`);
-          try {
-            const fixPlan = buildFallbackLessons(modules, syllabus, [moduleId]);
-            const newLessons = fixPlan.lessons || [];
-            const existingLessons = patchedLessons.filter(lesson => lesson.moduleId === moduleId);
-            if (existingLessons.length === 1 && newLessons.length > 0) {
-              // add one fallback lesson
-              patchedLessons.push(newLessons[0]);
-            } else if (existingLessons.length === 0) {
-              // add all fallback lessons (at least 2)
-              patchedLessons = patchedLessons.concat(newLessons);
-            }
-            constraintFixed = true;
-          } catch (e) {
-            console.error('[courseV2][LESSONS] Failed to build fallback lessons for module', moduleId, e);
-          }
-        } else if (foundCount > 4) {
-          console.warn(`[courseV2][LESSONS] Removing extra lessons from module ${moduleId} to meet maximum allowed.`);
-          const moduleLessons = patchedLessons.filter(lesson => lesson.moduleId === moduleId);
-          if (moduleLessons.length > 4) {
-            const extraLessons = moduleLessons.slice(4);
-            const extraIds = new Set(extraLessons.map(l => l.id));
-            patchedLessons = patchedLessons.filter(lesson => !(lesson.moduleId === moduleId && extraIds.has(lesson.id)));
-          }
-          constraintFixed = true;
-        }
-      }
-      // Handle other constraints: adjust lesson durations if out of range
-      if (/duration_min must be ~40-60/.test(errMsg)) {
-        patchedLessons.forEach(lesson => {
-          if (lesson.duration_min < 35) lesson.duration_min = 40;
-          if (lesson.duration_min > 70) lesson.duration_min = 60;
-        });
-        constraintFixed = true;
-      }
-      // If any fix applied, try enforcing again
-      if (constraintFixed) {
-        try {
-          const patchedPayload = { lessons: patchedLessons };
-          enforceLessonConstraints(patchedPayload, modules);
-          return patchedPayload;
-        } catch (finalError) {
-          console.warn('[courseV2][LESSONS] Lesson constraint enforcement failed after patch, using fallback lessons:', finalError);
-        }
-      }
-      // If unable to fix or fixes still not passing constraints, fallback on deterministic lessons
       const fallbackAll = buildFallbackLessons(modules, syllabus);
-      const validatedFallback = LessonsSchema.parse(fallbackAll);
-      enforceLessonConstraints(validatedFallback, modules);
-      return validatedFallback;
+      return fallbackAll;
     }
   } finally {
     logStageUsage('LESSONS', usageStart);
@@ -916,13 +987,16 @@ export async function generateAssessments(modules, lessons, syllabus) {
   const usageStart = captureUsageTotals();
   try {
     if (!modules?.modules || modules.modules.length === 0) {
-      throw new Error('Modules required to generate assessments');
+      console.warn('[courseV2] No modules for assessments; using fallback assessments.');
+      return buildFallbackAssessments({ modules: [] }, { lessons: [] }, syllabus || {});
     }
     if (!lessons?.lessons || lessons.lessons.length === 0) {
-      throw new Error('Lessons required to generate assessments');
+      console.warn('[courseV2] No lessons for assessments; using fallback assessments.');
+      return buildFallbackAssessments(modules, { lessons: [] }, syllabus || {});
     }
     if (!Array.isArray(syllabus?.outcomes) || syllabus.outcomes.length === 0) {
-      throw new Error('Syllabus outcomes required to generate assessments');
+      console.warn('[courseV2] No syllabus outcomes for assessments; using fallback assessments.');
+      return buildFallbackAssessments(modules, lessons, syllabus || {});
     }
 
     const lessonsByModule = modules.modules.map((module) => ({
@@ -1004,8 +1078,8 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
       }
 
       if (!repairOutcome.success) {
-        const errorMessage = repairOutcome.error?.toString?.() || 'Assessment repair failed validation.';
-        throw new Error(`Assessment generation failed validation: ${errorMessage}`);
+        console.warn('[courseV2][ASSESSMENTS] Assessment repair failed; using fallback assessments:', repairOutcome.error);
+        return buildFallbackAssessments(modules, lessons, syllabus || {});
       }
 
       return repairOutcome.data;
@@ -1017,6 +1091,9 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
   }
 }
 
+/**
+ * Hierarchical topic generation (already working well; do not touch its use).
+ */
 export async function generateHierarchicalTopics(input = {}) {
   const {
     university = null,
@@ -1113,7 +1190,6 @@ Using these as a starting point, produce an exam-aligned topic map with overview
     }
 
     const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics);
-
     return {
       overviewTopics,
       model: model || 'unknown',
@@ -1122,3 +1198,496 @@ Using these as a starting point, produce an exam-aligned topic map with overview
     logTopicsUsage(usageStart);
   }
 }
+
+/**
+ * Cross-link lessons with earlier lessons for reinforcement.
+ */
+export function crossLink(course) {
+  if (!course || !Array.isArray(course?.modules?.modules) || !Array.isArray(course?.lessons?.lessons)) {
+    return course;
+  }
+
+  const modulesArr = course.modules.modules;
+  const lessonsArr = course.lessons.lessons;
+  if (modulesArr.length === 0 || lessonsArr.length === 0) return course;
+
+  const moduleIndexById = new Map();
+  const moduleNodes = new Map();
+  modulesArr.forEach((module, index) => {
+    if (!module || !module.id) return;
+    moduleIndexById.set(module.id, index);
+    moduleNodes.set(
+      module.id,
+      new Set(Array.isArray(module.covers_nodes) ? module.covers_nodes : []),
+    );
+  });
+
+  const lessonsByModule = new Map();
+  modulesArr.forEach((module) => {
+    if (module?.id) lessonsByModule.set(module.id, []);
+  });
+  lessonsArr.forEach((lesson) => {
+    const bucket = lessonsByModule.get(lesson.moduleId);
+    if (bucket) bucket.push(lesson);
+  });
+
+  const topicNodeTitleById = new Map();
+  (course.syllabus?.topic_graph?.nodes || []).forEach((node) => {
+    if (node?.id) topicNodeTitleById.set(node.id, node.title || node.id);
+  });
+
+  const updatedLessons = lessonsArr.map((lesson) => {
+    const moduleId = lesson.moduleId;
+    const moduleIdx = moduleIndexById.get(moduleId);
+    if (moduleIdx == null) {
+      const { deduped, changed } = dedupeCrossRefsWithSeen(lesson.cross_refs);
+      return changed ? { ...lesson, cross_refs: deduped } : lesson;
+    }
+
+    const currentNodes = moduleNodes.get(moduleId);
+    if (!currentNodes || currentNodes.size === 0) {
+      const { deduped, changed } = dedupeCrossRefsWithSeen(lesson.cross_refs);
+      return changed ? { ...lesson, cross_refs: deduped } : lesson;
+    }
+
+    const {
+      deduped: baseCrossRefs,
+      seen,
+      changed: crossRefChanged,
+    } = dedupeCrossRefsWithSeen(lesson.cross_refs);
+    const additions = [];
+
+    for (let i = 0; i < moduleIdx; i += 1) {
+      const earlierModule = modulesArr[i];
+      if (!earlierModule?.id) continue;
+
+      const earlierNodes = moduleNodes.get(earlierModule.id);
+      if (!earlierNodes || earlierNodes.size === 0) continue;
+
+      const sharedNodeId = findFirstIntersection(currentNodes, earlierNodes);
+      if (!sharedNodeId) continue;
+
+      const sharedNodeTitle = topicNodeTitleById.get(sharedNodeId) || 'a prerequisite topic';
+      const priorLessons = lessonsByModule.get(earlierModule.id) || [];
+
+      for (const priorLesson of priorLessons) {
+        const targetId = priorLesson?.id;
+        if (!targetId || targetId === lesson.id || seen.has(targetId)) continue;
+
+        additions.push({
+          toLessonId: targetId,
+          reason: `prior exposure to ${sharedNodeTitle}`,
+        });
+        seen.add(targetId);
+      }
+    }
+
+    if (additions.length === 0 && !crossRefChanged) return lesson;
+
+    const newCrossRefs = [...baseCrossRefs, ...additions];
+    return {
+      ...lesson,
+      cross_refs: newCrossRefs,
+    };
+  });
+
+  return {
+    ...course,
+    lessons: {
+      ...course.lessons,
+      lessons: updatedLessons,
+    },
+  };
+}
+
+function dedupeCrossRefsWithSeen(crossRefs) {
+  const seen = new Set();
+  if (!Array.isArray(crossRefs)) {
+    return { deduped: [], seen, changed: Boolean(crossRefs) };
+  }
+
+  const deduped = [];
+  let changed = false;
+
+  for (const ref of crossRefs) {
+    if (!ref || typeof ref !== 'object') {
+      changed = true;
+      continue;
+    }
+    const target = ref.toLessonId;
+    if (!target) {
+      changed = true;
+      continue;
+    }
+    if (seen.has(target)) {
+      changed = true;
+      continue;
+    }
+    seen.add(target);
+    deduped.push(ref);
+  }
+
+  if (deduped.length !== crossRefs.length) changed = true;
+  return { deduped, seen, changed };
+}
+
+function findFirstIntersection(setA, setB) {
+  for (const value of setA) {
+    if (setB.has(value)) return value;
+  }
+  return null;
+}
+
+function applyCoursePatch(course, patch) {
+  if (!patch || typeof patch !== 'object') return course;
+
+  const cloned = { ...course };
+  if (patch.syllabus && typeof patch.syllabus === 'object') {
+    cloned.syllabus = mergeObjects(course.syllabus, patch.syllabus);
+  }
+  if (patch.modules && typeof patch.modules === 'object') {
+    cloned.modules = mergeObjects(course.modules, patch.modules);
+  }
+  if (patch.lessons && typeof patch.lessons === 'object') {
+    cloned.lessons = mergeObjects(course.lessons, patch.lessons);
+  }
+  if (patch.assessments && typeof patch.assessments === 'object') {
+    cloned.assessments = mergeObjects(course.assessments, patch.assessments);
+  }
+  return cloned;
+}
+
+function mergeObjects(original, patch) {
+  if (!original || typeof original !== 'object') return original;
+  const result = { ...original };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (!(key in original)) continue;
+    if (Array.isArray(original[key]) && Array.isArray(value)) {
+      result[key] = value;
+    } else if (
+      original[key] &&
+      typeof original[key] === 'object' &&
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      result[key] = mergeObjects(original[key], value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function validateFullCourse(course) {
+  SyllabusSchema.parse(course.syllabus);
+  ModulesSchema.parse(course.modules);
+  LessonsSchema.parse(course.lessons);
+  AssessmentsSchema.parse(course.assessments);
+}
+
+export async function criticAndRepair(course) {
+  const usageStart = captureUsageTotals();
+  try {
+    if (!course) return course;
+
+    const payload = {
+      syllabus: course.syllabus,
+      modules: course.modules,
+      lessons: course.lessons,
+      assessments: course.assessments,
+    };
+
+    const courseMessage = stringifyForPrompt(payload);
+    const messages = [
+      ...criticCourse(),
+      {
+        role: 'user',
+        content:
+          'Course package JSON: ' +
+          courseMessage +
+          ' Return critique with minimal revision_patch adhering to schemas (do NOT reduce modules below 4).',
+      },
+    ];
+
+    try {
+      const { result } = await courseV2LLMCaller({
+        stage: STAGES.CRITIC,
+        messages,
+        maxTokens: 2000,
+      });
+
+      const parsed = tryParseJson(result?.content);
+      if (!parsed || typeof parsed !== 'object') return course;
+
+      const revisionPatch = parsed.revision_patch;
+      if (!revisionPatch || typeof revisionPatch !== 'object') return course;
+
+      const patchedCourse = applyCoursePatch(course, revisionPatch);
+      try {
+        validateFullCourse(patchedCourse);
+        return patchedCourse;
+      } catch (error) {
+        console.warn('[courseV2] Critic patch rejected:', error?.message || error);
+        return course;
+      }
+    } catch (error) {
+      console.warn('[courseV2] Critic stage failed, returning original course:', error);
+      return course;
+    }
+  } finally {
+    logStageUsage('CRITIC', usageStart);
+  }
+}
+
+export function packageCourse(course) {
+  if (!course) {
+    throw new Error('Cannot package undefined course');
+  }
+
+  const lessons = Array.isArray(course?.lessons?.lessons) ? course.lessons.lessons : [];
+  let readingTime = 0;
+  let practiceTime = 0;
+
+  for (const lesson of lessons) {
+    const readingEntries = Array.isArray(lesson?.reading) ? lesson.reading : [];
+    for (const reading of readingEntries) {
+      if (reading && typeof reading === 'object') {
+        const est = Number.isInteger(reading?.est_min) ? reading.est_min : 12;
+        readingTime += est;
+      } else {
+        readingTime += 12;
+      }
+    }
+
+    const activities = Array.isArray(lesson?.activities) ? lesson.activities : [];
+    for (const activity of activities) {
+      if (!activity || typeof activity !== 'object') continue;
+      switch (activity.type) {
+        case 'guided_example':
+          practiceTime += DEFAULT_MIN.guided_example;
+          break;
+        case 'problem_set':
+          practiceTime += DEFAULT_MIN.problem_set;
+          break;
+        case 'discussion':
+          practiceTime += DEFAULT_MIN.discussion;
+          break;
+        case 'project_work':
+          practiceTime += DEFAULT_MIN.problem_set;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  const videoTime = 0;
+  const study_time_min = {
+    reading: readingTime,
+    video: videoTime,
+    practice: practiceTime,
+    total: readingTime + videoTime + practiceTime,
+  };
+
+  const packaged = {
+    syllabus: course.syllabus,
+    modules: course.modules,
+    lessons: course.lessons,
+    assessments: course.assessments,
+    study_time_min,
+  };
+
+  const parsed = CoursePackageSchema.safeParse(packaged);
+  if (!parsed.success) {
+    console.warn('[courseV2] CoursePackageSchema validation failed in packageCourse, returning unparsed package:', parsed.error);
+    return packaged;
+  }
+  return parsed.data;
+}
+
+function normalizeGeneratorOptions(input, maybeUserPrefs = {}) {
+  if (
+    input &&
+    typeof input === 'object' &&
+    !Array.isArray(input) &&
+    (input.courseSelection ||
+      input.syllabusText ||
+      input.examFormatDetails ||
+      input.attachments ||
+      input.topics ||
+      input.topicFamiliarity ||
+      input.finishByDate ||
+      input.userPrefs)
+  ) {
+    return {
+      ...input,
+      userPrefs: input.userPrefs ?? maybeUserPrefs ?? {},
+    };
+  }
+
+  return {
+    courseSelection: input || {},
+    userPrefs: maybeUserPrefs || {},
+  };
+}
+
+function buildMinimalFallbackCourse(options) {
+  const { courseSelection = {}, topics = [] } = options || {};
+  const { title: courseName, college: university } = courseSelection || {};
+
+  const topicStrings =
+    Array.isArray(topics) && topics.length > 0 ? topics : [courseName || 'Course overview'];
+
+  const nodes = topicStrings.map((topic, index) => ({
+    id: `t${index + 1}`,
+    title: topic,
+    description: `Key topic: ${topic}`,
+  }));
+
+  while (nodes.length < 4) {
+    const idx = nodes.length + 1;
+    nodes.push({
+      id: `t${idx}`,
+      title: `Additional topic ${idx}`,
+      description: 'Auto-generated supporting topic.',
+    });
+  }
+
+  const syllabus = {
+    title: courseName || 'Custom Course',
+    university: university || null,
+    topic_graph: {
+      nodes,
+      edges: [],
+    },
+    outcomes: [
+      `Gain a working understanding of ${courseName || 'the subject'}.`,
+      'Be able to tackle representative practice questions.',
+    ],
+    sources: [],
+  };
+
+  const modulesPlan = buildFallbackModulePlanFromTopics(nodes);
+  const lessonsArr = [];
+  for (const module of modulesPlan.modules) {
+    lessonsArr.push({
+      id: `${module.id}-lesson-1`,
+      moduleId: module.id,
+      title: `${module.title} – overview`,
+      objectives: [`Understand basic ideas in ${module.title}.`],
+      duration_min: 45,
+      reading: [],
+      activities: [],
+      bridge_from: [],
+      bridge_to: [],
+      cross_refs: [],
+    });
+    lessonsArr.push({
+      id: `${module.id}-lesson-2`,
+      moduleId: module.id,
+      title: `${module.title} – practice`,
+      objectives: [`Practice core problems in ${module.title}.`],
+      duration_min: 45,
+      reading: [],
+      activities: [],
+      bridge_from: [],
+      bridge_to: [],
+      cross_refs: [],
+    });
+  }
+  const lessons = { lessons: lessonsArr };
+  const assessments = buildFallbackAssessments(modulesPlan, lessons, syllabus);
+
+  const study_time_min = {
+    reading: 0,
+    video: 0,
+    practice: modulesPlan.modules.length * DEFAULT_MIN.problem_set,
+    total: modulesPlan.modules.length * DEFAULT_MIN.problem_set,
+  };
+
+  const course = {
+    syllabus,
+    modules: modulesPlan,
+    lessons,
+    assessments,
+    study_time_min,
+  };
+  const parsed = CoursePackageSchema.safeParse(course);
+  if (parsed.success) return parsed.data;
+  console.warn('[courseV2] Minimal fallback course failed CoursePackageSchema validation; returning raw fallback.', parsed.error);
+  return course;
+}
+
+/**
+ * MAIN ENTRY POINT
+ */
+export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) {
+  const options = normalizeGeneratorOptions(optionsOrSelection, maybeUserPrefs);
+
+  if (customCourseGenerator) {
+    try {
+      const result = await customCourseGenerator(options);
+      const parsed = CoursePackageSchema.safeParse(result);
+      if (parsed.success) return parsed.data;
+      console.warn('[courseV2] Custom generator result failed CoursePackageSchema validation; returning raw result.', parsed.error);
+      return result;
+    } catch (error) {
+      console.error('[courseV2] Custom course generator threw; falling back to built-in generator:', error);
+    }
+  }
+
+  try {
+    const {
+      courseSelection = {},
+      userPrefs = {},
+      topics = [],
+      topicFamiliarity = [],
+      syllabusText,
+      examFormatDetails,
+      attachments = [],
+      finishByDate,
+    } = options;
+
+    const { college: university, title: courseName } = courseSelection || {};
+
+    const syllabus = await synthesizeSyllabus({
+      university,
+      courseName,
+      syllabusText,
+      examFormatDetails,
+      topics,
+      attachments,
+    });
+
+    const modules = await planModulesFromGraph(syllabus);
+    const lessons = await designLessons(modules, syllabus);
+    const assessments = await generateAssessments(modules, lessons, syllabus);
+
+    let course = {
+      syllabus,
+      modules,
+      lessons,
+      assessments,
+    };
+
+    course = crossLink(course);
+    course = await criticAndRepair(course);
+
+    const packaged = packageCourse(course);
+    const parsed = CoursePackageSchema.safeParse(packaged);
+    if (parsed.success) return parsed.data;
+
+    console.warn('[courseV2] Final CoursePackageSchema validation failed; returning unparsed package:', parsed.error);
+    return packaged;
+  } catch (error) {
+    console.error('[courseV2] generateCourseV2 pipeline failed, using minimal fallback course:', error);
+    return buildMinimalFallbackCourse(options);
+  }
+}
+
+export const __courseV2Internals = {
+  validateModuleCoverage,
+  buildFallbackModulePlanFromTopics,
+};
