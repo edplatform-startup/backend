@@ -24,6 +24,11 @@ const DEFAULT_MIN = {
   discussion: Number(process.env.DEFAULT_ACTIVITY_MIN_DISCUSSION || 10),
 };
 
+const IDEAL_MIN_MODULES = 6;
+const IDEAL_MAX_MODULES = 10;
+const FALLBACK_MIN_MODULES = 4;
+const FALLBACK_MAX_MODULES = 10;
+
 function captureUsageTotals() {
   try {
     return getCostTotals();
@@ -113,12 +118,79 @@ function ensureSyllabusMinimums(syllabus) {
   }
 }
 
-function validateModuleCoverage(modulesPlan, syllabus) {
-  if (!modulesPlan?.modules || modulesPlan.modules.length < 6 || modulesPlan.modules.length > 10) {
-    throw new Error('Module plan must include between 6 and 10 modules.');
+function extractTopicNodesFromSyllabus(syllabus) {
+  if (!Array.isArray(syllabus?.topic_graph?.nodes)) {
+    return [];
+  }
+  return syllabus.topic_graph.nodes;
+}
+
+function buildFallbackModulePlanFromTopics(topicNodes) {
+  if (!Array.isArray(topicNodes) || topicNodes.length === 0) {
+    throw new Error('Cannot build modules: no topics available.');
   }
 
-  const nodeIds = new Set((syllabus.topic_graph.nodes || []).map((node) => node.id));
+  const idealCount = Math.min(
+    FALLBACK_MAX_MODULES,
+    Math.max(FALLBACK_MIN_MODULES, Math.ceil(topicNodes.length / 3)),
+  );
+
+  const modules = [];
+  const buckets = Array.from({ length: idealCount }, () => []);
+  topicNodes.forEach((node, index) => {
+    buckets[index % idealCount].push(node);
+  });
+
+  for (const slice of buckets) {
+    if (!slice.length) continue;
+    const moduleNumber = modules.length + 1;
+    const first = slice[0] || {};
+    const primaryLabel = first.title || first.name || first.id || `Concept ${moduleNumber}`;
+    const coveredTitles = slice.map((node) => node.title || node.name || node.id);
+    const previousId = modules.length === 0 ? null : modules[modules.length - 1].id;
+    modules.push({
+      id: `fallback_module_${moduleNumber}`,
+      title: `Module ${moduleNumber}: ${primaryLabel}`,
+      description: `Learn and practice ${slice.length} key concept(s) related to ${primaryLabel}.`,
+      dependsOn: previousId ? [previousId] : [],
+      outcomes: [`Master the concepts spanning ${coveredTitles.join(', ')}`],
+      hours_estimate: Math.max(6, slice.length * 3),
+      covers_nodes: slice.map((node) => node.id).filter(Boolean),
+    });
+  }
+
+  if (modules.length === 0) {
+    throw new Error('Fallback module builder produced no modules.');
+  }
+
+  return { modules };
+}
+
+function ensureModulePlanHasModules(plan, syllabus) {
+  if (Array.isArray(plan?.modules) && plan.modules.length > 0) {
+    return plan;
+  }
+
+  console.warn('[courseV2] Module planner returned 0 modules, falling back to deterministic plan.');
+  const topics = extractTopicNodesFromSyllabus(syllabus);
+  return buildFallbackModulePlanFromTopics(topics);
+}
+
+function validateModuleCoverage(modulesPlan, syllabus) {
+  const modules = Array.isArray(modulesPlan?.modules) ? modulesPlan.modules : [];
+  const count = modules.length;
+
+  if (count === 0) {
+    throw new Error('Module plan must include at least one module.');
+  }
+
+  if (count < IDEAL_MIN_MODULES || count > IDEAL_MAX_MODULES) {
+    console.warn(
+      `[courseV2] module count ${count} is outside the recommended ${IDEAL_MIN_MODULES}-${IDEAL_MAX_MODULES} range; proceeding anyway.`,
+    );
+  }
+
+  const nodeIds = new Set((syllabus?.topic_graph?.nodes || []).map((node) => node.id));
   for (const module of modulesPlan.modules) {
     if (!Array.isArray(module?.covers_nodes) || module.covers_nodes.length === 0) {
       throw new Error(`Module ${module?.id || '<unknown>'} missing covers_nodes.`);
@@ -336,8 +408,9 @@ Choose or merge into the best single module plan JSON.`,
 
     const parsed = ModulesSchema.safeParse(tryParseJson(selected?.content));
     if (parsed.success) {
-      validateModuleCoverage(parsed.data, syllabus);
-      return parsed.data;
+      const normalizedPlan = ensureModulePlanHasModules(parsed.data, syllabus);
+      validateModuleCoverage(normalizedPlan, syllabus);
+      return normalizedPlan;
     }
 
     const repairMessages = [
@@ -361,8 +434,9 @@ Original: ${selected?.content ?? ''}`,
       throw new Error(`Module plan failed validation: ${repairedParsed.error.toString()}`);
     }
 
-    validateModuleCoverage(repairedParsed.data, syllabus);
-    return repairedParsed.data;
+    const repairedPlan = ensureModulePlanHasModules(repairedParsed.data, syllabus);
+    validateModuleCoverage(repairedPlan, syllabus);
+    return repairedPlan;
   } finally {
     logStageUsage('MODULES', usageStart);
   }
@@ -898,3 +972,8 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
   const packaged = packageCourse(course);
   return CoursePackageSchema.parse(packaged);
 }
+
+export const __courseV2Internals = {
+  validateModuleCoverage,
+  buildFallbackModulePlanFromTopics,
+};
