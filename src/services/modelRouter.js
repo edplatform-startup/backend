@@ -12,10 +12,10 @@ export const STAGES = Object.freeze({
 
 const { courseV2Models = {} } = runtimeConfig;
 
-const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-2.5-flash';
-const writerModel = courseV2Models.lessons || process.env.MODEL_WRITER || 'google/gemini-2.5-flash-mini';
+const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4-fast';
+const writerModel = courseV2Models.lessons || process.env.MODEL_WRITER || 'x-ai/grok-4-fast';
 const assessorModel = courseV2Models.modules || plannerModel;
-const criticModel = process.env.MODEL_CRITIC || courseV2Models.modules || 'google/gemini-2.5-flash';
+const criticModel = process.env.MODEL_CRITIC || courseV2Models.modules || 'x-ai/grok-4-fast';
 const topicsModel =
   courseV2Models.topics ||
   process.env.MODEL_TOPICS ||
@@ -70,7 +70,7 @@ const resolvedFallbacks = [courseV2Models.fallback, courseV2Models.secondaryFall
 
 export const FALLBACKS = resolvedFallbacks.length
   ? resolvedFallbacks
-  : ['anthropic/claude-3.5-sonnet', 'meta-llama/Meta-Llama-3.1-70B-Instruct'];
+  : ['anthropic/claude-3.5-sonnet', 'meta-llama/llama-3.3-70b-instruct:free'];
 
 export function nextFallback(i) {
   return FALLBACKS[i] || null;

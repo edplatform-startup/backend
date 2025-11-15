@@ -52,18 +52,18 @@ function normalizeModel(value, fallback) {
 }
 
 const courseV2Defaults = {
-  defaultModel: normalizeModel(rawEnv.COURSE_V2_DEFAULT_MODEL, 'google/gemini-2.5-flash-mini'),
-  syllabusModel: normalizeModel(rawEnv.COURSE_V2_SYLLABUS_MODEL, rawEnv.MODEL_PLANNER || 'google/gemini-2.5-flash'),
-  modulesModel: normalizeModel(rawEnv.COURSE_V2_MODULES_MODEL, rawEnv.MODEL_PLANNER || 'google/gemini-2.5-flash'),
-  lessonsModel: normalizeModel(rawEnv.COURSE_V2_LESSONS_MODEL, rawEnv.MODEL_WRITER || 'google/gemini-2.5-flash-mini'),
+  defaultModel: normalizeModel(rawEnv.COURSE_V2_DEFAULT_MODEL, 'x-ai/grok-4-fast'),
+  syllabusModel: normalizeModel(rawEnv.COURSE_V2_SYLLABUS_MODEL, rawEnv.MODEL_PLANNER || 'x-ai/grok-4-fast'),
+  modulesModel: normalizeModel(rawEnv.COURSE_V2_MODULES_MODEL, rawEnv.MODEL_PLANNER || 'x-ai/grok-4-fast'),
+  lessonsModel: normalizeModel(rawEnv.COURSE_V2_LESSONS_MODEL, rawEnv.MODEL_WRITER || 'x-ai/grok-4-fast'),
   topicsModel: normalizeModel(
     rawEnv.COURSE_V2_TOPICS_MODEL,
-    rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'google/gemini-2.5-flash-mini',
+    rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'x-ai/grok-4-fast',
   ),
   fallbackModel: normalizeModel(rawEnv.COURSE_V2_FALLBACK_MODEL, 'anthropic/claude-3.5-sonnet'),
   secondaryFallbackModel: normalizeModel(
     rawEnv.COURSE_V2_SECONDARY_FALLBACK_MODEL,
-    'meta-llama/Meta-Llama-3.1-70B-Instruct',
+    'meta-llama/llama-3.3-70b-instruct:free',
   ),
 };
 

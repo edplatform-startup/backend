@@ -181,7 +181,7 @@ Base URL (production): https://api.kognolearn.com
           ]
         }
       ],
-      "model": "google/gemini-2.5-flash-mini"
+      "model": "x-ai/grok-4-fast"
     }
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
@@ -204,7 +204,7 @@ Base URL (production): https://api.kognolearn.com
       - Lesson design enforces strict JSON (quoted URLs, no trailing text) and, if parsing/validation fails or produces <6 lessons, it deterministically builds a compliant fallback plan so every module keeps 2–4 lessons.
       - Assessment generation similarly falls back to deterministic weekly quizzes, capstone, and exam blueprint whenever LLM output cannot be repaired, so the full course package is always returned.
     - Tool calls originating from OpenRouter plugins (e.g., xAI web search) are intercepted server-side and resolved without redefining the same tools in the payload, so Anthropic and xAI runs both succeed.
-  3. Updates the stored course row with `{ version: "2.0", model: "google/gemini-2.5-pro", generated_at, inputs, package, assets }`.
+  3. Updates the stored course row with `{ version: "2.0", model: "x-ai/grok-4-fast", generated_at, inputs, package, assets }`.
   4. On failure the placeholder row is deleted so retries can reuse the inputs.
 - Responses:
   - 201 Created → `{ "courseId": "<uuid>" }`
@@ -307,7 +307,7 @@ Base URL (production): https://api.kognolearn.com
   - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
   - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "google/gemini-2.5-flash-mini" }`
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`
