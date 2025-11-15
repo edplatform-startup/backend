@@ -1,5 +1,5 @@
 import { callStageLLM } from './llmCall.js';
-import { STAGES } from './modelRouter.js';
+import { STAGES, nextFallback } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import {
   plannerSyllabus,
@@ -13,6 +13,7 @@ import {
   SyllabusSchema,
   ModulesSchema,
   LessonsSchema,
+  LessonSchema,
   AssessmentsSchema,
   CoursePackageSchema,
 } from '../schemas/courseV2.js';
@@ -335,8 +336,12 @@ function enforceLessonConstraints(lessonsPlan, modulesPlan) {
   }
 }
 
-function buildFallbackLessons(modulesPlan, syllabus) {
-  const modules = Array.isArray(modulesPlan?.modules) ? modulesPlan.modules : [];
+function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
+  const allModules = Array.isArray(modulesPlan?.modules) ? modulesPlan.modules : [];
+  const modules = Array.isArray(limitModuleIds) && limitModuleIds.length
+    ? allModules.filter((module) => module && limitModuleIds.includes(module.id))
+    : allModules;
+
   if (modules.length === 0) {
     throw new Error('Cannot build fallback lessons: no modules provided.');
   }
@@ -414,13 +419,49 @@ function buildFallbackLessons(modulesPlan, syllabus) {
 
   const payload = { lessons };
   try {
-    const validated = LessonsSchema.parse(payload);
-    enforceLessonConstraints(validated, modulesPlan);
-    return validated;
+    if (!limitModuleIds) {
+      const validated = LessonsSchema.parse(payload);
+      enforceLessonConstraints(validated, modulesPlan);
+      return validated;
+    }
+
+    lessons.forEach((lesson) => LessonSchema.parse(lesson));
+    enforceLessonConstraints(payload, { modules });
+    return payload;
   } catch (error) {
-    console.error('[courseV2] Fallback lesson builder produced invalid plan:', error);
+    console.error('[courseV2][LESSONS] Fallback lesson builder produced invalid plan:', error);
     throw error;
   }
+}
+
+function buildModuleLessonPrompt(module, relatedNodes, correctionDirective = '') {
+  const baseContent = `Module:
+${stringifyForPrompt(module)}
+
+Related nodes (with summaries):
+${stringifyForPrompt(relatedNodes)}
+
+Requirements:
+- Produce 2-4 lessons for this module.
+- Duration 40-60 minutes each.
+- Each lesson references readings (<=3) with credible URLs.
+- Include activities referencing allowed types.
+- Ensure objectives align with module outcomes.
+Return ONLY JSON lessons array for this module.`;
+
+  const correctionBlock = correctionDirective
+    ? `
+
+CORRECTION: ${correctionDirective}`
+    : '';
+
+  return [
+    ...writerLessons(),
+    {
+      role: 'user',
+      content: `${baseContent}${correctionBlock}`,
+    },
+  ];
 }
 
 function enforceAssessmentConstraints(assessmentsPlan, modulesPlan, lessonsPlan, syllabus) {
@@ -522,6 +563,29 @@ function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
   } catch (error) {
     console.error('[courseV2] Fallback assessment builder produced invalid plan:', error);
     throw error;
+  }
+}
+
+async function attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus, modelOverride = null }) {
+  const { result } = await courseV2LLMCaller({
+    stage: STAGES.ASSESSOR,
+    messages: repairMessages,
+    maxTokens: 2400,
+    allowWeb: false,
+    modelOverride,
+  });
+
+  const repairedRaw = tryParseJson(result?.content);
+  const parsedAttempt = AssessmentsSchema.safeParse(repairedRaw);
+  if (!parsedAttempt.success) {
+    return { success: false, error: parsedAttempt.error };
+  }
+
+  try {
+    enforceAssessmentConstraints(parsedAttempt.data, modules, lessons, syllabus);
+    return { success: true, data: parsedAttempt.data };
+  } catch (error) {
+    return { success: false, error };
   }
 }
 
@@ -679,40 +743,39 @@ export async function designLessons(modules, syllabus) {
       const relatedNodes = (module.covers_nodes || [])
         .map((nodeId) => nodeMap.get(nodeId))
         .filter(Boolean);
-
-      const modulePrompt = [
-        ...writerLessons(),
-        {
-          role: 'user',
-          content: `Module:
-${stringifyForPrompt(module)}
-
-Related nodes (with summaries):
-${stringifyForPrompt(relatedNodes)}
-
-Requirements:
-- Produce 2-4 lessons for this module.
-- Duration 40-60 minutes each.
-- Each lesson references readings (<=3) with credible URLs.
-- Include activities referencing allowed types.
-- Ensure objectives align with module outcomes.
-Return ONLY JSON lessons array for this module.`,
-        },
-      ];
-
+      const primaryPrompt = buildModuleLessonPrompt(module, relatedNodes);
       const { result } = await courseV2LLMCaller({
         stage: STAGES.WRITER,
-        messages: modulePrompt,
+        messages: primaryPrompt,
         maxTokens: 2000,
         allowWeb: true,
       });
 
-      const parsedLessons = tryParseJson(result?.content);
-      const moduleLessons = normalizeLessonsOutput(parsedLessons, module.id);
+      let moduleLessons = normalizeLessonsOutput(tryParseJson(result?.content), module.id);
+
       if (moduleLessons.length === 0) {
-        console.warn(`[courseV2] Lesson generation returned no lessons for module ${module.id}; using fallback.`);
-        return buildFallbackLessons(modules, syllabus);
+        console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id}; retrying with correction prompt.`);
+        const correctionPrompt = buildModuleLessonPrompt(
+          module,
+          relatedNodes,
+          'The previous output was invalid JSON or contained zero lessons. Return ONLY a JSON array (or {"lessons": [...]}) of lessons for this module with all required fields (id, moduleId, title, objectives, duration_min, reading[], activities[], bridge_from[], bridge_to[], cross_refs[]). No commentary, markdown, or extra text.',
+        );
+        const { result: retryResult } = await courseV2LLMCaller({
+          stage: STAGES.WRITER,
+          messages: correctionPrompt,
+          maxTokens: 1600,
+          allowWeb: false,
+        });
+        moduleLessons = normalizeLessonsOutput(tryParseJson(retryResult?.content), module.id);
       }
+
+      if (moduleLessons.length === 0) {
+        console.warn(`[courseV2][LESSONS] Lesson generation returned no lessons for module ${module.id}; using fallback.`);
+        const fallback = buildFallbackLessons(modules, syllabus, [module.id]);
+        lessons.push(...fallback.lessons);
+        continue;
+      }
+
       lessons.push(...moduleLessons);
     }
 
@@ -744,7 +807,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
       const reason = parsed.success
         ? 'too few lessons'
         : parsed.error.toString();
-      console.warn(`[courseV2] Lesson plan invalid after repair (${reason}); using fallback lessons.`);
+      console.warn(`[courseV2][LESSONS] Lesson plan invalid after repair (${reason}); using fallback lessons.`);
       const fallback = buildFallbackLessons(modules, syllabus);
       parsed = { success: true, data: fallback };
     }
@@ -753,7 +816,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
       enforceLessonConstraints(parsed.data, modules);
       return parsed.data;
     } catch (error) {
-      console.warn('[courseV2] Lesson constraint enforcement failed, using fallback lessons:', error);
+      console.warn('[courseV2][LESSONS] Lesson constraint enforcement failed, using fallback lessons:', error);
       const fallback = buildFallbackLessons(modules, syllabus);
       const validatedFallback = LessonsSchema.parse(fallback);
       enforceLessonConstraints(validatedFallback, modules);
@@ -809,7 +872,8 @@ Return ONLY JSON.`,
     const { result } = await courseV2LLMCaller({
       stage: STAGES.ASSESSOR,
       messages,
-      maxTokens: 2200,
+      maxTokens: 3000,
+      allowWeb: false,
     });
 
     const rawAssessments = tryParseJson(result?.content);
@@ -838,18 +902,28 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
         },
       ];
 
-      const { result: repaired } = await courseV2LLMCaller({
-        stage: STAGES.ASSESSOR,
-        messages: repairMessages,
-        maxTokens: 2000,
-      });
+      let repairOutcome = await attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus });
 
-      const repairedRaw = tryParseJson(repaired?.content);
-      parsed = AssessmentsSchema.safeParse(repairedRaw);
-      if (!parsed.success) {
-        throw new Error(`Assessment generation failed validation: ${parsed.error.toString()}`);
+      if (!repairOutcome.success) {
+        const fallbackModel = nextFallback(0);
+        if (fallbackModel) {
+          console.warn('[courseV2][ASSESSMENTS] Assessment repair failed, trying fallback model.');
+          repairOutcome = await attemptAssessmentRepair({
+            repairMessages,
+            modules,
+            lessons,
+            syllabus,
+            modelOverride: fallbackModel,
+          });
+        }
       }
-      enforceAssessmentConstraints(parsed.data, modules, lessons, syllabus);
+
+      if (!repairOutcome.success) {
+        const errorMessage = repairOutcome.error?.toString?.() || 'Assessment repair failed validation.';
+        throw new Error(`Assessment generation failed validation: ${errorMessage}`);
+      }
+
+      return repairOutcome.data;
     }
 
     return parsed.data;
@@ -1195,7 +1269,7 @@ Return critique with minimal revision_patch adhering to schemas.`,
       validateFullCourse(patchedCourse);
       return patchedCourse;
     } catch (error) {
-      console.warn('[courseV2] Critic patch rejected:', error?.message || error);
+      console.warn('[courseV2][CRITIC] Critic patch rejected:', error?.message || error);
       return course;
     }
   } finally {
@@ -1383,7 +1457,7 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
   try {
     assessments = await generateAssessments(modules, lessons, syllabus);
   } catch (error) {
-    console.warn('[courseV2] Assessment generation failed, using fallback assessments:', error);
+    console.warn('[courseV2][ASSESSMENTS] Assessment generation failed, using fallback assessments:', error);
     assessments = buildFallbackAssessments(modules, lessons, syllabus);
   }
   let course = { syllabus, modules, lessons, assessments };

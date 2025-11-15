@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   designLessons,
+  generateAssessments,
   generateCourseV2,
   __courseV2Internals,
   __setCourseV2LLMCaller,
@@ -127,6 +128,60 @@ test('designLessons falls back when aggregated lessons stay under schema minimum
   }
 });
 
+test('designLessons only falls back for the module that fails twice', async (t) => {
+  const syllabus = createSyllabus();
+  const modules = buildModulePlan(4, syllabus);
+  const buildLessons = (moduleId) => JSON.stringify([
+    {
+      id: `${moduleId}-custom-1`,
+      moduleId,
+      title: `${moduleId} Lesson 1`,
+      objectives: ['Objective A'],
+      duration_min: 45,
+      reading: [{ title: 'Ref', url: 'https://example.com/ref' }],
+      activities: [],
+      bridge_from: [],
+      bridge_to: [],
+      cross_refs: [],
+    },
+    {
+      id: `${moduleId}-custom-2`,
+      moduleId,
+      title: `${moduleId} Lesson 2`,
+      objectives: ['Objective B'],
+      duration_min: 50,
+      reading: [{ title: 'Ref', url: 'https://example.com/ref2' }],
+      activities: [],
+      bridge_from: [],
+      bridge_to: [],
+      cross_refs: [],
+    },
+  ]);
+
+  const responses = [
+    { content: buildLessons('module-1') },
+    { content: '' },
+    { content: '[]' },
+    { content: buildLessons('module-3') },
+    { content: buildLessons('module-4') },
+  ];
+
+  __setCourseV2LLMCaller(async () => ({ result: responses.shift() || { content: '[]' } }));
+  t.after(() => __resetCourseV2LLMCaller());
+
+  const lessonsPlan = await designLessons(modules, syllabus);
+  const module1Lessons = lessonsPlan.lessons.filter((lesson) => lesson.moduleId === 'module-1');
+  assert.equal(module1Lessons.length, 2);
+  assert.deepEqual(
+    module1Lessons.map((lesson) => lesson.id).sort(),
+    ['module-1-custom-1', 'module-1-custom-2']
+  );
+
+  const module2Lessons = lessonsPlan.lessons.filter((lesson) => lesson.moduleId === 'module-2');
+  assert.ok(module2Lessons.length >= 2 && module2Lessons.length <= 4);
+  assert.ok(module2Lessons.every((lesson) => lesson.id.startsWith('module-2-fallback')));
+});
+
 test('generateCourseV2 returns a valid course when lesson JSON is broken', async (t) => {
   const syllabusPayload = createSyllabus();
   const modulePlan = buildModulePlan(4, syllabusPayload);
@@ -186,4 +241,80 @@ test('generateCourseV2 returns a valid course when lesson JSON is broken', async
   const course = await generateCourseV2({ courseSelection: { college: 'Test U', title: 'Fallback 101' } });
   assert.ok(course.lessons.lessons.length >= 6);
   CoursePackageSchema.parse(course);
+});
+
+test('generateAssessments attempts fallback repair before using deterministic assessments', async (t) => {
+  const syllabus = createSyllabus();
+  const modules = buildModulePlan(4, syllabus);
+  const lessons = {
+    lessons: modules.modules.flatMap((module) => [
+      {
+        id: `${module.id}-lesson-1`,
+        moduleId: module.id,
+        title: `${module.title} Lesson 1`,
+        objectives: ['Obj'],
+        duration_min: 45,
+        reading: [],
+        activities: [],
+        bridge_from: [],
+        bridge_to: [],
+        cross_refs: [],
+      },
+      {
+        id: `${module.id}-lesson-2`,
+        moduleId: module.id,
+        title: `${module.title} Lesson 2`,
+        objectives: ['Obj'],
+        duration_min: 50,
+        reading: [],
+        activities: [],
+        bridge_from: [],
+        bridge_to: [],
+        cross_refs: [],
+      },
+    ]),
+  };
+
+  const lessonAnchors = lessons.lessons.map((lesson) => lesson.id);
+  const validAssessments = {
+    weekly_quizzes: modules.modules.slice(0, 2).map((module) => ({
+      moduleId: module.id,
+      items: Array.from({ length: 3 }, (_, idx) => ({
+        type: 'mcq',
+        question: `${module.title} check ${idx + 1}`,
+        options: ['A', 'B', 'C'],
+        answerIndex: 0,
+        anchors: [lessonAnchors[idx]],
+      })),
+    })),
+    project: {
+      title: 'Capstone',
+      brief: 'Apply everything.',
+      milestones: ['Draft', 'Submit'],
+      rubric: 'Clarity and depth.',
+    },
+    exam_blueprint: {
+      sections: [
+        { title: 'Concepts', weight_pct: 60, outcomes: [syllabus.outcomes[0]] },
+        { title: 'Application', weight_pct: 40, outcomes: [syllabus.outcomes[1]] },
+      ],
+    },
+  };
+
+  const responses = [
+    { content: 'not json' },
+    { content: JSON.stringify({ weekly_quizzes: [] }) },
+    { content: JSON.stringify(validAssessments) },
+  ];
+  const overrideCalls = [];
+
+  __setCourseV2LLMCaller(async (options) => {
+    overrideCalls.push(options?.modelOverride ?? null);
+    return { result: responses.shift() || { content: '{}' } };
+  });
+  t.after(() => __resetCourseV2LLMCaller());
+
+  const assessments = await generateAssessments(modules, lessons, syllabus);
+  assert.deepEqual(assessments, validAssessments);
+  assert.equal(overrideCalls.filter(Boolean).length, 1, 'fallback model was used exactly once');
 });

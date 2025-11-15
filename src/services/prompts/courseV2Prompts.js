@@ -50,7 +50,7 @@ export function assessorAssessments() {
     {
       role: 'system',
       content:
-        'Create assessments aligned to outcomes.\nweekly_quizzes: 3–6 items per module (MCQ or FRQ), each with anchors (lesson or node ids).\nproject: title, brief, milestones[], rubric.\nexam_blueprint: sections[] with weight_pct and outcomes[].\nReturn ONLY JSON.',
+        'Create assessments aligned to outcomes.\nweekly_quizzes: 3–6 items per module (MCQ or FRQ), each with anchors (lesson or node ids).\nproject: title, brief, milestones[], rubric.\nexam_blueprint: sections[] with weight_pct and outcomes[].\nKeep explanations/rubrics concise (≤3 sentences) to reduce token usage.\nReturn ONLY JSON with keys weekly_quizzes, project, exam_blueprint — no commentary.',
     },
   ];
 }
@@ -60,7 +60,7 @@ export function criticCourse() {
     {
       role: 'system',
       content:
-        'You are a strict course auditor. Identify coverage gaps, flow issues, alignment problems, and load imbalance.\nReturn JSON: {"issues":[...], "revision_patch": { ...minimal schema-conformant edits... } }',
+        'You are a strict course auditor. Identify coverage gaps, flow issues, alignment problems, and load imbalance.\nDo NOT violate CoursePackage schema constraints: keep at least the original module count (minimum 4), preserve required arrays/keys, and only adjust content within the existing structure.\nReturn JSON: {"issues":[...], "revision_patch": { ...minimal schema-conformant edits... } }',
     },
   ];
 }

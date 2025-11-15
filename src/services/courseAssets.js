@@ -309,70 +309,80 @@ function normalizeReadingJson(json) {
   return { title, body };
 }
 
-async function callReadingJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
-  let attempts = 0;
-  let correction = '';
-  while (attempts <= 1) {
-    const payload = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
-    let json;
-    try {
-      const exec = async ({ signal }) => {
-        const messages = [
-          { role: 'system', content: system },
-          { role: 'user', content: payload },
-        ];
+async function callReadingJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 60000 }) {
+  const runWithModel = async (modelName) => {
+    let attempts = 0;
+    let correction = '';
+    while (attempts <= 1) {
+      const payload = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
+      let json;
+      try {
+        const exec = async ({ signal }) => {
+          const messages = [
+            { role: 'system', content: system },
+            { role: 'user', content: payload },
+          ];
 
-        const enableWebSearch = true;
-        const effectiveTools = enableWebSearch ? [] : (tools || []);
-        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
-        const { content, message } = await executeOpenRouterChat({
-          apiKey,
-          model: READING_MODEL,
-          temperature: 0.2,
-          maxTokens: 1000,
-          reasoning: { enabled: true, effort: 'medium' },
-          tools: effectiveTools,
-          toolChoice: effectiveTools.length ? 'auto' : undefined,
-          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
-          attachments,
-          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
-          messages,
-          signal,
-          enableWebSearch,
-        });
+          const enableWebSearch = true;
+          const effectiveTools = enableWebSearch ? [] : (tools || []);
+          const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
+          const { content, message } = await executeOpenRouterChat({
+            apiKey,
+            model: modelName,
+            temperature: 0.2,
+            maxTokens: 1000,
+            reasoning: { enabled: true, effort: 'medium' },
+            tools: effectiveTools,
+            toolChoice: effectiveTools.length ? 'auto' : undefined,
+            maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
+            attachments,
+            ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
+            messages,
+            signal,
+            enableWebSearch,
+          });
 
-        if (message?.parsed && typeof message.parsed === 'object') {
-          return message.parsed;
-        }
+          if (message?.parsed && typeof message.parsed === 'object') {
+            return message.parsed;
+          }
 
-        const raw = normalizeContentParts(content);
-        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
-        try {
-          return JSON.parse(raw);
-        } catch (error) {
-          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
-        }
-      };
+          const raw = normalizeContentParts(content);
+          if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+          try {
+            return JSON.parse(raw);
+          } catch (error) {
+            throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+          }
+        };
 
-      json = await withTimeout((signal) => exec({ signal }), timeoutMs, 'reading-json');
-    } catch (error) {
-      if (attempts >= 1) throw error;
+        json = await withTimeout((signal) => exec({ signal }), timeoutMs, 'reading-json');
+      } catch (error) {
+        if (attempts >= 1) throw error;
+        attempts += 1;
+        correction = 'Return JSON { "title": "...", "body": "..." } with ≤800 words.';
+        continue;
+      }
+
+      const normalized = normalizeReadingJson(json);
+      if (normalized) return normalized;
+
+      if (attempts >= 1) {
+        const err = new Error('Reading JSON missing title/body');
+        err.statusCode = 502;
+        err.details = { json };
+        throw err;
+      }
       attempts += 1;
-      correction = 'Return JSON { "title": "...", "body": "..." } with ≤800 words.';
-      continue;
+      correction = 'Provide both title and Markdown body as JSON fields.';
     }
+    return null;
+  };
 
-    const normalized = normalizeReadingJson(json);
-    if (normalized) return normalized;
-
-    if (attempts >= 1) {
-      const err = new Error('Reading JSON missing title/body');
-      err.statusCode = 502;
-      err.details = { json };
-      throw err;
-    }
-    attempts += 1;
-    correction = 'Provide both title and Markdown body as JSON fields.';
+  try {
+    return await runWithModel(READING_MODEL);
+  } catch (primaryError) {
+    console.warn('[courseV2][ASSETS] reading-json primary model failed, retrying with fallback.');
+    return await runWithModel(READING_FALLBACK);
   }
 }
 
@@ -485,71 +495,81 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
   }
 }
 
-async function callPracticeExamJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 30000 }) {
-  let attempts = 0;
-  let correction = '';
-  while (attempts <= 2) {
-    const payload = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
-    let json;
-    try {
-      const exec = async ({ signal }) => {
-        const messages = [
-          { role: 'system', content: system },
-          { role: 'user', content: payload },
-        ];
+async function callPracticeExamJsonWithValidation({ apiKey, system, user, attachments = [], tools = [], timeoutMs = 60000 }) {
+  const runWithModel = async (modelName) => {
+    let attempts = 0;
+    let correction = '';
+    while (attempts <= 2) {
+      const payload = correction ? `${user}\n\nCORRECTION: ${correction}` : user;
+      let json;
+      try {
+        const exec = async ({ signal }) => {
+          const messages = [
+            { role: 'system', content: system },
+            { role: 'user', content: payload },
+          ];
 
-        const enableWebSearch = true;
-        const effectiveTools = enableWebSearch ? [] : (tools || []);
-        const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
-        const { content, message } = await executeOpenRouterChat({
-          apiKey,
-          model: PRACTICE_EXAM_MODEL,
-          temperature: 0.4,
-          maxTokens: 1200,
-          reasoning: { enabled: true, effort: 'high' },
-          tools: effectiveTools,
-          toolChoice: effectiveTools.length ? 'auto' : undefined,
-          maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
-          attachments,
-          ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
-          messages,
-          signal,
-          enableWebSearch,
-        });
+          const enableWebSearch = true;
+          const effectiveTools = enableWebSearch ? [] : (tools || []);
+          const shouldRequestJson = !enableWebSearch && effectiveTools.length === 0;
+          const { content, message } = await executeOpenRouterChat({
+            apiKey,
+            model: modelName,
+            temperature: 0.4,
+            maxTokens: 1200,
+            reasoning: { enabled: true, effort: 'high' },
+            tools: effectiveTools,
+            toolChoice: effectiveTools.length ? 'auto' : undefined,
+            maxToolIterations: effectiveTools.length ? DEFAULT_MAX_TOOL_ITERATIONS : undefined,
+            attachments,
+            ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
+            messages,
+            signal,
+            enableWebSearch,
+          });
 
-        if (message?.parsed && typeof message.parsed === 'object') {
-          return message.parsed;
-        }
+          if (message?.parsed && typeof message.parsed === 'object') {
+            return message.parsed;
+          }
 
-        const raw = normalizeContentParts(content);
-        if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
-        try {
-          return JSON.parse(raw);
-        } catch (error) {
-          throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
-        }
-      };
+          const raw = normalizeContentParts(content);
+          if (!raw) throw Object.assign(new Error('Empty JSON response'), { statusCode: 502 });
+          try {
+            return JSON.parse(raw);
+          } catch (error) {
+            throw Object.assign(new Error('Invalid JSON from model'), { statusCode: 502, raw });
+          }
+        };
 
-      json = await withTimeout((signal) => exec({ signal }), timeoutMs, 'practice-exam-json');
-    } catch (error) {
-      if (attempts >= 2) throw error;
+        json = await withTimeout((signal) => exec({ signal }), timeoutMs, 'practice-exam-json');
+      } catch (error) {
+        if (attempts >= 2) throw error;
+        attempts += 1;
+        correction = 'Return JSON { "mcq": [...], "frq": [...] } with detailed answers.';
+        continue;
+      }
+
+      if (json && typeof json === 'object' && (Array.isArray(json.mcq) || Array.isArray(json.frq))) {
+        return json;
+      }
+
+      if (attempts >= 2) {
+        const err = new Error('Practice exam JSON missing mcq/frq arrays');
+        err.statusCode = 502;
+        err.details = { json };
+        throw err;
+      }
       attempts += 1;
-      correction = 'Return JSON { "mcq": [...], "frq": [...] } with detailed answers.';
-      continue;
+      correction = 'Include both MCQ and FRQ arrays with answers.';
     }
+    return null;
+  };
 
-    if (json && typeof json === 'object' && (Array.isArray(json.mcq) || Array.isArray(json.frq))) {
-      return json;
-    }
-
-    if (attempts >= 2) {
-      const err = new Error('Practice exam JSON missing mcq/frq arrays');
-      err.statusCode = 502;
-      err.details = { json };
-      throw err;
-    }
-    attempts += 1;
-    correction = 'Include both MCQ and FRQ arrays with answers.';
+  try {
+    return await runWithModel(PRACTICE_EXAM_MODEL);
+  } catch (primaryError) {
+    console.warn('[courseV2][ASSETS] practice-exam-json primary model failed, retrying with fallback.');
+    return await runWithModel(PRACTICE_EXAM_FALLBACK);
   }
 }
 

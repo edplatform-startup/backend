@@ -1,7 +1,14 @@
 import { pickModel, shouldUseTools, nextFallback } from './modelRouter.js';
 import { executeOpenRouterChat, createBrowsePageTool } from './grokClient.js';
 
-export async function callStageLLM({ stage, messages, attachments = [], maxTokens = 1500, allowWeb = false }) {
+export async function callStageLLM({
+  stage,
+  messages,
+  attachments = [],
+  maxTokens = 1500,
+  allowWeb = false,
+  modelOverride = null,
+}) {
   let attempt = 0;
   let lastErr = null;
 
@@ -14,7 +21,7 @@ export async function callStageLLM({ stage, messages, attachments = [], maxToken
       frequency_penalty: frequencyPenalty,
       presence_penalty: presencePenalty,
     } = pickModel(stage);
-    const chosenModel = fallbackModel || model;
+    const chosenModel = (modelOverride && attempt === 0 ? modelOverride : null) || fallbackModel || model;
     const stageNeedsTools = shouldUseTools(stage);
     const useTools = stageNeedsTools || allowWeb;
     const enableWebSearch = allowWeb || /:online\b/.test(chosenModel);
