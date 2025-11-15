@@ -39,6 +39,7 @@ export async function callStageLLM({
         toolChoice: toolList.length ? 'auto' : undefined,
         maxToolIterations: toolList.length ? 1 : undefined,
         enableWebSearch,
+        stage,
         messages,
         attachments,
       });

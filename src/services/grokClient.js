@@ -388,7 +388,7 @@ function getPluginToolHandler(name) {
   return handler;
 }
 
-async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
+async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) {
   const MAX_RETRIES = 2;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     const shouldRetry = attempt < MAX_RETRIES;
@@ -410,6 +410,20 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
         const err = new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
         err.details = errorText;
         err.statusCode = response.status;
+        // Detect token limit errors from provider error text and annotate
+        try {
+          const t = String(errorText || '').toLowerCase();
+          if (/(token(s)? (limit|exceed|exceeded|too many|max_tokens|max tokens|maximum context length|context_length|context length))/.test(t)) {
+            err.isTokenLimit = true;
+            err.tokenLimitDetails = {
+              model: (body && (body.model || body.modelName)) || meta.model || 'unknown',
+              maxTokens: (body && body.max_tokens) || (body && body.maxTokens) || null,
+              stage: meta.stage || 'unknown',
+              originalMessage: errorText,
+            };
+            console.error('[openrouter][TOKEN] model hit token limit:', err.tokenLimitDetails);
+          }
+        } catch (ignore) {}
         if (shouldRetry && (response.status === 502 || response.status === 400)) {
           const backoff = 2000 * (attempt + 1);
           await new Promise((resolve) => setTimeout(resolve, backoff));
@@ -560,7 +574,20 @@ export async function executeOpenRouterChat(options = {}) {
 
     let payload;
     try {
-      payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal: effectiveSignal });
+      try {
+        payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal: effectiveSignal, meta: { stage: options?.stage || 'unknown', model: effectiveModel } });
+      } catch (error) {
+        // Provide additional logging for token limit errors, including stage and maxTokens
+        if (error && error.isTokenLimit) {
+          const d = error.tokenLimitDetails || {};
+          console.error('[openrouter][TOKEN] request failed: stage=%s, model=%s, maxTokens=%s; error=%s',
+            d.stage || options?.stage || 'unknown',
+            d.model || effectiveModel,
+            d.maxTokens || requestBody?.max_tokens || 'unknown',
+            d.originalMessage || error.message || error);
+        }
+        throw error;
+      }
     } finally {
       if (timer) clearTimeout(timer);
     }

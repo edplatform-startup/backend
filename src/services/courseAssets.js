@@ -112,6 +112,7 @@ async function callModelJson({
       messages,
       signal,
       enableWebSearch,
+      stage: 'ASSETS:MINI_QUIZ',
     });
 
     if (message?.parsed && typeof message.parsed === 'object') {
@@ -241,6 +242,7 @@ async function callVideoJsonWithValidation({ apiKey, system, user, attachments =
           messages,
           signal,
           enableWebSearch,
+          stage: 'ASSETS:VIDEO',
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -340,6 +342,7 @@ async function callReadingJsonWithValidation({ apiKey, system, user, attachments
             messages,
             signal,
             enableWebSearch,
+            stage: 'ASSETS:READING',
           });
 
           if (message?.parsed && typeof message.parsed === 'object') {
@@ -458,6 +461,7 @@ async function callFlashcardsJsonWithValidation({ apiKey, system, user, attachme
           messages,
           signal,
           enableWebSearch,
+          stage: 'ASSETS:FLASHCARDS',
         });
 
         if (message?.parsed && typeof message.parsed === 'object') {
@@ -526,6 +530,7 @@ async function callPracticeExamJsonWithValidation({ apiKey, system, user, attach
             messages,
             signal,
             enableWebSearch,
+            stage: 'ASSETS:PRACTICE_EXAM',
           });
 
           if (message?.parsed && typeof message.parsed === 'object') {

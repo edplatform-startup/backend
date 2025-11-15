@@ -54,3 +54,40 @@ test('web_search: formats valid results array', async () => {
 test('cleanup: restore fetch', () => {
   globalThis.fetch = originalFetch;
 });
+
+test('executeOpenRouterChat logs token-limit error with stage and model', async () => {
+  const responses = [
+    { ok: false, status: 400, statusText: 'Bad Request', body: 'Error: max tokens exceeded for model' },
+  ];
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 400,
+    statusText: 'Bad Request',
+    text: async () => responses.shift().body,
+  });
+
+  const captured = [];
+  const originalError = console.error;
+  console.error = (message, ...args) => captured.push([message, ...args].join(' '));
+
+  try {
+    let threw = false;
+    try {
+      await (await import('../src/services/grokClient.js')).executeOpenRouterChat({
+        model: 'x-ai/grok-4-fast',
+        maxTokens: 200,
+        messages: [{ role: 'user', content: 'Test' }],
+        stage: 'TEST:STAGE',
+        requestTimeoutMs: 1000,
+      });
+    } catch (err) {
+      threw = true;
+    }
+    assert.ok(threw, 'should throw');
+    const ok = captured.some((c) => /\[openrouter\]\[TOKEN\]/.test(c)) || captured.some((c) => c.includes('[openrouter] request failed') && c.includes('TEST:STAGE') && c.includes('grok-4-fast'));
+    assert.ok(ok, 'Token limit or openrouter error log should include stage and model');
+  } finally {
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+  }
+});
