@@ -181,7 +181,7 @@ Base URL (production): https://api.kognolearn.com
           ]
         }
       ],
-      "model": "openrouter/gpt-4.1-mini"
+      "model": "openai/gpt-4o-mini"
     }
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
@@ -307,7 +307,7 @@ Base URL (production): https://api.kognolearn.com
   - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
   - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "openrouter/gpt-4.1-mini" }`
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "openai/gpt-4o-mini" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`

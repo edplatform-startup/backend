@@ -6,6 +6,13 @@ const envSchema = z
     MODEL_PLANNER: z.string().optional(),
     MODEL_WRITER: z.string().optional(),
     MODEL_CRITIC: z.string().optional(),
+    COURSE_V2_DEFAULT_MODEL: z.string().optional(),
+    COURSE_V2_SYLLABUS_MODEL: z.string().optional(),
+    COURSE_V2_MODULES_MODEL: z.string().optional(),
+    COURSE_V2_LESSONS_MODEL: z.string().optional(),
+    COURSE_V2_TOPICS_MODEL: z.string().optional(),
+    COURSE_V2_FALLBACK_MODEL: z.string().optional(),
+    COURSE_V2_SECONDARY_FALLBACK_MODEL: z.string().optional(),
     READING_WPM: z.string().optional(),
     DEFAULT_ACTIVITY_MIN_GUIDED_EXAMPLE: z.string().optional(),
     DEFAULT_ACTIVITY_MIN_PROBLEM_SET: z.string().optional(),
@@ -44,11 +51,36 @@ function normalizeModel(value, fallback) {
   return trimmed ? trimmed : fallback;
 }
 
+const courseV2Defaults = {
+  defaultModel: normalizeModel(rawEnv.COURSE_V2_DEFAULT_MODEL, 'openai/gpt-4o-mini'),
+  syllabusModel: normalizeModel(rawEnv.COURSE_V2_SYLLABUS_MODEL, rawEnv.MODEL_PLANNER || 'openai/gpt-4o'),
+  modulesModel: normalizeModel(rawEnv.COURSE_V2_MODULES_MODEL, rawEnv.MODEL_PLANNER || 'openai/gpt-4o'),
+  lessonsModel: normalizeModel(rawEnv.COURSE_V2_LESSONS_MODEL, rawEnv.MODEL_WRITER || 'openai/gpt-4o-mini'),
+  topicsModel: normalizeModel(
+    rawEnv.COURSE_V2_TOPICS_MODEL,
+    rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'openai/gpt-4o-mini',
+  ),
+  fallbackModel: normalizeModel(rawEnv.COURSE_V2_FALLBACK_MODEL, 'anthropic/claude-3.5-sonnet'),
+  secondaryFallbackModel: normalizeModel(
+    rawEnv.COURSE_V2_SECONDARY_FALLBACK_MODEL,
+    'meta-llama/Meta-Llama-3.1-70B-Instruct',
+  ),
+};
+
 export const runtimeConfig = {
   stageModels: {
     planner: normalizeModel(rawEnv.MODEL_PLANNER, 'anthropic/claude-sonnet-4'),
     writer: normalizeModel(rawEnv.MODEL_WRITER, 'anthropic/claude-sonnet-4'),
     critic: normalizeModel(rawEnv.MODEL_CRITIC, 'x-ai/grok-4-fast'),
+  },
+  courseV2Models: {
+    default: courseV2Defaults.defaultModel,
+    syllabus: courseV2Defaults.syllabusModel,
+    modules: courseV2Defaults.modulesModel,
+    lessons: courseV2Defaults.lessonsModel,
+    topics: courseV2Defaults.topicsModel,
+    fallback: courseV2Defaults.fallbackModel,
+    secondaryFallback: courseV2Defaults.secondaryFallbackModel,
   },
   readingWpm: coercePositiveNumber(rawEnv.READING_WPM, 220, 'READING_WPM'),
   defaultActivityMinutes: {
