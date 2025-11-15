@@ -12,10 +12,10 @@ export const STAGES = Object.freeze({
 
 const { courseV2Models = {} } = runtimeConfig;
 
-const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'openai/gpt-4o';
-const writerModel = courseV2Models.lessons || process.env.MODEL_WRITER || 'openai/gpt-4o-mini';
+const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-2.5-flash';
+const writerModel = courseV2Models.lessons || process.env.MODEL_WRITER || 'google/gemini-2.5-flash-mini';
 const assessorModel = courseV2Models.modules || plannerModel;
-const criticModel = process.env.MODEL_CRITIC || courseV2Models.modules || 'openai/gpt-4o';
+const criticModel = process.env.MODEL_CRITIC || courseV2Models.modules || 'google/gemini-2.5-flash';
 const topicsModel =
   courseV2Models.topics ||
   process.env.MODEL_TOPICS ||

@@ -784,7 +784,7 @@ function getPriceForModel(model) {
     'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
     'x-ai/grok-4-fast': { in: 0.001, out: 0.002 },
     'google/gemini-2.5-flash': { in: 0.0006, out: 0.0018 },
-    'openai/gpt-4o': { in: 0.005, out: 0.015 },
+    'google/gemini-2.5-flash': { in: 0.005, out: 0.015 },
     'nousresearch/hermes-4-70b': { in: 0.0005, out: 0.001 },
     'anthropic/claude-haiku-3.5': { in: 0.0008, out: 0.004 },
     'x-ai/grok-3-beta': { in: 0.001, out: 0.002 },

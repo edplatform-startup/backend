@@ -11,7 +11,7 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
-const COURSE_GENERATOR_MODEL = 'openai/gpt-5.1-codex';
+const COURSE_GENERATOR_MODEL = 'google/gemini-2.5-pro';
 
 router.get('/ids', async (req, res) => {
   const { userId } = req.query;

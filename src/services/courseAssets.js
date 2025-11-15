@@ -1,6 +1,6 @@
 import { executeOpenRouterChat, createBrowsePageTool } from './grokClient.js';
 
-const UNIVERSAL_MODEL = 'openai/gpt-5.1-codex';
+const UNIVERSAL_MODEL = 'google/gemini-2.5-pro';
 const UNIVERSAL_FALLBACK = 'x-ai/grok-4-fast';
 const VIDEO_MODEL = UNIVERSAL_MODEL;
 const VIDEO_FALLBACK = UNIVERSAL_FALLBACK;
