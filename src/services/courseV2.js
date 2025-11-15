@@ -28,6 +28,7 @@ const IDEAL_MIN_MODULES = 6;
 const IDEAL_MAX_MODULES = 10;
 const FALLBACK_MIN_MODULES = 4;
 const FALLBACK_MAX_MODULES = 10;
+const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
 
 function captureUsageTotals() {
   try {
@@ -50,6 +51,24 @@ function logStageUsage(label, startTotals) {
       calls: endTotals.calls - startTotals.calls,
     };
     console.log(`[courseV2][${label}] usage:`, delta);
+  } catch {
+    /* ignore logging errors */
+  }
+}
+
+function logTopicsUsage(startTotals) {
+  if (!startTotals) return;
+  try {
+    const endTotals = getCostTotals();
+    if (!endTotals) return;
+    const delta = {
+      prompt: endTotals.prompt - startTotals.prompt,
+      completion: endTotals.completion - startTotals.completion,
+      total: endTotals.total - startTotals.total,
+      usd: Number((endTotals.usd - startTotals.usd).toFixed(6)),
+      calls: endTotals.calls - startTotals.calls,
+    };
+    console.log('[topicsV2] usage:', delta);
   } catch {
     /* ignore logging errors */
   }
@@ -839,6 +858,112 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
   }
 }
 
+export async function generateHierarchicalTopics(input = {}) {
+  const {
+    university = null,
+    courseTitle = 'Custom course',
+    syllabusText = null,
+    examFormatDetails = null,
+    attachments = [],
+    finishByDate = null,
+  } = input || {};
+
+  const usageStart = captureUsageTotals();
+  try {
+    const syllabus = await synthesizeSyllabus({
+      university,
+      courseName: courseTitle,
+      syllabusText,
+      examFormatDetails,
+      topics: [],
+      attachments: attachments || [],
+    });
+
+    const nodes = Array.isArray(syllabus?.topic_graph?.nodes) ? syllabus.topic_graph.nodes : [];
+    const rawTopicSummaries = nodes.map((node, idx) => ({
+      id: node?.id ?? `node_${idx + 1}`,
+      title: coerceTopicString(node?.title || node?.name || node?.label, `Topic ${idx + 1}`),
+      description: coerceTopicString(node?.description || node?.summary, ''),
+    }));
+
+    const systemPrompt = `You are an expert university curriculum planner.
+You design topic maps for students preparing for a specific course and exam. You will receive:
+- The course name and institution.
+- A rough list of topic nodes extracted from the syllabus/topic graph.
+
+Your job:
+- Propose a set of high-level OVERVIEW TOPICS that together cover the whole course/exam.
+- These should be broad areas a student would recognize on a syllabus (8-16 total).
+- Under each overview topic, propose SPECIFIC SUBTOPICS (5-15) that reflect exam-relevant concepts, skills, or question types.
+- Err on the side of MORE subtopics so the union spans the entire course.
+- Prefer splitting large ideas into concrete, exam-ready pieces.
+- Avoid meta-topics like "study skills" unless explicitly required.
+
+Output STRICT JSON using this structure ONLY:
+{
+  "overviewTopics": [
+    {
+      "id": "string",
+      "title": "string",
+      "description": "string",
+      "likelyOnExam": true,
+      "subtopics": [
+        {
+          "id": "string",
+          "overviewId": "string",
+          "title": "string",
+          "description": "string",
+          "difficulty": "introductory" | "intermediate" | "advanced",
+          "likelyOnExam": boolean
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- JSON must be valid (double quotes, no trailing commas, no comments).
+- IDs must be unique across overview topics and subtopics.
+- overviewId on each subtopic must match its parent overview topic id.
+- Do not include extra keys or wrapper text.`;
+
+    const userPrompt = `Course Details:
+Institution: ${coerceTopicString(university, 'Unknown institution')}
+Course / exam: ${coerceTopicString(courseTitle, 'Untitled course')}
+Exam / target date: ${finishByDate ? new Date(finishByDate).toISOString() : 'Not specified'}
+Exam format: ${coerceTopicString(examFormatDetails, 'Not specified')}
+
+Syllabus-derived topic nodes (raw, unstructured):
+${JSON.stringify(rawTopicSummaries, null, 2)}
+
+Using these as a starting point, produce an exam-aligned topic map with overviewTopics and subtopics.`;
+
+    const { result, model } = await courseV2LLMCaller({
+      stage: STAGES.TOPICS,
+      messages: [
+        { role: 'system', content: systemPrompt.trim() },
+        { role: 'user', content: userPrompt.trim() },
+      ],
+      maxTokens: 2200,
+      allowWeb: true,
+    });
+
+    const parsed = tryParseJson(result?.content);
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Topic generation returned invalid JSON.');
+    }
+
+    const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics);
+
+    return {
+      overviewTopics,
+      model: model || 'unknown',
+    };
+  } finally {
+    logTopicsUsage(usageStart);
+  }
+}
+
 export function crossLink(course) {
   if (!course || !Array.isArray(course?.modules?.modules) || !Array.isArray(course?.lessons?.lessons)) {
     return course;
@@ -1137,6 +1262,69 @@ export function packageCourse(course) {
   };
 
   return CoursePackageSchema.parse(packaged);
+}
+
+function coerceTopicString(value, fallback = '') {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    const trimmed = String(value).trim();
+    return trimmed || fallback;
+  }
+  return fallback;
+}
+
+function normalizeTopicDifficulty(value) {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (VALID_TOPIC_DIFFICULTIES.has(normalized)) {
+      return normalized;
+    }
+  }
+  return 'intermediate';
+}
+
+function normalizeSubtopics(rawSubtopics, overviewId) {
+  const list = Array.isArray(rawSubtopics) ? rawSubtopics : [];
+  return list.map((subtopic, idx) => {
+    const fallbackId = `${overviewId}_sub_${idx + 1}`;
+    return {
+      id: coerceTopicString(subtopic?.id, fallbackId),
+      overviewId: coerceTopicString(subtopic?.overviewId, overviewId),
+      title: coerceTopicString(subtopic?.title, `Subtopic ${idx + 1}`),
+      description: coerceTopicString(subtopic?.description, ''),
+      difficulty: normalizeTopicDifficulty(subtopic?.difficulty),
+      likelyOnExam: Boolean(subtopic?.likelyOnExam),
+    };
+  });
+}
+
+function normalizeOverviewTopics(rawOverview) {
+  const list = Array.isArray(rawOverview) ? rawOverview : [];
+  if (list.length === 0) {
+    throw new Error('Topic generation returned no overview topics.');
+  }
+
+  const normalized = list.map((topic, idx) => {
+    const fallbackId = `overview_${idx + 1}`;
+    const id = coerceTopicString(topic?.id, fallbackId);
+    return {
+      id,
+      title: coerceTopicString(topic?.title, `Overview ${idx + 1}`),
+      description: coerceTopicString(topic?.description, ''),
+      likelyOnExam: Boolean(topic?.likelyOnExam),
+      subtopics: normalizeSubtopics(topic?.subtopics, id),
+    };
+  });
+
+  const totalSubtopics = normalized.reduce((sum, topic) => sum + topic.subtopics.length, 0);
+  if (totalSubtopics === 0) {
+    throw new Error('Topic generation returned no subtopics.');
+  }
+
+  return normalized;
 }
 
 function normalizeGeneratorOptions(input, maybeUserPrefs = {}) {

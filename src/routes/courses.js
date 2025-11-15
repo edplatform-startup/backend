@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { getSupabase } from '../supabaseClient.js';
 import { getCostTotals } from '../services/grokClient.js';
-import { synthesizeSyllabus } from '../services/courseV2.js';
+import { generateHierarchicalTopics } from '../services/courseV2.js';
 import { generateCoursePackageWithAssets } from '../services/courseBuilder.js';
 import {
   isValidIsoDate,
@@ -11,7 +11,6 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
-const TOPIC_MODEL = 'courseV2/syllabus';
 const COURSE_GENERATOR_MODEL = 'openai/gpt-5.1-codex';
 
 router.get('/ids', async (req, res) => {
@@ -169,64 +168,38 @@ router.post('/topics', async (req, res) => {
     return res.status(400).json({ error: shared.error });
   }
 
-  const usageStart = getCostTotals();
-
   try {
     const selection = shared.courseSelection || {};
-    const university = selection.college || selection.university || null;
-    const bodyCourseTitle = toTrimmedString(req.body?.courseTitle) || toTrimmedString(req.body?.className);
-    const courseName = bodyCourseTitle || toTrimmedString(selection.title) || 'Custom Course';
+    const university =
+      selection.college ||
+      selection.university ||
+      toTrimmedString(req.body?.university) ||
+      null;
 
-    const syllabus = await synthesizeSyllabus({
+    const courseTitle =
+      toTrimmedString(req.body?.courseTitle) ||
+      toTrimmedString(req.body?.className) ||
+      toTrimmedString(selection.title) ||
+      'Custom course';
+
+    const result = await generateHierarchicalTopics({
       university,
-      courseName,
+      courseTitle,
       syllabusText: shared.syllabusText,
       examFormatDetails: shared.examFormatDetails,
-      topics: [],
-      attachments: shared.attachments || [],
+      attachments: shared.attachments,
+      finishByDate: shared.finishByDateIso,
     });
-
-    const nodes = Array.isArray(syllabus?.topic_graph?.nodes) ? syllabus.topic_graph.nodes : [];
-    let rawTopics = nodes
-      .map((node) => node?.title || node?.name || node?.id || '')
-      .map((title) => (typeof title === 'string' ? title.trim() : ''))
-      .filter(Boolean);
-
-    const META_RE = /(exam|midterm|final|review|revision|study skills|time management)/i;
-    rawTopics = rawTopics.filter((topic) => !META_RE.test(topic));
-
-    const deduped = Array.from(new Set(rawTopics));
-    const topics = deduped.length > 30 ? deduped.slice(0, 30) : deduped;
-
-    if (!topics.length) {
-      return res.status(502).json({ error: 'Syllabus topic graph produced no usable topics' });
-    }
-
-    try {
-      const usageEnd = getCostTotals();
-      if (usageStart && usageEnd) {
-        const delta = {
-          prompt: usageEnd.prompt - usageStart.prompt,
-          completion: usageEnd.completion - usageStart.completion,
-          total: usageEnd.total - usageStart.total,
-          usd: Number((usageEnd.usd - usageStart.usd).toFixed(6)),
-          calls: usageEnd.calls - usageStart.calls,
-        };
-        console.log('[topics] usage:', delta);
-      }
-    } catch {/* ignore logging issues */}
 
     return res.status(200).json({
       success: true,
-      topics,
-      rawTopicsText: topics.join(', '),
-      model: TOPIC_MODEL,
+      overviewTopics: result.overviewTopics,
+      model: result.model,
     });
-  } catch (error) {
-    console.error('Topic generation failed:', error);
+  } catch (err) {
+    console.error('[topics] hierarchical topic generation error:', err);
     return res.status(502).json({
-      error: error.message || 'Failed to generate topics',
-      details: error.details,
+      error: 'Failed to generate topics for this course. Please try again or adjust your inputs.',
     });
   }
 });

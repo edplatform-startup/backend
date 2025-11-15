@@ -5,6 +5,7 @@ export const STAGES = Object.freeze({
   LINKER: 'LINKER',
   CRITIC: 'CRITIC',
   SELECTOR: 'SELECTOR',
+  TOPICS: 'TOPICS',
 });
 
 const DEFAULTS = {
@@ -20,6 +21,11 @@ const DEFAULTS = {
   [STAGES.LINKER]: { model: process.env.MODEL_WRITER || 'openai/gpt-4o-mini', temp: 0.45, top_p: 0.85 },
   [STAGES.CRITIC]: { model: process.env.MODEL_CRITIC || 'openai/gpt-4o', temp: 0.15, top_p: 0.4 },
   [STAGES.SELECTOR]: { model: process.env.MODEL_CRITIC || 'openai/gpt-4o', temp: 0.1, top_p: 0.4 },
+  [STAGES.TOPICS]: {
+    model: process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'openrouter/gpt-4.1-mini',
+    temp: Number(process.env.TOPIC_MODEL_TEMP || 0.35),
+    top_p: Number(process.env.TOPIC_MODEL_TOP_P || 0.75),
+  },
 };
 
 export function pickModel(stage) {

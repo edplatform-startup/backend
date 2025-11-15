@@ -1,6 +1,6 @@
 # EdTech Backend API – Specification
 
-Base URL (production): https://edtech-backend-api.onrender.com
+Base URL (production): https://api.kognolearn.com
 
 - Protocols: HTTPS (production), HTTP (local dev)
 - Media type: application/json; charset=utf-8
@@ -144,7 +144,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - 500 Internal Server Error → Database error.
 
 ### POST /courses/topics
-- Purpose: Fast topic discovery endpoint. Extracts a high-quality topic list from syllabus/exam signals before full course generation.
+- Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + granular subtopics) before full course generation.
 - Request body (JSON):
   - `userId` (string, required)
   - `finishByDate` (string, optional ISO date)
@@ -155,11 +155,35 @@ Base URL (production): https://edtech-backend-api.onrender.com
   - `examFiles` (FileMeta[], optional)
 - Behavior:
   - Validates user/file metadata and normalizes course selection fields.
-  - Invokes the CourseV2 `synthesizeSyllabus` stage (the same engine used for full course generation) to build an exam-aligned syllabus + topic graph.
-  - Extracts topic labels from `topic_graph.nodes`, filters meta/logistics entries (e.g., “Exam Review”), deduplicates while preserving order, and caps to ~30 items.
-  - Logs usage via Grok client cost tracking and returns topics plus a comma-separated string for legacy consumers.
+  - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned syllabus + topic graph.
+  - Summarizes raw topic graph nodes and prompts a dedicated LLM stage (`TOPICS`) to expand them into 8–16 overview topics with 5–15 subtopics each (targeting 40–80 subtopics overall).
+  - Normalizes IDs, fills in missing metadata, enforces `overviewId` relationships, and logs usage via Grok cost tracking as `[topicsV2]`.
 - Responses:
-  - 200 OK → `{ "success": true, "topics": ["Topic A", ...], "rawTopicsText": "Topic A, ...", "model": "courseV2/syllabus" }`
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "overviewTopics": [
+        {
+          "id": "overview_1",
+          "title": "Algorithm Foundations",
+          "description": "Core analysis themes",
+          "likelyOnExam": true,
+          "subtopics": [
+            {
+              "id": "overview_1_sub_1",
+              "overviewId": "overview_1",
+              "title": "Asymptotic notation drills",
+              "description": "Big-O, Theta, little-o practice",
+              "difficulty": "intermediate",
+              "likelyOnExam": true
+            }
+          ]
+        }
+      ],
+      "model": "openrouter/gpt-4.1-mini"
+    }
+    ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
   - 502 Bad Gateway → Model failure or unusable response.
 
@@ -167,7 +191,7 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Purpose: Persist a full Course V2 package (syllabus, modules, lessons, assessments) plus per-format study assets after the user submits curated topics/familiarity.
 - Request body (JSON):
   - `userId` (string, required)
-  - `topics` (string[], required) – trimmed, non-empty topics from `/courses/topics`
+  - `topics` (string[], required) – flattened list of subtopic titles returned by `/courses/topics`
   - `topicFamiliarity` (object or `{ topic, familiarity }[]`, optional) – levels such as `beginner`, `expert`; entries outside `topics` are rejected
   - `className` (string, optional) – overrides course title stored in Supabase
   - Shared fields from `/courses/topics`: `finishByDate`, `courseSelection`/`university`/`courseTitle`, `syllabusText`, `syllabusFiles`, `examFormatDetails`, `examFiles`, `userPrefs`
@@ -275,15 +299,15 @@ Base URL (production): https://edtech-backend-api.onrender.com
 - Supabase schema: reads from and writes to `api.courses`. `course_data` is the canonical JSON column for stored syllabi.
 
 ## Examples
-- List user courses → `GET https://edtech-backend-api.onrender.com/courses?userId=...`
+- List user courses → `GET https://api.kognolearn.com/courses?userId=...`
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
-- Fetch specific course → `GET https://edtech-backend-api.onrender.com/courses?userId=...&courseId=...`
+- Fetch specific course → `GET https://api.kognolearn.com/courses?userId=...&courseId=...`
   - Response: `{ "success": true, "course": Course }`
-- Search catalog → `GET https://edtech-backend-api.onrender.com/college-courses?query=cs50`
+- Search catalog → `GET https://api.kognolearn.com/college-courses?query=cs50`
   - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
-- Generate topics → `POST https://edtech-backend-api.onrender.com/courses/topics`
+- Generate topics → `POST https://api.kognolearn.com/courses/topics`
   - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "topics": ["Topic A", "Topic B"], "rawTopicsText": "Topic A, Topic B", "model": "openai/gpt-5.1-codex" }`
-- Persist course → `POST https://edtech-backend-api.onrender.com/courses`
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "openrouter/gpt-4.1-mini" }`
+- Persist course → `POST https://api.kognolearn.com/courses`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`

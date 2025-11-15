@@ -398,7 +398,7 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal }) {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
-          'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://edtech-backend-api.onrender.com',
+          'HTTP-Referer': process.env.PUBLIC_BASE_URL || 'https://api.kognolearn.com',
           'X-Title': 'EdTech Study Planner',
         },
         body: JSON.stringify(body),

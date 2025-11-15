@@ -5,7 +5,12 @@ import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
 import { setCourseBuilder, clearCourseBuilder } from '../src/services/courseBuilder.js';
-import { __setSyllabusSynthesizer, __clearSyllabusSynthesizer } from '../src/services/courseV2.js';
+import {
+  __setSyllabusSynthesizer,
+  __clearSyllabusSynthesizer,
+  __setCourseV2LLMCaller,
+  __resetCourseV2LLMCaller,
+} from '../src/services/courseV2.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
@@ -40,6 +45,7 @@ test('courses route validations and behaviors', async (t) => {
     clearSupabaseClient();
     clearCourseBuilder();
     __clearSyllabusSynthesizer();
+    __resetCourseV2LLMCaller();
   });
 
   await t.test('rejects missing query parameters', async () => {
@@ -140,22 +146,50 @@ test('courses route validations and behaviors', async (t) => {
     assert.match(res.body.error, /must include a non-empty "name"/);
   });
 
-  await t.test('generates study topics via syllabus graph', async () => {
+  await t.test('generates hierarchical topics with overview + subtopics', async () => {
     let synthOptions;
+    let llmOptions;
     __setSyllabusSynthesizer(async (options) => {
       synthOptions = options;
       return {
         outcomes: ['Outcome 1', 'Outcome 2', 'Outcome 3'],
         topic_graph: {
           nodes: [
-            { id: 'n1', title: 'Asymptotic Analysis' },
-            { id: 'n2', title: 'Midterm Exam Review' },
-            { id: 'n3', title: 'Divide and Conquer Strategies' },
-            { id: 'n4', title: 'Asymptotic Analysis' },
+            { id: 'n1', title: 'Asymptotic Analysis', summary: 'Rates of growth' },
+            { id: 'n2', title: 'Divide and Conquer Strategies', summary: 'Recursive design' },
+            { id: 'n3', title: 'Dynamic Programming', summary: 'Optimal substructure' },
+            { id: 'n4', title: 'Graph Algorithms', summary: 'Traversal paradigms' },
           ],
           edges: [],
         },
         sources: [{ title: 'Official syllabus', url: 'https://example.edu/syllabus' }],
+      };
+    });
+
+    __setCourseV2LLMCaller(async (options) => {
+      llmOptions = options;
+      return {
+        model: 'mock-hier-topics',
+        result: {
+          content: JSON.stringify({
+            overviewTopics: [
+              {
+                id: 'overview_1',
+                title: 'Algorithm Foundations',
+                description: 'Complexity + paradigms',
+                likelyOnExam: true,
+                subtopics: Array.from({ length: 4 }, (_, idx) => ({
+                  id: `overview_1_sub_${idx + 1}`,
+                  overviewId: 'overview_1',
+                  title: `Foundation Concept ${idx + 1}`,
+                  description: 'Concept drill',
+                  difficulty: idx % 3 === 0 ? 'introductory' : idx % 3 === 1 ? 'intermediate' : 'advanced',
+                  likelyOnExam: idx % 2 === 0,
+                })),
+              },
+            ],
+          }),
+        },
       };
     });
 
@@ -180,12 +214,65 @@ test('courses route validations and behaviors', async (t) => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.deepEqual(res.body.topics, ['Asymptotic Analysis', 'Divide and Conquer Strategies']);
-    assert.equal(res.body.model, 'courseV2/syllabus');
-    assert.equal(res.body.rawTopicsText, 'Asymptotic Analysis, Divide and Conquer Strategies');
+    assert.ok(Array.isArray(res.body.overviewTopics));
+    assert.equal(res.body.overviewTopics.length, 1);
+    assert.equal(res.body.overviewTopics[0].subtopics.length, 4);
+    assert.equal(res.body.model, 'mock-hier-topics');
     assert.ok(Array.isArray(synthOptions.attachments) && synthOptions.attachments.length >= 2);
     assert.equal(synthOptions.university, 'UW');
     assert.equal(synthOptions.courseName, 'Foundations of CS');
+    assert.ok(llmOptions);
+    assert.equal(llmOptions.stage, 'TOPICS');
+    assert.equal(llmOptions.allowWeb, true);
+  });
+
+  await t.test('ensures dense coverage includes 30+ subtopics when LLM supplies them', async () => {
+    __setSyllabusSynthesizer(async () => ({
+      outcomes: ['Outcome A', 'Outcome B', 'Outcome C'],
+      topic_graph: {
+        nodes: Array.from({ length: 12 }, (_, idx) => ({
+          id: `node_${idx + 1}`,
+          title: `Topic ${idx + 1}`,
+          summary: `Summary ${idx + 1}`,
+        })),
+        edges: [],
+      },
+      sources: [{ title: 'Official syllabus', url: 'https://example.edu/syllabus' }],
+    }));
+
+    __setCourseV2LLMCaller(async () => ({
+      model: 'mock-hier-topics-dense',
+      result: {
+        content: JSON.stringify({
+          overviewTopics: Array.from({ length: 8 }, (_, oIdx) => ({
+            id: `ov_${oIdx + 1}`,
+            title: `Overview ${oIdx + 1}`,
+            description: 'Broad coverage',
+            likelyOnExam: true,
+            subtopics: Array.from({ length: 4 }, (_, sIdx) => ({
+              id: `ov_${oIdx + 1}_sub_${sIdx + 1}`,
+              overviewId: `ov_${oIdx + 1}`,
+              title: `Subtopic ${oIdx + 1}.${sIdx + 1}`,
+              description: 'Detailed concept',
+              difficulty: 'intermediate',
+              likelyOnExam: true,
+            })),
+          })),
+        }),
+      },
+    }));
+
+    const res = await request(app)
+      .post('/courses/topics')
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        courseSelection: sampleCourseRow.course_selection,
+      });
+
+    assert.equal(res.status, 200);
+    const totalSubtopics = res.body.overviewTopics.flatMap((ot) => ot.subtopics || []).length;
+    assert.ok(totalSubtopics >= 32);
   });
 
   await t.test('requires topics before generating a course package', async () => {
