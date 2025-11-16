@@ -835,7 +835,7 @@ Task: Propose 6-10 modules covering all nodes.`;
     const { result } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
       messages: [...systemPrompt, { role: 'user', content: userContent }],
-      maxTokens: 1600,
+      maxTokens: 4096,
       modelOverride: 'google/gemini-2.5-pro',
     });
 
@@ -863,7 +863,7 @@ Original: ${stringifyForPrompt(candidate)}`,
     const { result: repaired } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
       messages: repairMessages,
-      maxTokens: 1400,
+      maxTokens: 4096,
       modelOverride: 'google/gemini-2.5-pro',
     });
 
