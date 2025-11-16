@@ -1,9 +1,6 @@
 import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
 import { getSupabase } from '../supabaseClient.js';
-import { getCostTotals } from '../services/grokClient.js';
 import { generateHierarchicalTopics } from '../services/courseV2.js';
-import { generateCoursePackageWithAssets } from '../services/courseBuilder.js';
 import {
   isValidIsoDate,
   validateFileArray,
@@ -11,7 +8,6 @@ import {
 } from '../utils/validation.js';
 
 const router = Router();
-const COURSE_GENERATOR_MODEL = 'google/gemini-2.5-pro';
 
 router.get('/ids', async (req, res) => {
   const { userId } = req.query;
@@ -220,117 +216,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: familiarityValidation.error });
   }
 
-  const className =
-    toTrimmedString(req.body?.courseTitle) ||
-    toTrimmedString(req.body?.className) ||
-    toTrimmedString(shared.courseSelection?.title) ||
-    'Custom Course';
-
-  const supabase = getSupabase();
-  const courseId = randomUUID();
-
-  try {
-    const createdAt = new Date().toISOString();
-    const placeholder = {
-      id: courseId,
-      user_id: shared.userId,
-      created_at: createdAt,
-      course_data: {},
-      title: className,
-      topics: topicsValidation.value,
-      topic_familiarity: familiarityValidation.value.length ? familiarityValidation.value : null,
-    };
-
-    const preInsert = await supabase
-      .schema('api')
-      .from('courses')
-      .insert([placeholder])
-      .select('id')
-      .single();
-
-    if (preInsert.error) {
-      console.error('Failed to persist placeholder course:', preInsert.error);
-      return res.status(502).json({
-        error: 'Failed to save course placeholder',
-        details: preInsert.error.message || preInsert.error,
-      });
-    }
-
-    const usageStart = getCostTotals();
-
-    const result = await generateCoursePackageWithAssets({
-      courseSelection: shared.courseSelection,
-      userPrefs: req.body?.userPrefs || {},
-      topics: topicsValidation.value,
-      topicFamiliarity: familiarityValidation.value,
-      syllabusText: shared.syllabusText,
-      examFormatDetails: shared.examFormatDetails,
-      attachments: shared.attachments,
-      finishByDate: shared.finishByDateIso,
-      supabase,
-      courseId,
-      userId: shared.userId,
-      className,
-    });
-
-    try {
-      const usageEnd = getCostTotals();
-      if (usageStart && usageEnd) {
-        const delta = {
-          prompt: usageEnd.prompt - usageStart.prompt,
-          completion: usageEnd.completion - usageStart.completion,
-          total: usageEnd.total - usageStart.total,
-          usd: Number((usageEnd.usd - usageStart.usd).toFixed(6)),
-          calls: usageEnd.calls - usageStart.calls,
-        };
-        console.log('[course] usage:', delta);
-      }
-    } catch {/* ignore usage logging errors */}
-
-    const courseData = {
-      version: '2.0',
-      model: COURSE_GENERATOR_MODEL,
-      generated_at: new Date().toISOString(),
-      inputs: {
-        topics: topicsValidation.value,
-        topicFamiliarity: familiarityValidation.value,
-        courseSelection: shared.courseSelection,
-        finishByDate: shared.finishByDateIso,
-        syllabusText: shared.syllabusText,
-        examFormatDetails: shared.examFormatDetails,
-      },
-      package: result.course,
-      assets: result.assets,
-    };
-
-    const { error: updateError } = await supabase
-      .schema('api')
-      .from('courses')
-      .update({ course_data: courseData })
-      .eq('id', courseId)
-      .select('id')
-      .single();
-
-    if (updateError) {
-      console.error('Failed to update course record:', updateError);
-      await supabase.schema('api').from('courses').delete().eq('id', courseId);
-      return res.status(502).json({
-        error: 'Failed to save course data',
-        details: updateError.message || updateError,
-      });
-    }
-
-    return res.status(201).json({ courseId });
-  } catch (error) {
-    console.error('Course generation failed:', error);
-    try {
-      await supabase.schema('api').from('courses').delete().eq('id', courseId);
-    } catch {/* ignore cleanup errors */}
-    return res.status(error?.statusCode || 500).json({
-      error: error.message || 'Failed to generate course',
-      details: error.details,
-    });
-  }
+  return res.status(501).json({ error: 'Course generation is not implemented' });
 });
 
 router.delete('/', async (req, res) => {
