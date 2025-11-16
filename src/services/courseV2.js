@@ -3,6 +3,8 @@
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
+import { plannerSyllabus } from './prompts/courseV2Prompts.js';
+import { SyllabusSchema } from '../schemas/courseV2.js';
 
 const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
 
@@ -11,6 +13,24 @@ function captureUsageTotals() {
     return getCostTotals();
   } catch {
     return null;
+  }
+}
+
+function logStageUsage(label, startTotals) {
+  if (!startTotals) return;
+  try {
+    const endTotals = getCostTotals();
+    if (!endTotals) return;
+    const delta = {
+      prompt: endTotals.prompt - startTotals.prompt,
+      completion: endTotals.completion - startTotals.completion,
+      total: endTotals.total - startTotals.total,
+      usd: Number((endTotals.usd - startTotals.usd).toFixed(6)),
+      calls: endTotals.calls - startTotals.calls,
+    };
+    console.log(`[courseV2][${label}] usage:`, delta);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -51,120 +71,152 @@ export function __resetCourseV2LLMCaller() {
   courseV2LLMCaller = callStageLLM;
 }
 
-function tryParseJson(str) {
-  if (!str || typeof str !== 'string') return null;
-  const trimmed = str.trim();
-  if (!trimmed) return null;
+function tryParseJson(content) {
+  if (content == null) return null;
 
-  const cleaned = trimmed
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/, '')
-    .trim();
+  if (typeof content === 'string') {
+    const stripped = content
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
 
+    if (!stripped) return null;
+
+    try {
+      return JSON.parse(stripped);
+    } catch (error) {
+      console.error('[courseV2] Failed to parse JSON:', error);
+      const firstBrace = Math.min(
+        ...['{', '[']
+          .map((token) => {
+            const idx = stripped.indexOf(token);
+            return idx === -1 ? Number.POSITIVE_INFINITY : idx;
+          })
+          .filter((idx) => Number.isFinite(idx)),
+      );
+      const lastBrace = Math.max(
+        ...['}', ']']
+          .map((token) => stripped.lastIndexOf(token))
+          .filter((idx) => idx >= 0),
+      );
+      if (Number.isFinite(firstBrace) && lastBrace >= firstBrace) {
+        const core = stripped.slice(firstBrace, lastBrace + 1);
+        try {
+          return JSON.parse(core);
+        } catch (secondaryError) {
+          console.error('[courseV2] Core JSON parse failed:', secondaryError);
+          try {
+            const fixed = core.replace(/,\s*(?=[}\]])/g, '');
+            return JSON.parse(fixed);
+          } catch (tertiaryError) {
+            console.error('[courseV2] JSON parse failed after trailing comma fix:', tertiaryError);
+          }
+        }
+      }
+      return null;
+    }
+  }
+
+  if (Array.isArray(content)) {
+    const text = content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object' && typeof part.text === 'string') return part.text;
+        return '';
+      })
+      .join('')
+      .trim();
+    return tryParseJson(text);
+  }
+
+  if (content && typeof content === 'object' && typeof content.text === 'string') {
+    return tryParseJson(content.text);
+  }
+
+  return null;
+}
+
+function stringifyForPrompt(value) {
   try {
-    return JSON.parse(cleaned);
+    return JSON.stringify(value ?? null);
   } catch {
-    return null;
+    return String(value);
   }
 }
 
-function stringifyForPrompt(data) {
-  if (!data) return '';
-  if (typeof data === 'string') return data;
-  try {
-    return JSON.stringify(data, null, 2);
-  } catch {
-    return String(data);
+function ensureSyllabusMinimums(syllabus) {
+  if (!Array.isArray(syllabus?.topic_graph?.nodes) || syllabus.topic_graph.nodes.length < 4) {
+    throw new Error('Syllabus must include at least 4 topic graph nodes.');
+  }
+  if (!Array.isArray(syllabus?.sources) || syllabus.sources.length < 1) {
+    throw new Error('Syllabus must include at least one source.');
   }
 }
 
 function coerceTopicString(value, defaultValue = '') {
-  if (value == null) return defaultValue;
-  if (typeof value === 'string') return value.trim() || defaultValue;
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value).trim() || defaultValue;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+    return defaultValue;
   }
-  return defaultValue;
+  if (value == null) return defaultValue;
+  return String(value);
 }
 
 function normalizeOverviewTopics(rawOverviewTopics) {
   if (!Array.isArray(rawOverviewTopics)) return [];
+  const normalized = [];
 
-  const usedTopicIds = new Set();
-  const overviewTopics = [];
+  rawOverviewTopics.forEach((ot, index) => {
+    if (!ot || typeof ot !== 'object') return;
 
-  for (const rawOverview of rawOverviewTopics) {
-    if (!rawOverview || typeof rawOverview !== 'object') continue;
+    const id =
+      typeof ot.id === 'string' && ot.id.trim()
+        ? ot.id.trim()
+        : `overview_${index + 1}`;
+    const title = coerceTopicString(ot.title, `Topic group ${index + 1}`);
+    const description = coerceTopicString(ot.description, '');
+    const likelyOnExam = Boolean(ot.likelyOnExam);
 
-    const overviewId = coerceTopicString(rawOverview.id || rawOverview.topicId);
-    const overviewTitle = coerceTopicString(
-      rawOverview.title || rawOverview.name || rawOverview.overview,
-      'Overview topic',
-    );
-    const overviewDescription = coerceTopicString(
-      rawOverview.description || rawOverview.desc || rawOverview.summary,
-      '',
-    );
+    const subtopicsRaw = Array.isArray(ot.subtopics) ? ot.subtopics : [];
+    const subtopics = [];
 
-    const likelyOnExam =
-      typeof rawOverview.likelyOnExam === 'boolean'
-        ? rawOverview.likelyOnExam
-        : rawOverview.likelyOnExam === 'true';
+    subtopicsRaw.forEach((st, subIdx) => {
+      if (!st || typeof st !== 'object') return;
+      const sid =
+        typeof st.id === 'string' && st.id.trim()
+          ? st.id.trim()
+          : `${id}_subtopic_${subIdx + 1}`;
+      const overviewId = coerceTopicString(st.overviewId, id);
+      const stTitle = coerceTopicString(st.title, `Subtopic ${subIdx + 1}`);
+      const stDescription = coerceTopicString(st.description, '');
+      const rawDiff = coerceTopicString(st.difficulty, 'intermediate').toLowerCase();
+      const difficulty = VALID_TOPIC_DIFFICULTIES.has(rawDiff) ? rawDiff : 'intermediate';
+      const stLikelyOnExam = Boolean(st.likelyOnExam);
 
-    if (!overviewId || usedTopicIds.has(overviewId)) continue;
-
-    const overview = {
-      id: overviewId,
-      title: overviewTitle,
-      description: overviewDescription,
-      likelyOnExam,
-      subtopics: [],
-    };
-
-    const rawSubtopics = Array.isArray(rawOverview.subtopics)
-      ? rawOverview.subtopics
-      : [];
-
-    for (const rawSub of rawSubtopics) {
-      if (!rawSub || typeof rawSub !== 'object') continue;
-
-      const subId = coerceTopicString(rawSub.id || rawSub.subtopicId);
-      const subTitle = coerceTopicString(
-        rawSub.title || rawSub.name || rawSub.subtopic,
-        'Subtopic',
-      );
-      const subDescription = coerceTopicString(
-        rawSub.description || rawSub.desc || rawSub.summary,
-        '',
-      );
-      let subDifficulty = coerceTopicString(rawSub.difficulty, 'intermediate').toLowerCase();
-      if (!VALID_TOPIC_DIFFICULTIES.has(subDifficulty)) {
-        subDifficulty = 'intermediate';
-      }
-
-      const subLikelyOnExam =
-        typeof rawSub.likelyOnExam === 'boolean'
-          ? rawSub.likelyOnExam
-          : rawSub.likelyOnExam === 'true';
-
-      if (!subId || usedTopicIds.has(subId)) continue;
-      usedTopicIds.add(subId);
-
-      overview.subtopics.push({
-        id: subId,
-        overviewId: overview.id,
-        title: subTitle,
-        description: subDescription,
-        difficulty: subDifficulty,
-        likelyOnExam: subLikelyOnExam,
+      subtopics.push({
+        id: sid,
+        overviewId,
+        title: stTitle,
+        description: stDescription,
+        difficulty,
+        likelyOnExam: stLikelyOnExam,
       });
-    }
+    });
 
-    usedTopicIds.add(overviewId);
-    overviewTopics.push(overview);
-  }
+    if (subtopics.length === 0) return;
 
-  return overviewTopics;
+    normalized.push({
+      id,
+      title,
+      description,
+      likelyOnExam,
+      subtopics,
+    });
+  });
+
+  return normalized;
 }
 
 export async function synthesizeSyllabus({
@@ -176,7 +228,7 @@ export async function synthesizeSyllabus({
   attachments = [],
 }) {
   if (customSyllabusSynthesizer) {
-    return await customSyllabusSynthesizer({
+    return customSyllabusSynthesizer({
       university,
       courseName,
       syllabusText,
@@ -186,7 +238,64 @@ export async function synthesizeSyllabus({
     });
   }
 
-  throw new Error('Course generation is not implemented');
+  const usageStart = captureUsageTotals();
+  try {
+    const messages = plannerSyllabus({
+      university,
+      courseName,
+      syllabusText,
+      examFormatDetails,
+      topics,
+    });
+
+    const { result } = await courseV2LLMCaller({
+      stage: STAGES.PLANNER,
+      messages,
+      allowWeb: true,
+      maxTokens: 1800,
+      attachments,
+      responseFormat: { type: 'json_object' },
+    });
+
+    const rawContent = result?.content;
+    const parsed = tryParseJson(rawContent);
+    const firstPass = SyllabusSchema.safeParse(parsed);
+
+    if (firstPass.success) {
+      ensureSyllabusMinimums(firstPass.data);
+      return firstPass.data;
+    }
+
+    const criticMessages = [
+      ...messages.slice(0, 1),
+      {
+        role: 'user',
+        content: `Prior output failed validation.
+Error: ${firstPass.error.toString()}
+Original JSON: ${stringifyForPrompt(parsed)}
+Return corrected JSON only.`,
+      },
+    ];
+
+    const { result: repairedResult } = await courseV2LLMCaller({
+      stage: STAGES.PLANNER,
+      messages: criticMessages,
+      allowWeb: false,
+      maxTokens: 1500,
+      attachments,
+      responseFormat: { type: 'json_object' },
+    });
+
+    const repairedParsed = tryParseJson(repairedResult?.content);
+    const repaired = SyllabusSchema.safeParse(repairedParsed);
+    if (!repaired.success) {
+      throw new Error(`Syllabus generation failed validation: ${repaired.error.toString()}`);
+    }
+    ensureSyllabusMinimums(repaired.data);
+    return repaired.data;
+  } finally {
+    logStageUsage('SYLLABUS', usageStart);
+  }
 }
 
 export async function planModulesFromGraph(syllabus) {
