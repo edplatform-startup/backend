@@ -66,11 +66,8 @@ export function shouldUseTools(stage) {
   return stage === STAGES.PLANNER || stage === STAGES.WRITER || stage === STAGES.ASSESSOR;
 }
 
-const resolvedFallbacks = [courseV2Models.fallback, courseV2Models.secondaryFallback].filter(Boolean);
-
-export const FALLBACKS = resolvedFallbacks.length
-  ? resolvedFallbacks
-  : ['meta-llama/llama-3.3-70b-instruct:free', 'anthropic/claude-3.5-sonnet'];
+// Fallback models removed - using single model per stage only
+export const FALLBACKS = [];
 
 export function nextFallback(i) {
   return FALLBACKS[i] || null;

@@ -483,7 +483,7 @@ export async function executeOpenRouterChat(options = {}) {
     reasoning,
     tools = [],
     toolChoice,
-    maxToolIterations,
+    maxToolIterations = DEFAULT_MAX_TOOL_ITERATIONS,
     endpoint = DEFAULT_CHAT_ENDPOINT,
     apiKey: explicitApiKey,
     signal,
@@ -504,12 +504,6 @@ export async function executeOpenRouterChat(options = {}) {
     ? attachments.filter((att) => att && typeof att === 'object')
     : [];
   const { definitions: toolDefinitions, handlers: toolHandlers } = formatToolDefinitions(tools);
-  const hasTooling = toolDefinitions.length > 0;
-  const effectiveMaxToolIterations = hasTooling
-    ? typeof maxToolIterations === 'number'
-      ? maxToolIterations
-      : DEFAULT_MAX_TOOL_ITERATIONS
-    : 0;
   const reasoningPayload = sanitizeReasoning(reasoning);
   const isAnthropicModel = model.startsWith('anthropic/');
   const shouldInlineAttachments = typeof model === 'string' && /^x-ai\/grok/.test(model);
@@ -545,10 +539,10 @@ export async function executeOpenRouterChat(options = {}) {
       requestBody.response_format = responseFormat;
     }
 
-    if (!forceFinalRun && hasTooling) {
+    if (!forceFinalRun && toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
-    } else if (forceFinalRun && hasTooling) {
+    } else if (forceFinalRun) {
       requestBody.tool_choice = 'none';
     }
 
@@ -632,7 +626,7 @@ export async function executeOpenRouterChat(options = {}) {
       continue;
     }
 
-    if (hasTooling && iterations >= effectiveMaxToolIterations) {
+    if (iterations >= maxToolIterations) {
       forceFinalRun = true;
       conversation.push({
         role: 'system',

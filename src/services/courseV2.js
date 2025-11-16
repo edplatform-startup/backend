@@ -1,7 +1,7 @@
 // src/services/courseV2.js
 
 import { callStageLLM } from './llmCall.js';
-import { STAGES, nextFallback } from './modelRouter.js';
+import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import {
   plannerSyllabus,
@@ -646,7 +646,7 @@ function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
   return parsed.data;
 }
 
-async function attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus, modelOverride = null }) {
+async function attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus }) {
   let result;
   try {
     ({ result } = await courseV2LLMCaller({
@@ -654,7 +654,6 @@ async function attemptAssessmentRepair({ repairMessages, modules, lessons, sylla
       messages: repairMessages,
       maxTokens: 2400,
       allowWeb: false,
-      modelOverride,
     }));
   } catch (err) {
     console.error('[courseV2][ASSESSMENTS] attemptAssessmentRepair call failed:', err);
@@ -832,64 +831,47 @@ ${stringifyForPrompt(syllabus.outcomes)}
 
 Task: Propose 6-10 modules covering all nodes.`;
 
-    const candidates = [];
-    for (let i = 0; i < 3; i += 1) {
-      const { result } = await courseV2LLMCaller({
-        stage: STAGES.PLANNER,
-        messages: [...systemPrompt, { role: 'user', content: userContent }],
-        maxTokens: 1600,
-      });
-      const candidate = tryParseJson(result?.content);
-      if (candidate) candidates.push(candidate);
-    }
-
-    if (candidates.length === 0) {
-      throw new Error('Module planning produced no valid candidates');
-    }
-
-    const selectorMessages = [
-      ...selectorModules(),
-      {
-        role: 'user',
-        content: `Candidates:
-${stringifyForPrompt(candidates)}
-
-Choose or merge into the best single module plan JSON.`,
-      },
-    ];
-
-    const { result: selected } = await courseV2LLMCaller({
-      stage: STAGES.SELECTOR,
-      messages: selectorMessages,
+    // Single call to Gemini 2.5 Pro for module planning
+    const { result } = await courseV2LLMCaller({
+      stage: STAGES.PLANNER,
+      messages: [...systemPrompt, { role: 'user', content: userContent }],
       maxTokens: 1600,
+      modelOverride: 'google/gemini-2.5-pro',
     });
 
-    const parsed = ModulesSchema.safeParse(tryParseJson(selected?.content));
+    const candidate = tryParseJson(result?.content);
+    const parsed = ModulesSchema.safeParse(candidate);
+    
     if (parsed.success) {
       const normalizedPlan = ensureModulePlanHasModules(parsed.data, syllabus);
       validateModuleCoverage(normalizedPlan, syllabus);
       return normalizedPlan;
     }
 
+    // One repair attempt with same Gemini model
+    console.warn('[courseV2][MODULES] Module planning failed validation, attempting repair.');
     const repairMessages = [
       { role: 'system', content: 'You repair JSON module plans to satisfy schema exactly. Return ONLY corrected JSON.' },
       {
         role: 'user',
         content: `Validation failed: ${parsed.error.toString()}
 Topic graph: ${stringifyForPrompt(syllabus.topic_graph)}
-Original: ${selected?.content ?? ''}`,
+Original: ${stringifyForPrompt(candidate)}`,
       },
     ];
 
     const { result: repaired } = await courseV2LLMCaller({
-      stage: STAGES.SELECTOR,
+      stage: STAGES.PLANNER,
       messages: repairMessages,
       maxTokens: 1400,
+      modelOverride: 'google/gemini-2.5-pro',
     });
 
     const repairedParsed = ModulesSchema.safeParse(tryParseJson(repaired?.content));
     if (!repairedParsed.success) {
-      throw new Error(`Module plan failed validation: ${repairedParsed.error.toString()}`);
+      console.warn('[courseV2][MODULES] Module repair failed, using fallback module plan.');
+      const topics = extractTopicNodesFromSyllabus(syllabus);
+      return buildFallbackModulePlanFromTopics(topics);
     }
 
     const repairedPlan = ensureModulePlanHasModules(repairedParsed.data, syllabus);
@@ -910,6 +892,7 @@ export async function designLessons(modules, syllabus) {
     const nodeMap = new Map((syllabus.topic_graph.nodes || []).map((node) => [node.id, node]));
     const lessons = [];
 
+    // Use Grok-4-Fast for all lesson generation, disable web search
     for (const module of modules.modules) {
       const relatedNodes = (module.covers_nodes || [])
         .map((nodeId) => nodeMap.get(nodeId))
@@ -919,11 +902,12 @@ export async function designLessons(modules, syllabus) {
         stage: STAGES.WRITER,
         messages: primaryPrompt,
         maxTokens: 2000,
-        allowWeb: true,
+        allowWeb: false,
       });
 
       let moduleLessons = normalizeLessonsOutput(tryParseJson(result?.content), module.id);
 
+      // One retry on JSON error with same model
       if (moduleLessons.length === 0) {
         console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id}; retrying with correction prompt.`);
         const correctionPrompt = buildModuleLessonPrompt(
@@ -938,23 +922,9 @@ export async function designLessons(modules, syllabus) {
           allowWeb: false,
         });
         moduleLessons = normalizeLessonsOutput(tryParseJson(retryResult?.content), module.id);
-
-        if (moduleLessons.length === 0) {
-          const fallbackModel = nextFallback(0);
-          if (fallbackModel) {
-            console.warn(`[courseV2][LESSONS] Lesson generation parse/empty for module ${module.id} persisted; trying fallback model ${fallbackModel}.`);
-            const { result: altResult } = await courseV2LLMCaller({
-              stage: STAGES.WRITER,
-              messages: correctionPrompt,
-              maxTokens: 1600,
-              allowWeb: false,
-              modelOverride: fallbackModel,
-            });
-            moduleLessons = normalizeLessonsOutput(tryParseJson(altResult?.content), module.id);
-          }
-        }
       }
 
+      // If still no lessons after retry, use fallback for this module
       if (moduleLessons.length === 0) {
         console.warn(`[courseV2][LESSONS] Lesson generation returned no lessons for module ${module.id}; using fallback.`);
         const fallback = buildFallbackLessons(modules, syllabus, [module.id]);
@@ -966,7 +936,10 @@ export async function designLessons(modules, syllabus) {
 
     const lessonsPayload = { lessons };
     let parsed = LessonsSchema.safeParse(lessonsPayload);
+    
+    // One repair attempt with same model if validation fails
     if (!parsed.success) {
+      console.warn('[courseV2][LESSONS] Lesson schema validation failed, attempting repair.');
       const repairMessages = [
         { role: 'system', content: 'You fix lesson JSON to satisfy schema. Return ONLY corrected JSON.' },
         {
@@ -981,6 +954,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
         stage: STAGES.WRITER,
         messages: repairMessages,
         maxTokens: 1800,
+        allowWeb: false,
       });
 
       const repairedRaw = tryParseJson(repaired?.content);
@@ -988,6 +962,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
       parsed = LessonsSchema.safeParse(repairedPayload);
     }
 
+    // If still invalid or too few lessons, use fallback
     if (!parsed.success || parsed.data.lessons.length < 6) {
       const reason = parsed.success ? 'too few lessons' : parsed.error.toString();
       console.warn(`[courseV2][LESSONS] Lesson plan invalid after repair (${reason}); using fallback lessons.`);
@@ -1074,6 +1049,7 @@ Return ONLY JSON.`,
 
     if (!parsed.success || structuralError) {
       const validationMessage = parsed.success ? structuralError?.message ?? 'Custom assessment validation failed.' : parsed.error.toString();
+      console.warn('[courseV2][ASSESSMENTS] Assessment validation failed, attempting repair.');
       const repairMessages = [
         { role: 'system', content: 'You fix assessment JSON to satisfy schema and requirements exactly. Return ONLY corrected JSON.' },
         {
@@ -1086,21 +1062,8 @@ Original JSON: ${stringifyForPrompt(rawAssessments)}`,
         },
       ];
 
-      let repairOutcome = await attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus });
-
-      if (!repairOutcome.success) {
-        const fallbackModel = nextFallback(0);
-        if (fallbackModel) {
-          console.warn('[courseV2][ASSESSMENTS] Assessment repair failed, trying fallback model.');
-          repairOutcome = await attemptAssessmentRepair({
-            repairMessages,
-            modules,
-            lessons,
-            syllabus,
-            modelOverride: fallbackModel,
-          });
-        }
-      }
+      // Single repair attempt with same model (Grok)
+      const repairOutcome = await attemptAssessmentRepair({ repairMessages, modules, lessons, syllabus });
 
       if (!repairOutcome.success) {
         console.warn('[courseV2][ASSESSMENTS] Assessment repair failed; using fallback assessments:', repairOutcome.error);
@@ -1709,7 +1672,8 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
     };
 
     course = crossLink(course);
-    course = await criticAndRepair(course);
+    // Critic stage removed for simplicity
+    // course = await criticAndRepair(course);
 
     const packaged = packageCourse(course);
     const parsed = CoursePackageSchema.safeParse(packaged);
