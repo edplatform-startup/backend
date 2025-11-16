@@ -621,12 +621,12 @@ function buildFallbackAssessments(modulesPlan, lessonsPlan, syllabus) {
       {
         title: 'Concept Mastery',
         weight_pct: 60,
-        outcomes: outcomes.slice(0, 2),
+        outcomes: outcomes.slice(0, Math.max(1, Math.min(2, outcomes.length))),
       },
       {
         title: 'Applied Practice',
         weight_pct: 40,
-        outcomes: outcomes.slice(2, 4).length ? outcomes.slice(2, 4) : outcomes.slice(0, 2),
+        outcomes: outcomes.slice(2, 4).length ? outcomes.slice(2, 4) : outcomes.slice(0, Math.max(1, Math.min(2, outcomes.length))),
       },
     ],
   };
@@ -654,6 +654,7 @@ async function attemptAssessmentRepair({ repairMessages, modules, lessons, sylla
       messages: repairMessages,
       maxTokens: 2400,
       allowWeb: false,
+      responseFormat: { type: 'json_object' },
     }));
   } catch (err) {
     console.error('[courseV2][ASSESSMENTS] attemptAssessmentRepair call failed:', err);
@@ -773,6 +774,7 @@ export async function synthesizeSyllabus({
       allowWeb: true,
       maxTokens: 1800,
       attachments,
+      responseFormat: { type: 'json_object' },
     });
 
     const rawContent = result?.content;
@@ -801,6 +803,7 @@ Return corrected JSON only.`,
       allowWeb: false,
       maxTokens: 1500,
       attachments,
+      responseFormat: { type: 'json_object' },
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
@@ -837,6 +840,7 @@ Task: Propose 6-10 modules covering all nodes.`;
       messages: [...systemPrompt, { role: 'user', content: userContent }],
       maxTokens: 4096,
       modelOverride: 'google/gemini-2.5-pro',
+      responseFormat: { type: 'json_object' },
     });
 
     const candidate = tryParseJson(result?.content);
@@ -865,6 +869,7 @@ Original: ${stringifyForPrompt(candidate)}`,
       messages: repairMessages,
       maxTokens: 4096,
       modelOverride: 'google/gemini-2.5-pro',
+      responseFormat: { type: 'json_object' },
     });
 
     const repairedParsed = ModulesSchema.safeParse(tryParseJson(repaired?.content));
@@ -903,6 +908,7 @@ export async function designLessons(modules, syllabus) {
         messages: primaryPrompt,
         maxTokens: 2000,
         allowWeb: false,
+        responseFormat: { type: 'json_object' },
       });
 
       let moduleLessons = normalizeLessonsOutput(tryParseJson(result?.content), module.id);
@@ -920,6 +926,7 @@ export async function designLessons(modules, syllabus) {
           messages: correctionPrompt,
           maxTokens: 1600,
           allowWeb: false,
+          responseFormat: { type: 'json_object' },
         });
         moduleLessons = normalizeLessonsOutput(tryParseJson(retryResult?.content), module.id);
       }
@@ -955,6 +962,7 @@ Original lessons: ${stringifyForPrompt(lessonsPayload)}`,
         messages: repairMessages,
         maxTokens: 1800,
         allowWeb: false,
+        responseFormat: { type: 'json_object' },
       });
 
       const repairedRaw = tryParseJson(repaired?.content);
@@ -1033,6 +1041,7 @@ Return ONLY JSON.`,
       messages,
       maxTokens: 3000,
       allowWeb: false,
+      responseFormat: { type: 'json_object' },
     });
 
     const rawAssessments = tryParseJson(result?.content);
@@ -1404,6 +1413,7 @@ export async function criticAndRepair(course) {
         stage: STAGES.CRITIC,
         messages,
         maxTokens: 2000,
+        responseFormat: { type: 'json_object' },
       });
 
       const parsed = tryParseJson(result?.content);
