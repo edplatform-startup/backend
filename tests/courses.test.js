@@ -4,7 +4,6 @@ import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
-import { setCourseBuilder, clearCourseBuilder } from '../src/services/courseBuilder.js';
 import {
   __setSyllabusSynthesizer,
   __clearSyllabusSynthesizer,
@@ -43,7 +42,6 @@ const sampleCourseRow = {
 test('courses route validations and behaviors', async (t) => {
   t.afterEach(() => {
     clearSupabaseClient();
-    clearCourseBuilder();
     __clearSyllabusSynthesizer();
     __resetCourseV2LLMCaller();
   });
@@ -275,80 +273,13 @@ test('courses route validations and behaviors', async (t) => {
     assert.ok(totalSubtopics >= 32);
   });
 
-  await t.test('requires topics before generating a course package', async () => {
+  await t.test('POST /courses always returns 501', async () => {
     const res = await request(app)
       .post('/courses')
       .set('Content-Type', 'application/json')
-      .send({
-        userId: sampleCourseRow.user_id,
-        courseSelection: sampleCourseRow.course_selection,
-      });
+      .send({ userId: sampleCourseRow.user_id, topics: ['anything'] });
 
-    assert.equal(res.status, 400);
-    assert.match(res.body.error, /topics must contain at least one topic/);
-  });
-
-  await t.test('persists placeholder and updates course data with assets', async () => {
-    const insertPayloads = [];
-    const updatePayloads = [];
-    let builderOptions;
-
-    setCourseBuilder(async (options) => {
-      builderOptions = options;
-      return {
-        course: { syllabus: { outcomes: [] } },
-        assets: { summary: 'asset-bundle' },
-      };
-    });
-
-    setSupabaseClient(
-      createSupabaseStub({
-        insertResponses: [{
-          data: { id: 'new-course' },
-          error: null,
-          onInsert: (payload) => insertPayloads.push(payload),
-        }],
-        updateResponses: [{
-          data: { id: 'new-course' },
-          error: null,
-          onUpdate: (payload) => updatePayloads.push(payload),
-        }],
-      })
-    );
-
-    const res = await request(app)
-      .post('/courses')
-      .set('Content-Type', 'application/json')
-      .send({
-        userId: sampleCourseRow.user_id,
-        topics: ['Topic A', 'Topic B'],
-        topicFamiliarity: { 'Topic B': 'expert' },
-        className: 'Custom Prep',
-        syllabusText: sampleCourseRow.syllabus_text,
-        examFormatDetails: sampleCourseRow.exam_format_details,
-      });
-
-    assert.equal(res.status, 201);
-    assert.match(res.body.courseId, /^[0-9a-f-]{36}$/i);
-
-    assert.equal(insertPayloads.length, 1);
-    const placeholder = insertPayloads[0][0];
-    assert.equal(placeholder.title, 'Custom Prep');
-    assert.deepEqual(placeholder.topics, ['Topic A', 'Topic B']);
-    assert.deepEqual(placeholder.topic_familiarity, [{ topic: 'Topic B', familiarity: 'expert' }]);
-    assert.equal(res.body.courseId, placeholder.id);
-
-    assert.ok(builderOptions);
-    assert.deepEqual(builderOptions.topics, ['Topic A', 'Topic B']);
-    assert.deepEqual(builderOptions.topicFamiliarity, [{ topic: 'Topic B', familiarity: 'expert' }]);
-    assert.equal(builderOptions.className, 'Custom Prep');
-    assert.equal(builderOptions.userId, sampleCourseRow.user_id);
-    assert.equal(builderOptions.courseId, placeholder.id);
-
-    assert.equal(updatePayloads.length, 1);
-    const updateBody = updatePayloads[0];
-    assert.ok(updateBody.course_data);
-    assert.equal(updateBody.course_data.version, '2.0');
-    assert.deepEqual(updateBody.course_data.assets, { summary: 'asset-bundle' });
+    assert.equal(res.status, 501);
+    assert.equal(res.body.error, 'Course generation is not implemented');
   });
 });

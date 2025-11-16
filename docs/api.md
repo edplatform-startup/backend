@@ -188,29 +188,12 @@ Base URL (production): https://api.kognolearn.com
   - 502 Bad Gateway → Model failure or unusable response.
 
 ### POST /courses
-- Purpose: Persist a full Course V2 package (syllabus, modules, lessons, assessments) plus per-format study assets after the user submits curated topics/familiarity.
-- Request body (JSON):
-  - `userId` (string, required)
-  - `topics` (string[], required) – flattened list of subtopic titles returned by `/courses/topics`
-  - `topicFamiliarity` (object or `{ topic, familiarity }[]`, optional) – levels such as `beginner`, `expert`; entries outside `topics` are rejected
-  - `className` (string, optional) – overrides course title stored in Supabase
-  - Shared fields from `/courses/topics`: `finishByDate`, `courseSelection`/`university`/`courseTitle`, `syllabusText`, `syllabusFiles`, `examFormatDetails`, `examFiles`, `userPrefs`
-- Behavior:
-  1. Validates payload and inserts a placeholder `api.courses` row containing `title`, `topics`, and normalized `topic_familiarity`.
-  2. Runs `generateCoursePackageWithAssets`, which orchestrates the Course V2 pipeline and the new asset builder:
-     - `package` – structured syllabus/modules/lessons/assessments + study time estimates.
-     - `assets` – generated JSON for `video`, `reading`, `flashcards`, `mini quiz`, and `practice exam` per module (also persisted in their respective tables, with IDs stored in `course_data.assets`).
-      - Module planning keeps the 6-10 module target as a soft guideline; if the model proposes zero modules, the backend deterministically builds a fallback plan from the topic graph so module count alone never triggers a server error.
-      - Lesson design enforces strict JSON (quoted URLs, no trailing text) and, if parsing/validation fails or produces <6 lessons, it deterministically builds a compliant fallback plan so every module keeps 2–4 lessons.
-      - Assessment generation similarly falls back to deterministic weekly quizzes, capstone, and exam blueprint whenever LLM output cannot be repaired, so the full course package is always returned.
-    - Tool calls originating from OpenRouter plugins (e.g., xAI web search) are intercepted server-side and resolved without redefining the same tools in the payload, so Anthropic and xAI runs both succeed.
-  3. Updates the stored course row with `{ version: "2.0", model: "x-ai/grok-4-fast", generated_at, inputs, package, assets }`.
-  4. On failure the placeholder row is deleted so retries can reuse the inputs.
+- Purpose: Temporarily disabled. The backend no longer generates courses or assets.
+- Request body: Any payload is accepted but ignored.
+- Behavior: Immediately responds with HTTP 501 to signal the functionality is unimplemented.
 - Responses:
-  - 201 Created → `{ "courseId": "<uuid>" }`
-  - 400 Bad Request → Missing `topics`, invalid familiarity map, or invalid shared fields.
-  - 502 Bad Gateway → LLM orchestration or Supabase persistence failed.
-  - 500 Internal Server Error → Unexpected exception.
+  - 501 Not Implemented → `{ "error": "Course generation is not implemented" }`
+  - 500 Internal Server Error → Only if an unexpected exception occurs while writing the response.
 
 ### POST /flashcards
 - Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).
@@ -294,7 +277,7 @@ Base URL (production): https://api.kognolearn.com
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
 
 ## Notes
-- Every response uses JSON. Successful `POST /courses` requests return only the persisted `courseId`.
+- Every response uses JSON. `POST /courses` currently always returns 501 Not Implemented.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
 - Supabase schema: reads from and writes to `api.courses`. `course_data` is the canonical JSON column for stored syllabi.
 

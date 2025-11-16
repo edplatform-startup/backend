@@ -3,14 +3,6 @@
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
-import {
-  plannerSyllabus,
-  plannerModules,
-  writerLessons,
-  selectorModules,
-  assessorAssessments,
-  criticCourse,
-} from './prompts/courseV2Prompts.js';
 
 const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
 
@@ -333,12 +325,3 @@ export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) 
   throw new Error('Course generation is not implemented');
 }
 
-// Re-export prompts for external use
-export {
-  plannerSyllabus,
-  plannerModules,
-  writerLessons,
-  selectorModules,
-  assessorAssessments,
-  criticCourse,
-};

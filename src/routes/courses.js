@@ -201,21 +201,6 @@ router.post('/topics', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const shared = parseSharedCourseInputs(req.body || {});
-  if (!shared.valid) {
-    return res.status(400).json({ error: shared.error });
-  }
-
-  const topicsValidation = normalizeTopics(req.body?.topics);
-  if (!topicsValidation.valid) {
-    return res.status(400).json({ error: topicsValidation.error });
-  }
-
-  const familiarityValidation = normalizeTopicFamiliarity(topicsValidation.value, req.body?.topicFamiliarity);
-  if (!familiarityValidation.valid) {
-    return res.status(400).json({ error: familiarityValidation.error });
-  }
-
   return res.status(501).json({ error: 'Course generation is not implemented' });
 });
 

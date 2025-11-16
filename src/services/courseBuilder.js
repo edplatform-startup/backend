@@ -1,6 +1,3 @@
-import { generateCourseV2 } from './courseV2.js';
-import { generateAssetsContent } from './courseAssets.js';
-
 let customCourseBuilder = null;
 
 export function setCourseBuilder(fn) {
