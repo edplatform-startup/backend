@@ -421,7 +421,8 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
               stage: meta.stage || 'unknown',
               originalMessage: errorText,
             };
-            console.error('[openrouter][TOKEN] model hit token limit:', err.tokenLimitDetails);
+            const tokenMeta = err.tokenLimitDetails;
+            console.error(`\[openrouter\]\[TOKEN\] model hit token limit: stage=${tokenMeta.stage} model=${tokenMeta.model} maxTokens=${tokenMeta.maxTokens ?? 'unknown'}`);
           }
         } catch (ignore) {}
         if (shouldRetry && (response.status === 502 || response.status === 400)) {
@@ -457,7 +458,9 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
         await new Promise((resolve) => setTimeout(resolve, backoff));
         continue;
       }
-      console.error('[openrouter] request failed:', error);
+      const stageLabel = meta?.stage || 'unknown';
+      const modelLabel = meta?.model || body?.model || body?.modelName || 'unknown';
+      console.error(`[openrouter] request failed: stage=${stageLabel} model=${modelLabel}`, error);
       throw error;
     }
   }
@@ -580,11 +583,11 @@ export async function executeOpenRouterChat(options = {}) {
         // Provide additional logging for token limit errors, including stage and maxTokens
         if (error && error.isTokenLimit) {
           const d = error.tokenLimitDetails || {};
-          console.error('[openrouter][TOKEN] request failed: stage=%s, model=%s, maxTokens=%s; error=%s',
-            d.stage || options?.stage || 'unknown',
-            d.model || effectiveModel,
-            d.maxTokens || requestBody?.max_tokens || 'unknown',
-            d.originalMessage || error.message || error);
+          const stageLabel = d.stage || options?.stage || 'unknown';
+          const modelLabel = d.model || effectiveModel;
+          const tokenLimit = d.maxTokens || requestBody?.max_tokens || 'unknown';
+          const errMsg = d.originalMessage || error.message || String(error);
+          console.error(`[openrouter][TOKEN] request failed: stage=${stageLabel}, model=${modelLabel}, maxTokens=${tokenLimit}; error=${errMsg}`);
         }
         throw error;
       }

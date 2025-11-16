@@ -60,7 +60,7 @@ const courseV2Defaults = {
     rawEnv.COURSE_V2_TOPICS_MODEL,
     rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'x-ai/grok-4-fast',
   ),
-  fallbackModel: normalizeModel(rawEnv.COURSE_V2_FALLBACK_MODEL, 'anthropic/claude-3.5-sonnet'),
+  fallbackModel: normalizeModel(rawEnv.COURSE_V2_FALLBACK_MODEL, 'meta-llama/llama-3.3-70b-instruct:free'),
   secondaryFallbackModel: normalizeModel(
     rawEnv.COURSE_V2_SECONDARY_FALLBACK_MODEL,
     'meta-llama/llama-3.3-70b-instruct:free',

@@ -162,6 +162,7 @@ test('designLessons only falls back for the module that fails twice', async (t) 
     { content: buildLessons('module-1') },
     { content: '' },
     { content: '[]' },
+    { content: '{}' },
     { content: buildLessons('module-3') },
     { content: buildLessons('module-4') },
   ];

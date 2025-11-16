@@ -70,7 +70,7 @@ const resolvedFallbacks = [courseV2Models.fallback, courseV2Models.secondaryFall
 
 export const FALLBACKS = resolvedFallbacks.length
   ? resolvedFallbacks
-  : ['anthropic/claude-3.5-sonnet', 'meta-llama/llama-3.3-70b-instruct:free'];
+  : ['meta-llama/llama-3.3-70b-instruct:free', 'anthropic/claude-3.5-sonnet'];
 
 export function nextFallback(i) {
   return FALLBACKS[i] || null;

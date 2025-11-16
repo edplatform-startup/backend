@@ -14,6 +14,7 @@ import {
 import {
   SyllabusSchema,
   ModulesSchema,
+  LessonSchema,
   LessonsSchema,
   AssessmentsSchema,
   CoursePackageSchema,
@@ -355,8 +356,9 @@ function normalizeLessonsContainer(raw) {
   return { lessons: [] };
 }
 
-function enforceLessonConstraints(lessonsPlan, modulesPlan) {
-  const moduleIds = new Set((modulesPlan.modules || []).map((module) => module.id));
+function enforceLessonConstraints(lessonsPlan, modulesPlan, options = {}) {
+  const { requireGlobalMinimum = true } = options;
+  const moduleIds = new Set((modulesPlan?.modules || []).map((module) => module.id));
   const counts = new Map();
 
   for (const lesson of lessonsPlan.lessons) {
@@ -386,7 +388,7 @@ function enforceLessonConstraints(lessonsPlan, modulesPlan) {
     }
   }
 
-  if (lessonsPlan.lessons.length < 6) {
+  if (requireGlobalMinimum && lessonsPlan.lessons.length < 6) {
     throw new Error('Array must contain at least 6 element(s) in lessons.');
   }
 }
@@ -396,6 +398,8 @@ function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
   const modules = Array.isArray(limitModuleIds) && limitModuleIds.length
     ? allModules.filter((module) => module && limitModuleIds.includes(module.id))
     : allModules;
+  const allowPartial = Array.isArray(limitModuleIds) && limitModuleIds.length > 0;
+  const targetModulesPlan = allowPartial ? { modules } : modulesPlan;
 
   if (modules.length === 0) {
     throw new Error('Cannot build fallback lessons: no modules provided.');
@@ -469,18 +473,39 @@ function buildFallbackLessons(modulesPlan, syllabus, limitModuleIds = null) {
   });
 
   const payload = { lessons };
-  const parsed = LessonsSchema.safeParse(payload);
-  if (!parsed.success) {
-    console.error('[courseV2][LESSONS] Fallback lesson builder produced invalid plan:', parsed.error);
-    throw parsed.error;
+  if (!allowPartial) {
+    const parsed = LessonsSchema.safeParse(payload);
+    if (!parsed.success) {
+      console.error('[courseV2][LESSONS] Fallback lesson builder produced invalid plan:', parsed.error);
+      throw parsed.error;
+    }
+    try {
+      enforceLessonConstraints(parsed.data, targetModulesPlan);
+    } catch (error) {
+      console.error('[courseV2][LESSONS] Fallback lesson plan failed lesson constraints:', error);
+      throw error;
+    }
+    return parsed.data;
   }
+
+  const normalizedLessons = [];
+  for (const rawLesson of payload.lessons) {
+    const parsedLesson = LessonSchema.safeParse(rawLesson);
+    if (!parsedLesson.success) {
+      console.error('[courseV2][LESSONS] Partial fallback lesson invalid:', parsedLesson.error);
+      throw parsedLesson.error;
+    }
+    normalizedLessons.push(parsedLesson.data);
+  }
+
+  const partialPlan = { lessons: normalizedLessons };
   try {
-    enforceLessonConstraints(parsed.data, modulesPlan);
+    enforceLessonConstraints(partialPlan, targetModulesPlan, { requireGlobalMinimum: false });
+    return partialPlan;
   } catch (error) {
-    console.error('[courseV2][LESSONS] Fallback lesson plan failed lesson constraints:', error);
+    console.error('[courseV2][LESSONS] Partial fallback lesson plan failed constraints:', error);
     throw error;
   }
-  return parsed.data;
 }
 
 function buildModuleLessonPrompt(module, relatedNodes, correctionDirective = '') {
@@ -1543,7 +1568,8 @@ function buildMinimalFallbackCourse(options) {
   const nodes = topicStrings.map((topic, index) => ({
     id: `t${index + 1}`,
     title: topic,
-    description: `Key topic: ${topic}`,
+    summary: `Key topic: ${topic}`,
+    refs: ['https://example.com/course-reference'],
   }));
 
   while (nodes.length < 4) {
@@ -1551,9 +1577,17 @@ function buildMinimalFallbackCourse(options) {
     nodes.push({
       id: `t${idx}`,
       title: `Additional topic ${idx}`,
-      description: 'Auto-generated supporting topic.',
+      summary: 'Auto-generated supporting topic.',
+      refs: ['https://example.com/course-reference'],
     });
   }
+
+  const baseSubject = courseName || 'the subject';
+  const outcomes = [
+    `Gain a working understanding of ${baseSubject}.`,
+    `Be able to tackle representative practice questions in ${baseSubject}.`,
+    `Apply ${baseSubject} concepts to a practical scenario.`,
+  ];
 
   const syllabus = {
     title: courseName || 'Custom Course',
@@ -1562,11 +1596,13 @@ function buildMinimalFallbackCourse(options) {
       nodes,
       edges: [],
     },
-    outcomes: [
-      `Gain a working understanding of ${courseName || 'the subject'}.`,
-      'Be able to tackle representative practice questions.',
+    outcomes,
+    sources: [
+      {
+        url: 'https://example.com/course-primer',
+        title: `${courseName || 'Course'} primer`,
+      },
     ],
-    sources: [],
   };
 
   const modulesPlan = buildFallbackModulePlanFromTopics(nodes);
