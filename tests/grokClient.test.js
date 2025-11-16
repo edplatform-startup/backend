@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 // Import after we define helpers in case future refactors need them
-import { createWebSearchTool } from '../src/services/grokClient.js';
+import { createWebSearchTool, executeOpenRouterChat } from '../src/services/grokClient.js';
 
 function makeResponse({ ok = true, status = 200, statusText = 'OK', body = '' } = {}) {
   return {
@@ -104,4 +104,44 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
       process.env.OPENROUTER_GROK_4_FAST_KEY = originalFastKey;
     }
   }
+});
+
+test('executeOpenRouterChat enables web plugin without setting tool_choice when no tools are provided', async () => {
+  const bodies = [];
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFastKey = process.env.OPENROUTER_GROK_4_FAST_KEY;
+  process.env.OPENROUTER_API_KEY = originalApiKey || 'test-key';
+  process.env.OPENROUTER_GROK_4_FAST_KEY = originalFastKey || process.env.OPENROUTER_API_KEY;
+
+  globalThis.fetch = async (_url, init = {}) => {
+    bodies.push(JSON.parse(init.body));
+    return makeResponse({ body: JSON.stringify({ choices: [{ message: { content: 'ok' } }] }) });
+  };
+
+  try {
+    await executeOpenRouterChat({
+      model: 'x-ai/grok-4-fast',
+      messages: [{ role: 'user', content: 'perform research' }],
+      enableWebSearch: true,
+      maxTokens: 50,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = originalApiKey;
+    }
+    if (originalFastKey === undefined) {
+      delete process.env.OPENROUTER_GROK_4_FAST_KEY;
+    } else {
+      process.env.OPENROUTER_GROK_4_FAST_KEY = originalFastKey;
+    }
+  }
+
+  assert.ok(bodies.length > 0, 'request body should be captured');
+  const body = bodies[0];
+  assert.ok(Array.isArray(body.plugins) && body.plugins.some((plugin) => plugin.id === 'web'));
+  assert.equal(Object.prototype.hasOwnProperty.call(body, 'tool_choice'), false);
 });

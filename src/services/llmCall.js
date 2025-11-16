@@ -1,5 +1,5 @@
 import { pickModel, shouldUseTools, nextFallback } from './modelRouter.js';
-import { executeOpenRouterChat, createBrowsePageTool } from './grokClient.js';
+import { executeOpenRouterChat, createBrowsePageTool, createWebSearchTool } from './grokClient.js';
 
 export async function callStageLLM({
   stage,
@@ -23,9 +23,16 @@ export async function callStageLLM({
     } = pickModel(stage);
     const chosenModel = (modelOverride && attempt === 0 ? modelOverride : null) || fallbackModel || model;
     const stageNeedsTools = shouldUseTools(stage);
-    const useTools = stageNeedsTools || allowWeb;
-    const enableWebSearch = allowWeb || /:online\b/.test(chosenModel);
-    const toolList = useTools && !enableWebSearch ? [createBrowsePageTool()] : [];
+    const preferWebPlugin = allowWeb && /^x-ai\/grok/.test(chosenModel);
+    const enableWebSearch = allowWeb && (preferWebPlugin || /:online\b/.test(chosenModel));
+
+    const toolList = [];
+    if (stageNeedsTools && !enableWebSearch) {
+      toolList.push(createBrowsePageTool());
+    }
+    if (allowWeb) {
+      toolList.push(createWebSearchTool());
+    }
 
     try {
       const response = await executeOpenRouterChat({
