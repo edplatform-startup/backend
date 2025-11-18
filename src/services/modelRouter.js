@@ -7,7 +7,7 @@ export const STAGES = Object.freeze({
 
 const { courseV2Models = {} } = runtimeConfig;
 
-const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'openai/gpt-5.1';
+const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4-fast';
 const topicsModel =
   courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || plannerModel;
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
