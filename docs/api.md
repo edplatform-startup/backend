@@ -144,7 +144,7 @@ Base URL (production): https://api.kognolearn.com
   - 500 Internal Server Error → Database error.
 
 ### POST /courses/topics
-- Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + granular subtopics) before full course generation.
+- Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + competency-based subtopics with Deep/Cram metadata) before full course generation.
 - Request body (JSON):
   - `userId` (string, required)
   - `finishByDate` (string, optional ISO date)
@@ -155,8 +155,9 @@ Base URL (production): https://api.kognolearn.com
   - `examFiles` (FileMeta[], optional)
 - Behavior:
   - Validates user/file metadata and normalizes course selection fields.
-  - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned syllabus + topic graph.
-  - Summarizes raw topic graph nodes and prompts a dedicated LLM stage (`TOPICS`) to expand them into 8–16 overview topics with 5–15 subtopics each (targeting 40–80 subtopics overall).
+  - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned skeleton.
+  - Summarizes skeleton units and prompts the `TOPICS` LLM stage to expand them into 8–16 overview topics, each with 4–8 competency-based “Atomic Concepts.”
+  - Each concept includes `focus` (Conceptual/Computational/Memorization), `bloom_level`, `estimated_study_time_minutes`, `importance_score` (1–10), `exam_relevance_reasoning`, and `yield` (High/Medium/Low) to power Deep vs. Cram study modes.
   - Normalizes IDs, fills in missing metadata, enforces `overviewId` relationships, and logs usage via Grok cost tracking as `[topicsV2]`.
 - Responses:
   - 200 OK →
@@ -166,17 +167,19 @@ Base URL (production): https://api.kognolearn.com
       "overviewTopics": [
         {
           "id": "overview_1",
-          "title": "Algorithm Foundations",
-          "description": "Core analysis themes",
-          "likelyOnExam": true,
+          "title": "Module 1: Algorithm Foundations",
+          "original_skeleton_ref": "Week 1",
           "subtopics": [
             {
               "id": "overview_1_sub_1",
               "overviewId": "overview_1",
-              "title": "Asymptotic notation drills",
-              "description": "Big-O, Theta, little-o practice",
-              "difficulty": "intermediate",
-              "likelyOnExam": true
+              "title": "Proving Big-O bounds via limit comparison",
+              "focus": "Conceptual",
+              "bloom_level": "Analyze",
+              "estimated_study_time_minutes": 45,
+              "importance_score": 9,
+              "exam_relevance_reasoning": "Midterm rubric emphasizes limit-form proofs.",
+              "yield": "High"
             }
           ]
         }

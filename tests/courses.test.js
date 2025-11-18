@@ -184,15 +184,17 @@ test('courses route validations and behaviors', async (t) => {
               {
                 id: 'overview_1',
                 title: 'Algorithm Foundations',
-                description: 'Complexity + paradigms',
-                likelyOnExam: true,
+                original_skeleton_ref: 'Week 1: Algorithm Foundations',
                 subtopics: Array.from({ length: 4 }, (_, idx) => ({
                   id: `overview_1_sub_${idx + 1}`,
                   overviewId: 'overview_1',
                   title: `Foundation Concept ${idx + 1}`,
-                  description: 'Concept drill',
-                  difficulty: idx % 3 === 0 ? 'introductory' : idx % 3 === 1 ? 'intermediate' : 'advanced',
-                  likelyOnExam: idx % 2 === 0,
+                  focus: idx % 2 === 0 ? 'Conceptual' : 'Computational',
+                  bloom_level: idx % 2 === 0 ? 'Understand' : 'Analyze',
+                  estimated_study_time_minutes: 45 + idx,
+                  importance_score: 8,
+                  exam_relevance_reasoning: 'Core CS pillar.',
+                  yield: idx % 2 === 0 ? 'High' : 'Medium',
                 })),
               },
             ],
@@ -225,6 +227,9 @@ test('courses route validations and behaviors', async (t) => {
     assert.ok(Array.isArray(res.body.overviewTopics));
     assert.equal(res.body.overviewTopics.length, 1);
     assert.equal(res.body.overviewTopics[0].subtopics.length, 4);
+    assert.equal(res.body.overviewTopics[0].original_skeleton_ref, 'Week 1: Algorithm Foundations');
+    assert.ok(res.body.overviewTopics[0].subtopics[0].focus);
+    assert.ok(res.body.overviewTopics[0].subtopics[0].bloom_level);
     assert.equal(res.body.model, 'mock-hier-topics');
     assert.ok(Array.isArray(synthOptions.attachments) && synthOptions.attachments.length >= 2);
     assert.equal(synthOptions.university, 'UW');
@@ -252,15 +257,17 @@ test('courses route validations and behaviors', async (t) => {
           overviewTopics: Array.from({ length: 8 }, (_, oIdx) => ({
             id: `ov_${oIdx + 1}`,
             title: `Overview ${oIdx + 1}`,
-            description: 'Broad coverage',
-            likelyOnExam: true,
+            original_skeleton_ref: `Module ${oIdx + 1}`,
             subtopics: Array.from({ length: 4 }, (_, sIdx) => ({
               id: `ov_${oIdx + 1}_sub_${sIdx + 1}`,
               overviewId: `ov_${oIdx + 1}`,
               title: `Subtopic ${oIdx + 1}.${sIdx + 1}`,
-              description: 'Detailed concept',
-              difficulty: 'intermediate',
-              likelyOnExam: true,
+              focus: 'Computational',
+              bloom_level: 'Apply',
+              estimated_study_time_minutes: 30,
+              importance_score: 7,
+              exam_relevance_reasoning: 'Maps to syllabus concept.',
+              yield: 'High',
             })),
           })),
         }),

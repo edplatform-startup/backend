@@ -4,9 +4,31 @@ import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import { plannerSyllabus } from './prompts/courseV2Prompts.js';
-import { CourseSkeletonSchema } from '../schemas/courseV2.js';
+import { CourseSkeletonSchema, TopicMapSchema } from '../schemas/courseV2.js';
 
-const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
+const FOCUS_CANONICAL = new Map([
+  ['conceptual', 'Conceptual'],
+  ['computational', 'Computational'],
+  ['memorization', 'Memorization'],
+]);
+
+const BLOOM_CANONICAL = new Map([
+  ['remember', 'Remember'],
+  ['understand', 'Understand'],
+  ['apply', 'Apply'],
+  ['analyze', 'Analyze'],
+  ['evaluate', 'Evaluate'],
+]);
+
+const YIELD_CANONICAL = new Map([
+  ['high', 'High'],
+  ['medium', 'Medium'],
+  ['low', 'Low'],
+]);
+
+const DEFAULT_STUDY_MINUTES = 45;
+const MIN_STUDY_MINUTES = 15;
+const MAX_STUDY_MINUTES = 240;
 
 function captureUsageTotals() {
   try {
@@ -166,7 +188,47 @@ function coerceTopicString(value, defaultValue = '') {
   return String(value);
 }
 
-function normalizeOverviewTopics(rawOverviewTopics) {
+function coerceEnumValue(value, canonicalMap, fallback) {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (canonicalMap.has(normalized)) {
+      return canonicalMap.get(normalized);
+    }
+  }
+  return fallback;
+}
+
+function coerceStudyMinutes(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const rounded = Math.round(numeric);
+    if (rounded >= MIN_STUDY_MINUTES && rounded <= MAX_STUDY_MINUTES) {
+      return rounded;
+    }
+    if (rounded < MIN_STUDY_MINUTES) return MIN_STUDY_MINUTES;
+    return MAX_STUDY_MINUTES;
+  }
+  return DEFAULT_STUDY_MINUTES;
+}
+
+function coerceImportance(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const clamped = Math.min(10, Math.max(1, Math.round(numeric)));
+    return clamped;
+  }
+  return 7;
+}
+
+function coerceReasoning(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return 'Exam relevance not specified. Focus on past papers to validate.';
+}
+
+function normalizeOverviewTopics(rawOverviewTopics, skeletonSummaries = []) {
   if (!Array.isArray(rawOverviewTopics)) return [];
   const normalized = [];
 
@@ -178,8 +240,12 @@ function normalizeOverviewTopics(rawOverviewTopics) {
         ? ot.id.trim()
         : `overview_${index + 1}`;
     const title = coerceTopicString(ot.title, `Topic group ${index + 1}`);
-    const description = coerceTopicString(ot.description, '');
-    const likelyOnExam = Boolean(ot.likelyOnExam);
+    const skeletonHint =
+      coerceTopicString(
+        ot.original_skeleton_ref ?? ot.originalSkeletonRef ?? ot.skeleton_reference,
+        '',
+      ) ||
+      coerceTopicString(skeletonSummaries[index]?.title, `Unit ${index + 1}`);
 
     const subtopicsRaw = Array.isArray(ot.subtopics) ? ot.subtopics : [];
     const subtopics = [];
@@ -192,18 +258,23 @@ function normalizeOverviewTopics(rawOverviewTopics) {
           : `${id}_subtopic_${subIdx + 1}`;
       const overviewId = coerceTopicString(st.overviewId, id);
       const stTitle = coerceTopicString(st.title, `Subtopic ${subIdx + 1}`);
-      const stDescription = coerceTopicString(st.description, '');
-      const rawDiff = coerceTopicString(st.difficulty, 'intermediate').toLowerCase();
-      const difficulty = VALID_TOPIC_DIFFICULTIES.has(rawDiff) ? rawDiff : 'intermediate';
-      const stLikelyOnExam = Boolean(st.likelyOnExam);
+      const focus = coerceEnumValue(st.focus, FOCUS_CANONICAL, 'Conceptual');
+      const bloomLevel = coerceEnumValue(st.bloom_level ?? st.bloomLevel, BLOOM_CANONICAL, 'Understand');
+      const studyMinutes = coerceStudyMinutes(st.estimated_study_time_minutes ?? st.study_minutes);
+      const importance = coerceImportance(st.importance_score ?? st.importance ?? st.priority);
+      const reasoning = coerceReasoning(st.exam_relevance_reasoning ?? st.reasoning);
+      const yieldScore = coerceEnumValue(st.yield ?? st.exam_yield ?? st.yield_score, YIELD_CANONICAL, 'Medium');
 
       subtopics.push({
         id: sid,
         overviewId,
         title: stTitle,
-        description: stDescription,
-        difficulty,
-        likelyOnExam: stLikelyOnExam,
+        focus,
+        bloom_level: bloomLevel,
+        estimated_study_time_minutes: studyMinutes,
+        importance_score: importance,
+        exam_relevance_reasoning: reasoning,
+        yield: yieldScore,
       });
     });
 
@@ -212,8 +283,7 @@ function normalizeOverviewTopics(rawOverviewTopics) {
     normalized.push({
       id,
       title,
-      description,
-      likelyOnExam,
+      original_skeleton_ref: skeletonHint,
       subtopics,
     });
   });
@@ -340,41 +410,48 @@ export async function generateHierarchicalTopics(input = {}) {
         id,
         title,
         description,
+        sequence_order: unit?.sequence_order ?? idx + 1,
+        original_skeleton_ref: unit?.title ?? `Unit ${idx + 1}`,
       };
     });
     if (rawTopicSummaries.length === 0) {
       throw new Error('Course skeleton did not produce any structural units.');
     }
 
-    const systemPrompt = `You are an expert university curriculum planner.
-You design topic maps for students preparing for a specific course and exam. You will receive:
-- The course name and institution.
-- A rough list of topic nodes extracted from the syllabus/topic graph.
+    const systemPrompt = `You are an expert exam prep strategist. You are creating a master study plan for a student.
 
-Your job:
-- Propose a set of high-level OVERVIEW TOPICS that together cover the whole course/exam.
-- These should be broad areas a student would recognize on a syllabus (8-16 total).
-- Under each overview topic, propose SPECIFIC SUBTOPICS (5-15) that reflect exam-relevant concepts, skills, or question types.
-- Err on the side of MORE subtopics so the union spans the entire course.
-- Prefer splitting large ideas into concrete, exam-ready pieces.
-- Avoid meta-topics like "study skills" unless explicitly required.
+INPUTS:
+1. The Course Skeleton (chronological list of topics).
+2. The specific Exam Format (e.g., "Multiple choice focus" or "Proof heavy").
+3. The raw syllabus text (for context).
 
-Output STRICT JSON using this structure ONLY:
+YOUR TASK:
+Expand the Skeleton into a detailed Topic Map. For every major topic, generate specific "Atomic Concepts" that act as study milestones.
+
+CRITICAL RULES:
+1. Granularity: Avoid generic titles like "Derivatives". Use actionable concepts like "Calculating derivatives using the Chain Rule".
+2. Bloom's Taxonomy: Ensure subtopics vary in cognitive depth (Definitions -> Application -> Analysis).
+3. Yield Scoring: Estimate how likely this topic is to appear on the exam (High/Medium/Low) based on the exam format provided.
+4. Metadata powers Deep vs. Cram study modes, so fill every field carefully.
+
+OUTPUT JSON STRUCTURE:
 {
   "overviewTopics": [
     {
-      "id": "string",
-      "title": "string",
-      "description": "string",
-      "likelyOnExam": true,
+      "id": "uuid",
+      "title": "Module 1: Limits & Continuity",
+      "original_skeleton_ref": "Week 1",
       "subtopics": [
         {
-          "id": "string",
-          "overviewId": "string",
-          "title": "string",
-          "description": "string",
-          "difficulty": "introductory" | "intermediate" | "advanced",
-          "likelyOnExam": boolean
+          "id": "uuid",
+          "overviewId": "uuid",
+          "title": "The Epsilon-Delta Definition of a Limit",
+          "focus": "Conceptual",
+          "bloom_level": "Understand",
+          "estimated_study_time_minutes": 45,
+          "importance_score": 9,
+          "exam_relevance_reasoning": "Syllabus explicitly mentions proofs for limits.",
+          "yield": "High"
         }
       ]
     }
@@ -385,19 +462,24 @@ Rules:
 - JSON must be valid (double quotes, no trailing commas, no comments).
 - IDs must be unique across overview topics and subtopics.
 - overviewId on each subtopic must match its parent overview topic id.
+- Provide at least 8 overview topics when possible, each with 4-8 atomic concepts.
 - Do not include extra keys or wrapper text.`;
 
+    const trimmedSyllabus = coerceTopicString(syllabusText, 'Not provided').slice(0, 4000);
     const userPrompt = `Course Details:
 Institution: ${coerceTopicString(university, 'Unknown institution')}
 Course / exam: ${coerceTopicString(courseTitle, 'Untitled course')}
-  Structure type: ${coerceTopicString(syllabus?.course_structure_type, 'Not specified')}
+Structure type: ${coerceTopicString(syllabus?.course_structure_type, 'Not specified')}
 Exam / target date: ${finishByDate ? new Date(finishByDate).toISOString() : 'Not specified'}
 Exam format: ${coerceTopicString(examFormatDetails, 'Not specified')}
 
-  Course skeleton units (raw, unstructured):
+Course Skeleton (chronological list):
 ${JSON.stringify(rawTopicSummaries, null, 2)}
 
-Using these as a starting point, produce an exam-aligned topic map with overviewTopics and subtopics.`;
+Raw syllabus text snippet:
+${trimmedSyllabus}
+
+Using this information, produce competency-based overviewTopics with fully populated atomic concept metadata.`;
 
     const { result, model } = await courseV2LLMCaller({
       stage: STAGES.TOPICS,
@@ -407,6 +489,7 @@ Using these as a starting point, produce an exam-aligned topic map with overview
       ],
       maxTokens: 2200,
       allowWeb: true,
+      responseFormat: { type: 'json_object' },
     });
 
     const parsed = tryParseJson(result?.content);
@@ -414,9 +497,10 @@ Using these as a starting point, produce an exam-aligned topic map with overview
       throw new Error('Topic generation returned invalid JSON.');
     }
 
-    const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics);
+    const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics, rawTopicSummaries);
+    const validated = TopicMapSchema.parse({ overviewTopics });
     return {
-      overviewTopics,
+      overviewTopics: validated.overviewTopics,
       model: model || 'unknown',
     };
   } finally {
