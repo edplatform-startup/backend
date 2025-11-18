@@ -21,16 +21,24 @@
     "npm": "10.x"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.45.4",
+    "@temporalio/activity": "^1.13.2",
+    "@temporalio/client": "^1.13.2",
+    "@temporalio/worker": "^1.13.2",
+    "@temporalio/workflow": "^1.13.2",
     "axios": "^1.13.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "instructor": "^1.0.0",
     "morgan": "^1.10.0",
     "node-fetch": "^3.3.2",
+    "openai": "^6.9.1",
     "string-similarity": "^4.0.4",
     "string-similarity-js": "^2.1.4",
-    "zod": "^3.23.8"
+    "uuid": "^13.0.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "supertest": "^7.1.4"

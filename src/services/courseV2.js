@@ -298,17 +298,8 @@ Return corrected JSON only.`,
   }
 }
 
-export async function planModulesFromGraph(syllabus) {
-  throw new Error('Course generation is not implemented');
-}
-
-export async function designLessons(modules, syllabus) {
-  throw new Error('Course generation is not implemented');
-}
-
-export async function generateAssessments(modules, lessons, syllabus) {
-  throw new Error('Course generation is not implemented');
-}
+// Module, lesson, and assessment generation functions were removed.
+// This service now focuses on syllabus synthesis and hierarchical topic generation only.
 
 /**
  * Hierarchical topic generation (already working well; do not touch its use).
@@ -418,19 +409,5 @@ Using these as a starting point, produce an exam-aligned topic map with overview
   }
 }
 
-export function crossLink(course) {
-  throw new Error('Course generation is not implemented');
-}
-
-export async function criticAndRepair(course) {
-  throw new Error('Course generation is not implemented');
-}
-
-export function packageCourse(course) {
-  throw new Error('Course generation is not implemented');
-}
-
-export async function generateCourseV2(optionsOrSelection, maybeUserPrefs = {}) {
-  throw new Error('Course generation is not implemented');
-}
+// Removed course packaging, cross-linking, critic, and full pipeline functions.
 
