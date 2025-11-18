@@ -4,7 +4,7 @@ import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import { plannerSyllabus } from './prompts/courseV2Prompts.js';
-import { SyllabusSchema } from '../schemas/courseV2.js';
+import { CourseSkeletonSchema } from '../schemas/courseV2.js';
 
 const VALID_TOPIC_DIFFICULTIES = new Set(['introductory', 'intermediate', 'advanced']);
 
@@ -145,12 +145,14 @@ function stringifyForPrompt(value) {
   }
 }
 
-function ensureSyllabusMinimums(syllabus) {
-  if (!Array.isArray(syllabus?.topic_graph?.nodes) || syllabus.topic_graph.nodes.length < 4) {
-    throw new Error('Syllabus must include at least 4 topic graph nodes.');
+function ensureSkeletonMinimums(skeleton) {
+  const type = typeof skeleton?.course_structure_type === 'string' ? skeleton.course_structure_type.trim() : '';
+  if (!type) {
+    throw new Error('Course skeleton must include course_structure_type.');
   }
-  if (!Array.isArray(syllabus?.sources) || syllabus.sources.length < 1) {
-    throw new Error('Syllabus must include at least one source.');
+  const units = Array.isArray(skeleton?.skeleton) ? skeleton.skeleton : [];
+  if (units.length < 2) {
+    throw new Error('Course skeleton must include at least 2 sequential units.');
   }
 }
 
@@ -259,10 +261,10 @@ export async function synthesizeSyllabus({
 
     const rawContent = result?.content;
     const parsed = tryParseJson(rawContent);
-    const firstPass = SyllabusSchema.safeParse(parsed);
+    const firstPass = CourseSkeletonSchema.safeParse(parsed);
 
     if (firstPass.success) {
-      ensureSyllabusMinimums(firstPass.data);
+      ensureSkeletonMinimums(firstPass.data);
       return firstPass.data;
     }
 
@@ -287,11 +289,11 @@ Return corrected JSON only.`,
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
-    const repaired = SyllabusSchema.safeParse(repairedParsed);
+    const repaired = CourseSkeletonSchema.safeParse(repairedParsed);
     if (!repaired.success) {
       throw new Error(`Syllabus generation failed validation: ${repaired.error.toString()}`);
     }
-    ensureSyllabusMinimums(repaired.data);
+    ensureSkeletonMinimums(repaired.data);
     return repaired.data;
   } finally {
     logStageUsage('SYLLABUS', usageStart);
@@ -325,12 +327,24 @@ export async function generateHierarchicalTopics(input = {}) {
       attachments: attachments || [],
     });
 
-    const nodes = Array.isArray(syllabus?.topic_graph?.nodes) ? syllabus.topic_graph.nodes : [];
-    const rawTopicSummaries = nodes.map((node, idx) => ({
-      id: node?.id ?? `node_${idx + 1}`,
-      title: coerceTopicString(node?.title || node?.name || node?.label, `Topic ${idx + 1}`),
-      description: coerceTopicString(node?.description || node?.summary, ''),
-    }));
+    const skeletonUnits = Array.isArray(syllabus?.skeleton) ? syllabus.skeleton : [];
+    const rawTopicSummaries = skeletonUnits.map((unit, idx) => {
+      const id = `unit_${unit?.sequence_order ?? idx + 1}`;
+      const title = coerceTopicString(unit?.title, `Unit ${idx + 1}`);
+      const concepts = Array.isArray(unit?.raw_concepts) ? unit.raw_concepts.filter(Boolean) : [];
+      const conceptSummary = concepts.length ? `Concepts: ${concepts.join(', ')}` : '';
+      const reviewLabel = unit?.is_exam_review ? 'Exam review unit.' : '';
+      const description = [conceptSummary, reviewLabel].filter(Boolean).join(' ').trim();
+
+      return {
+        id,
+        title,
+        description,
+      };
+    });
+    if (rawTopicSummaries.length === 0) {
+      throw new Error('Course skeleton did not produce any structural units.');
+    }
 
     const systemPrompt = `You are an expert university curriculum planner.
 You design topic maps for students preparing for a specific course and exam. You will receive:
@@ -376,10 +390,11 @@ Rules:
     const userPrompt = `Course Details:
 Institution: ${coerceTopicString(university, 'Unknown institution')}
 Course / exam: ${coerceTopicString(courseTitle, 'Untitled course')}
+  Structure type: ${coerceTopicString(syllabus?.course_structure_type, 'Not specified')}
 Exam / target date: ${finishByDate ? new Date(finishByDate).toISOString() : 'Not specified'}
 Exam format: ${coerceTopicString(examFormatDetails, 'Not specified')}
 
-Syllabus-derived topic nodes (raw, unstructured):
+  Course skeleton units (raw, unstructured):
 ${JSON.stringify(rawTopicSummaries, null, 2)}
 
 Using these as a starting point, produce an exam-aligned topic map with overviewTopics and subtopics.`;

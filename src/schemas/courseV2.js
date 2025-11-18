@@ -1,35 +1,21 @@
 import { z } from 'zod';
 
-export const UrlSchema = z.string().url();
+const RawConceptSchema = z
+  .string()
+  .transform((value) => value.trim())
+  .pipe(z.string().min(1));
 
-export const TopicNodeSchema = z.object({
-  id: z.string().min(1),
+export const CourseUnitSchema = z.object({
+  sequence_order: z.number().int().positive(),
   title: z.string().min(1),
-  summary: z.string().min(1),
-  refs: z.array(UrlSchema).default([]),
+  raw_concepts: z.array(RawConceptSchema).default([]),
+  is_exam_review: z.boolean().default(false),
 });
 
-export const TopicEdgeSchema = z.object({
-  from: z.string().min(1),
-  to: z.string().min(1),
-  reason: z.string().min(1),
+export const CourseSkeletonSchema = z.object({
+  course_structure_type: z.enum(['Week-based', 'Module-based', 'Topic-based']),
+  skeleton: z.array(CourseUnitSchema).min(1),
 });
 
-export const TopicGraphSchema = z.object({
-  nodes: z.array(TopicNodeSchema).min(4),
-  edges: z.array(TopicEdgeSchema),
-});
-
-export const SyllabusSchema = z.object({
-  outcomes: z.array(z.string().min(1)).min(3),
-  topic_graph: TopicGraphSchema,
-  sources: z
-    .array(
-      z.object({
-        url: UrlSchema,
-        title: z.string().min(1),
-      }),
-    )
-    .min(1),
-});
+export const SyllabusSchema = CourseSkeletonSchema;
 // Module/Lesson/Assessment schemas and CoursePackageSchema removed intentionally.

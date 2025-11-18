@@ -1,26 +1,18 @@
 export function plannerSyllabus({ university, courseName, syllabusText, examFormatDetails, topics } = {}) {
-  const context = [];
-  if (syllabusText) {
-    context.push(`Syllabus notes: ${syllabusText}`);
-  }
-  if (examFormatDetails) {
-    context.push(`Exam format: ${examFormatDetails}`);
-  }
-  if (Array.isArray(topics) && topics.length > 0) {
-    context.push(`Preferred topics (student ranked): ${topics.join(', ')}`);
-  }
-
-  const contextBlock = context.length ? `\n\nContext:\n${context.join('\n')}` : '';
+  const syllabusDetails = syllabusText || 'Not provided.';
+  const examDetails = examFormatDetails || 'Not provided.';
+  const preferredTopics = Array.isArray(topics) && topics.length > 0 ? topics.join(', ') : null;
+  const topicLine = preferredTopics ? `\n\nStudent priorities: ${preferredTopics}` : '';
 
   return [
     {
       role: 'system',
       content:
-        'You are a meticulous university syllabus architect focused on exam alignment.\n- Locate and rely on the official syllabus/outline for the specified university + course whenever possible (web_search/browse_page allowed).\n- Integrate examFormatDetails to emphasize tested competencies.\n- topic_graph.nodes MUST be exam-relevant conceptual units (e.g., "Asymptotic Analysis"), not logistics/meta items (no "Exam Review", "Study Habits"). Include prerequisite units only when the exam depends on them.\n- Return ONLY JSON with outcomes[], topic_graph{nodes[],edges[]}, sources[].\nEXAMPLE JSON:\n{"outcomes":["Master core concepts","Apply techniques to problems","Analyze complex scenarios"],"topic_graph":{"nodes":[{"id":"node1","title":"Concept Name","summary":"Brief description","refs":["https://example.com/resource"]}],"edges":[{"from":"node1","to":"node2","reason":"prerequisite relationship"}]},"sources":[{"url":"https://university.edu/syllabus","title":"Official Syllabus"}]}',
+        'You are a university curriculum architect. Your goal is to extract the STRUCTURAL SKELETON of the course exactly as the professor intends.\n\n1. Analyze the input syllabus.\n2. Identify the primary organizational unit (e.g., "Weeks", "Modules", "Chapters", or "Thematic Units").\n3. Extract the chronological sequence of these units.\n4. For each unit, list the raw concepts mentioned.\n5. IGNORE logistics (grading policies, office hours) unless they describe exam formats.\n\nReturn JSON:\n{\n  "course_structure_type": "Week-based" | "Module-based" | "Topic-based",\n  "skeleton": [\n    {\n      "sequence_order": 1,\n      "title": "Week 1: Introduction to Limits",\n      "raw_concepts": ["epsilon-delta definition", "limit laws", "continuity"],\n      "is_exam_review": false\n    }\n    ...\n  ]\n}',
     },
     {
       role: 'user',
-      content: `University: ${university || 'N/A'}\nCourse: ${courseName || 'N/A'}\nTask: Produce syllabus JSON with outcomes (3+), concept nodes (id,title,summary,refs), prerequisite edges (from,to,reason), and sources (title,url).${contextBlock}`,
+      content: `University: ${university || 'N/A'}\nCourse: ${courseName || 'N/A'}\n\nSyllabus details:\n${syllabusDetails}\n\nExam format details:\n${examDetails}${topicLine}`,
     },
   ];
 }

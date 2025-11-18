@@ -150,17 +150,27 @@ test('courses route validations and behaviors', async (t) => {
     __setSyllabusSynthesizer(async (options) => {
       synthOptions = options;
       return {
-        outcomes: ['Outcome 1', 'Outcome 2', 'Outcome 3'],
-        topic_graph: {
-          nodes: [
-            { id: 'n1', title: 'Asymptotic Analysis', summary: 'Rates of growth' },
-            { id: 'n2', title: 'Divide and Conquer Strategies', summary: 'Recursive design' },
-            { id: 'n3', title: 'Dynamic Programming', summary: 'Optimal substructure' },
-            { id: 'n4', title: 'Graph Algorithms', summary: 'Traversal paradigms' },
-          ],
-          edges: [],
-        },
-        sources: [{ title: 'Official syllabus', url: 'https://example.edu/syllabus' }],
+        course_structure_type: 'Week-based',
+        skeleton: [
+          {
+            sequence_order: 1,
+            title: 'Week 1: Algorithm Foundations',
+            raw_concepts: ['Asymptotic Analysis', 'Complexity classes'],
+            is_exam_review: false,
+          },
+          {
+            sequence_order: 2,
+            title: 'Week 2: Divide and Conquer',
+            raw_concepts: ['Recurrences', 'Merge sort'],
+            is_exam_review: false,
+          },
+          {
+            sequence_order: 3,
+            title: 'Week 3: Dynamic Programming',
+            raw_concepts: ['Optimal substructure', 'Memoization'],
+            is_exam_review: false,
+          },
+        ],
       };
     });
 
@@ -226,16 +236,13 @@ test('courses route validations and behaviors', async (t) => {
 
   await t.test('ensures dense coverage includes 30+ subtopics when LLM supplies them', async () => {
     __setSyllabusSynthesizer(async () => ({
-      outcomes: ['Outcome A', 'Outcome B', 'Outcome C'],
-      topic_graph: {
-        nodes: Array.from({ length: 12 }, (_, idx) => ({
-          id: `node_${idx + 1}`,
-          title: `Topic ${idx + 1}`,
-          summary: `Summary ${idx + 1}`,
-        })),
-        edges: [],
-      },
-      sources: [{ title: 'Official syllabus', url: 'https://example.edu/syllabus' }],
+      course_structure_type: 'Module-based',
+      skeleton: Array.from({ length: 8 }, (_, idx) => ({
+        sequence_order: idx + 1,
+        title: `Module ${idx + 1}`,
+        raw_concepts: [`Concept ${idx + 1}.1`, `Concept ${idx + 1}.2`],
+        is_exam_review: idx === 7,
+      })),
     }));
 
     __setCourseV2LLMCaller(async () => ({
