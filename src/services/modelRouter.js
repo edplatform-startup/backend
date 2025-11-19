@@ -9,9 +9,8 @@ export const STAGES = Object.freeze({
 const { courseV2Models = {} } = runtimeConfig;
 
 const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-3-pro-preview';
-// Default topics model set to Gemini 3 Pro preview unless explicitly overridden in config/env
 const topicsModel =
-  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'google/gemini-3-pro-preview';
+  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || plannerModel;
 const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
