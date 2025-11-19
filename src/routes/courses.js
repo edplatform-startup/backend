@@ -200,8 +200,31 @@ router.post('/topics', async (req, res) => {
   }
 });
 
+import { generateLessonGraph } from '../services/courseGenerator.js';
+
 router.post('/', async (req, res) => {
-  return res.status(501).json({ error: 'Course generation is not implemented' });
+  try {
+    const { syllabus_text, exam_details, grok_draft, user_confidence_map } = req.body;
+
+    // Basic validation
+    if (!grok_draft || typeof grok_draft !== 'object') {
+      return res.status(400).json({ error: 'Missing or invalid grok_draft' });
+    }
+
+    // Call the Lesson Architect
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map);
+
+    // Return the structure (no DB insert yet)
+    return res.json({
+      course_structure: {
+        nodes: finalNodes,
+        edges: finalEdges,
+      },
+    });
+  } catch (error) {
+    console.error('[courses] POST / error:', error);
+    return res.status(500).json({ error: 'Failed to generate course structure', details: error.message });
+  }
 });
 
 router.delete('/', async (req, res) => {

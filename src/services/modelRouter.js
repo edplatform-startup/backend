@@ -3,6 +3,7 @@ import { runtimeConfig } from '../config/env.js';
 export const STAGES = Object.freeze({
   PLANNER: 'PLANNER',
   TOPICS: 'TOPICS',
+  LESSON_ARCHITECT: 'LESSON_ARCHITECT',
 });
 
 const { courseV2Models = {} } = runtimeConfig;
@@ -10,6 +11,8 @@ const { courseV2Models = {} } = runtimeConfig;
 const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4-fast';
 const topicsModel =
   courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || plannerModel;
+const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
+
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
 const topicTopPRaw = process.env.TOPIC_MODEL_TOP_P;
 const topicTemp = topicTempRaw == null || topicTempRaw === '' ? 0.4 : Number(topicTempRaw);
@@ -21,6 +24,11 @@ const DEFAULTS = {
     model: topicsModel,
     temp: Number.isFinite(topicTemp) ? topicTemp : 0.4,
     top_p: Number.isFinite(topicTopP) ? topicTopP : 0.75,
+  },
+  [STAGES.LESSON_ARCHITECT]: {
+    model: lessonArchitectModel,
+    temp: 0.3,
+    top_p: 0.8,
   },
 };
 
@@ -40,7 +48,7 @@ export function pickModel(stage) {
 }
 
 export function shouldUseTools(stage) {
-  return stage === STAGES.PLANNER || stage === STAGES.TOPICS;
+  return stage === STAGES.PLANNER || stage === STAGES.TOPICS || stage === STAGES.LESSON_ARCHITECT;
 }
 
 // Fallback models removed - using single model per stage only

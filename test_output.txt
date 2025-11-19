@@ -1,0 +1,32 @@
+TAP version 13
+# node:internal/test_runner/mock/mock:268
+#     ObjectDefineProperty(objectOrFunction, methodName, mockDescriptor);
+#     ^
+# TypeError: Cannot redefine property: callStageLLM
+#     at defineProperty (<anonymous>)
+#     at MockTracker.method (node:internal/test_runner/mock/mock:268:5)
+#     at file:///G:/PCBackup/edtech-startup/backend/tests/courseGenerator.test.js:7:6
+#     at ModuleJob.run (node:internal/modules/esm/module_job:234:25)
+#     at async ModuleLoader.import (node:internal/modules/esm/loader:473:24)
+#     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:123:5)
+# Node.js v20.17.0
+# Subtest: G:\\PCBackup\\edtech-startup\\backend\\tests\\courseGenerator.test.js
+not ok 1 - G:\\PCBackup\\edtech-startup\\backend\\tests\\courseGenerator.test.js
+  ---
+  duration_ms: 79.7273
+  location: 'G:\\PCBackup\\edtech-startup\\backend\\tests\\courseGenerator.test.js:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 84.3987
