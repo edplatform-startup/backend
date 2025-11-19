@@ -103,7 +103,12 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   let lessonGraph;
   try {
-    lessonGraph = JSON.parse(result.content);
+    const cleanJson = result.content
+      .replace(/^```json\s*/, '')
+      .replace(/^```\s*/, '')
+      .replace(/\s*```$/, '');
+
+    lessonGraph = JSON.parse(cleanJson);
   } catch (e) {
     console.error('[LessonArchitect] Failed to parse JSON from Gemini:', e);
     console.error('[LessonArchitect] Raw Content Length:', result?.content ? result.content.length : 'N/A');
