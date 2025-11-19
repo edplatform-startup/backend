@@ -61,7 +61,7 @@ router.get('/data', async (req, res) => {
     const { data, error } = await supabase
       .schema('api')
       .from('courses')
-      .select('id, user_id, course_data')
+      .select('id, user_id, title, syllabus_text, exam_details, start_date, end_date, status')
       .eq('user_id', userId)
       .eq('id', courseId)
       .single();
@@ -78,11 +78,7 @@ router.get('/data', async (req, res) => {
       return res.status(404).json({ error: 'Course not found' });
     }
 
-    return res.json({
-      courseId: data.id,
-      userId: data.user_id,
-      course_data: data.course_data ?? null,
-    });
+    return res.json({ success: true, course: data });
   } catch (error) {
     console.error('Unhandled error fetching course data:', error);
     return res.status(500).json({ error: 'Internal server error', details: error.message });
@@ -237,25 +233,30 @@ router.post('/', async (req, res) => {
     const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
 
     const supabase = getSupabase();
-    const courseSummary = {
-      status: 'pending',
-      generated_at: new Date().toISOString(),
-      node_count: finalNodes.length,
-      edge_count: finalEdges.length,
-      course_metadata: isPlainObject(courseMetadata) ? courseMetadata : null,
-    };
+    const normalizedMetadata = isPlainObject(courseMetadata) ? courseMetadata : {};
+    const title = deriveCourseTitle(grok_draft, normalizedMetadata);
+    const startDate = coerceDateOnly(
+      normalizedMetadata.start_date ||
+        normalizedMetadata.startDate ||
+        normalizedMetadata.begin_date ||
+        normalizedMetadata.beginDate,
+    );
+    const endDate = coerceDateOnly(
+      normalizedMetadata.end_date ||
+        normalizedMetadata.endDate ||
+        normalizedMetadata.finish_by_date ||
+        normalizedMetadata.finishByDate,
+    );
 
     const rowPayload = {
       id: courseId,
       user_id: userId,
-      course_data: courseSummary,
-      course_json: {
-        grok_draft,
-        lesson_graph: {
-          nodes: finalNodes,
-          edges: finalEdges,
-        },
-      },
+      title,
+      syllabus_text: normalizedMetadata.syllabus_text || normalizedMetadata.syllabusText || null,
+      exam_details: normalizedMetadata.exam_details || normalizedMetadata.examDetails || null,
+      start_date: startDate,
+      end_date: endDate,
+      status: 'pending',
     };
 
     const { error: insertError } = await supabase
@@ -624,6 +625,29 @@ function toTrimmedString(value) {
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function coerceDateOnly(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().split('T')[0];
+}
+
+function deriveCourseTitle(grokDraft, metadata) {
+  if (metadata && typeof metadata.title === 'string' && metadata.title.trim()) {
+    return metadata.title.trim();
+  }
+  if (metadata && typeof metadata.courseTitle === 'string' && metadata.courseTitle.trim()) {
+    return metadata.courseTitle.trim();
+  }
+  if (grokDraft && typeof grokDraft.course_title === 'string' && grokDraft.course_title.trim()) {
+    return grokDraft.course_title.trim();
+  }
+  if (grokDraft && typeof grokDraft.title === 'string' && grokDraft.title.trim()) {
+    return grokDraft.title.trim();
+  }
+  return 'Generated course';
 }
 
 export default router;

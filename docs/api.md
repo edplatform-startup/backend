@@ -88,7 +88,7 @@ Base URL (production): https://api.kognolearn.com
     ```
 
 ### GET /courses
-- Purpose: List stored courses for a user or fetch a specific course row (including persisted `course_data`).
+- Purpose: List stored courses for a user or fetch a specific course row (title/status/timeline metadata stored in `api.courses`).
 - Query parameters:
   - `userId` (string, required) – UUID of the caller.
   - `courseId` (string, optional) – UUID of a specific course owned by the caller.
@@ -109,13 +109,12 @@ Base URL (production): https://api.kognolearn.com
   - 400 Bad Request → Missing/invalid `userId`.
   - 500 Internal Server Error → Database error.
 
-### GET /courses/data
-- Purpose: Fetch just the `course_data` JSON for a given `courseId`, verifying ownership.
+- Purpose: Fetch just the stored course metadata row for a given `courseId`, verifying ownership.
 - Query parameters:
   - `userId` (string, required)
   - `courseId` (string, required)
 - Responses:
-  - 200 OK → `{ "courseId": "...", "userId": "...", "course_data": { ... } }`
+  - 200 OK → `{ "success": true, "course": CourseRow }`
   - 400 Bad Request → Missing parameters or invalid UUID formats.
   - 404 Not Found → No matching record for the user.
   - 500 Internal Server Error → Supabase query failure.
@@ -131,11 +130,10 @@ Base URL (production): https://api.kognolearn.com
   - 404 Not Found → Course absent or belongs to another user.
   - 500 Internal Server Error → Supabase delete failure.
 
-### GET /content
 - Purpose: Fetch the stored per-format content JSON by format and id.
 - Query parameters:
   - `format` (string, required) – One of `video`, `reading`, `flashcards`, `mini_quiz`, `practice_exam`.
-  - `id` (string, required) – UUID of the content row (matches `asset.id` in `course_data`).
+  - `id` (string, required) – UUID of the content row (matches the `course_nodes.id`).
   - `userId` (string, required) – UUID of the requesting user; must own the content.
 - Responses:
   - 200 OK → `{ "id": "...", "format": "...", "data": { ... } }`
@@ -204,19 +202,19 @@ Base URL (production): https://api.kognolearn.com
   ```
   - `userId` (string, required) – UUID of the course owner.
   - `courseId` (string, optional) – Supply to reuse/update an existing course row; otherwise a UUID is generated.
-  - `courseMetadata` (object, optional) – Stored in `course_data.course_metadata` for downstream clients.
+  - `courseMetadata` (object, optional) – Used to populate `title`, `syllabus_text`, `exam_details`, and start/end dates in `api.courses`.
   - `grok_draft` (object, required) – Raw "Lesson Architect" draft JSON produced by Gemini/Grok.
   - `user_confidence_map` (object, optional) – Map of `original_source_id -> confidence score (0-1)` used when averaging `confidence_score` per node.
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
-  3. Inserts or updates `api.courses` with a pending summary (`status: "pending"`, node/edge counts, optional metadata) plus the raw DAG snapshot in `course_json`.
+  3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, normalized start/end dates, and sets `status: "pending"` for downstream progress tracking.
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
      - Calls `x-ai/grok-4-fast` three times (reading Markdown, quiz JSON, flashcards JSON) using strict JSON mode for assessments.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
      - Updates each node's `content_payload` to `{ reading, quiz, flashcards, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
-     - Marks nodes with failed generations as `status: "error"` and records the message; the final course `course_data.status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
+    - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
 - Responses:
   - `201 Created` →
     ```json
@@ -317,9 +315,9 @@ Base URL (production): https://api.kognolearn.com
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
 
 ## Notes
-- Every response uses JSON. `POST /courses` currently always returns 501 Not Implemented.
+- Every response uses JSON.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
-- Supabase schema: reads from and writes to `api.courses`. `course_data` is the canonical JSON column for stored syllabi.
+- Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
 
 ## Examples
 - List user courses → `GET https://api.kognolearn.com/courses?userId=...`

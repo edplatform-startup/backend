@@ -21,30 +21,22 @@ import { callStageLLM } from '../src/services/llmCall.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
-const courseData = {
-  recommended_topics: ['Topic A', 'Topic B', 'Topic C'],
-  raw_topics_text: 'Topic A, Topic B, Topic C',
-  generated_at: '2025-10-17T12:34:56.789Z',
-  model: 'openrouter/grok-4-fast',
-  input_snapshot: {
-    finish_by_date: '2025-12-01T00:00:00.000Z',
-    course_selection: { code: 'CSE142', title: 'Foundations of CS' },
-    time_remaining_days: 45,
-  },
-};
+const sampleCourseSelection = { code: 'CSE142', title: 'Foundations of CS' };
+const sampleFinishByDate = '2025-12-01T00:00:00.000Z';
+const sampleSyllabusFiles = [{ name: 'syllabus.pdf', url: 'https://example.com/syll.pdf' }];
+const sampleExamFiles = [{ name: 'exam.pdf', url: 'https://example.com/exam.pdf' }];
+const sampleExamDetails = 'Two midterms and a final';
 
 const sampleCourseRow = {
   id: '11111111-1111-1111-1111-111111111111',
   user_id: '22222222-2222-2222-2222-222222222222',
-  course_data: courseData,
-  course_json: courseData,
+  title: sampleCourseSelection.title,
+  status: 'ready',
   created_at: '2025-10-17T12:34:56.789Z',
-  finish_by_date: '2025-12-01T00:00:00.000Z',
-  course_selection: { code: 'CSE142', title: 'Foundations of CS' },
   syllabus_text: 'Syllabus content',
-  syllabus_files: [{ name: 'syllabus.pdf', url: 'https://example.com/syll.pdf' }],
-  exam_format_details: 'Two midterms and a final',
-  exam_files: [{ name: 'exam.pdf', url: 'https://example.com/exam.pdf' }],
+  exam_details: sampleExamDetails,
+  start_date: '2025-09-15',
+  end_date: '2025-12-15',
 };
 
 test('courses route validations and behaviors', async (t) => {
@@ -216,16 +208,16 @@ test('courses route validations and behaviors', async (t) => {
 
     const reqBody = {
       userId: sampleCourseRow.user_id,
-      finishByDate: sampleCourseRow.finish_by_date,
+      finishByDate: sampleFinishByDate,
       courseSelection: {
         code: ' CSE142 ',
         title: ' Foundations of CS ',
         college: ' UW ',
       },
       syllabusText: sampleCourseRow.syllabus_text,
-      syllabusFiles: sampleCourseRow.syllabus_files,
-      examFormatDetails: sampleCourseRow.exam_format_details,
-      examFiles: sampleCourseRow.exam_files,
+      syllabusFiles: sampleSyllabusFiles,
+      examFormatDetails: sampleExamDetails,
+      examFiles: sampleExamFiles,
     };
 
     const res = await request(app)
@@ -290,7 +282,7 @@ test('courses route validations and behaviors', async (t) => {
       .set('Content-Type', 'application/json')
       .send({
         userId: sampleCourseRow.user_id,
-        courseSelection: sampleCourseRow.course_selection,
+        courseSelection: sampleCourseSelection,
       });
 
     assert.equal(res.status, 200);

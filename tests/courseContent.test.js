@@ -110,7 +110,6 @@ test('generateCourseContent fills node payloads and marks course ready', async (
   const courseUpdates = [];
   const stub = createSupabaseStub({
     listResponses: [{ data: pendingNodes, error: null }],
-    singleResponses: [{ data: { course_data: { status: 'pending' } }, error: null }],
     updateResponses: [
       { data: { id: 'node-a' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },
       { data: { id: 'node-b' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },
@@ -162,8 +161,7 @@ test('generateCourseContent fills node payloads and marks course ready', async (
     assert.deepEqual(nodeUpdates[0].content_payload.video, { videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' });
 
     assert.equal(courseUpdates.length, 1);
-    assert.equal(courseUpdates[0].course_data.status, 'ready');
-    assert.equal(courseUpdates[0].course_data.last_worker_summary.processed, 2);
+    assert.equal(courseUpdates[0].status, 'ready');
   } finally {
     __resetGrokExecutor();
     __resetYouTubeFetcher();

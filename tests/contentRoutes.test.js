@@ -26,10 +26,22 @@ test('content and course data routes', async (t) => {
     assert.deepEqual(res.body.courseIds, ['c1', 'c2']);
   });
 
-  await t.test('GET /courses/data returns course_data for user+course', async () => {
+  await t.test('GET /courses/data returns stored course row for user+course', async () => {
     setSupabaseClient(
       createSupabaseStub({
-        singleResponses: [{ data: { id: 'c1', user_id: 'u1', course_data: { A: [] } }, error: null }],
+        singleResponses: [{
+          data: {
+            id: 'c1',
+            user_id: 'u1',
+            title: 'Algorithms',
+            status: 'ready',
+            syllabus_text: 'syllabus',
+            exam_details: 'midterm + final',
+            start_date: '2025-09-01',
+            end_date: '2025-12-01',
+          },
+          error: null,
+        }],
       })
     );
 
@@ -39,7 +51,9 @@ test('content and course data routes', async (t) => {
       .set(baseHeaders);
 
     assert.equal(res.status, 200);
-    assert.ok(res.body.course_data);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.course.title, 'Algorithms');
+    assert.equal(res.body.course.status, 'ready');
   });
 
   await t.test('GET /content returns data by format and id', async () => {

@@ -205,7 +205,7 @@ async function runContentWorker(courseId, options = {}) {
   }
 
   if (!pendingNodes || pendingNodes.length === 0) {
-    await updateCourseStatus(supabase, courseId, COURSE_STATUS_READY, { processed: 0, failed: 0 });
+    await updateCourseStatus(supabase, courseId, COURSE_STATUS_READY);
     return { processed: 0, failed: 0, status: COURSE_STATUS_READY };
   }
 
@@ -226,7 +226,7 @@ async function runContentWorker(courseId, options = {}) {
     failed: failures.length,
   };
   const courseStatus = failures.length ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
-  await updateCourseStatus(supabase, courseId, courseStatus, summary);
+  await updateCourseStatus(supabase, courseId, courseStatus);
 
   return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
 }
@@ -293,33 +293,19 @@ async function markNodeError(node, supabase, error) {
     .single();
 }
 
-async function updateCourseStatus(supabase, courseId, status, summary) {
+async function updateCourseStatus(supabase, courseId, status) {
   try {
-    const { data: courseRow } = await supabase
+    const { error } = await supabase
       .schema('api')
       .from('courses')
-      .select('course_data')
-      .eq('id', courseId)
-      .single();
-
-    const previous = isPlainObject(courseRow?.course_data) ? courseRow.course_data : {};
-    const next = {
-      ...previous,
-      status,
-      last_worker_summary: {
-        ...(isPlainObject(previous.last_worker_summary) ? previous.last_worker_summary : {}),
-        ...summary,
-        updated_at: new Date().toISOString(),
-      },
-    };
-
-    await supabase
-      .schema('api')
-      .from('courses')
-      .update({ course_data: next })
+      .update({ status })
       .eq('id', courseId)
       .select('id')
       .single();
+
+    if (error) {
+      throw error;
+    }
   } catch (error) {
     console.warn('[generateCourseContent] Failed to update course status:', error?.message || error);
   }
