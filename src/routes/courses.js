@@ -369,6 +369,109 @@ function parseSharedCourseInputs(body) {
   };
 }
 
+function normalizeTopics(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { valid: false, error: 'topics must contain at least one topic' };
+  }
+
+  const topics = value
+    .map((topic) => (typeof topic === 'string' ? topic.trim() : ''))
+    .filter(Boolean);
+
+  if (topics.length === 0) {
+    return { valid: false, error: 'topics must contain non-empty strings' };
+  }
+
+  return { valid: true, value: topics };
+}
+
+function normalizeTopicFamiliarity(topics, topicFamiliarity) {
+  if (!Array.isArray(topics) || topics.length === 0) {
+    return { valid: false, error: 'topics are required before computing familiarity' };
+  }
+
+  if (!topicFamiliarity) {
+    return { valid: true, value: [] };
+  }
+
+  const topicSet = new Set(topics);
+  const normalized = new Map();
+
+  const coerceFamiliarity = (rawValue, topic) => {
+    if (typeof rawValue === 'string') {
+      return { value: rawValue.trim() };
+    }
+
+    if (rawValue && typeof rawValue === 'object') {
+      const candidate =
+        typeof rawValue.familiarity === 'string'
+          ? rawValue.familiarity.trim()
+          : typeof rawValue.level === 'string'
+          ? rawValue.level.trim()
+          : typeof rawValue.value === 'string'
+          ? rawValue.value.trim()
+          : '';
+
+      if (candidate) {
+        return { value: candidate };
+      }
+    }
+
+    return { error: `topicFamiliarity entry for "${topic}" must be a string (e.g. "beginner", "expert")` };
+  };
+
+  const assignFamiliarity = (topicName, rawValue) => {
+    if (typeof topicName !== 'string' || !topicName.trim()) {
+      return { error: 'topicFamiliarity entries must include a non-empty topic name' };
+    }
+
+    const normalizedTopic = topicName.trim();
+
+    if (!topicSet.has(normalizedTopic)) {
+      return { error: `topicFamiliarity includes unknown topic "${normalizedTopic}"` };
+    }
+
+    const { value, error } = coerceFamiliarity(rawValue, normalizedTopic);
+    if (error) {
+      return { error };
+    }
+
+    normalized.set(normalizedTopic, value);
+    return { value };
+  };
+
+  if (Array.isArray(topicFamiliarity)) {
+    for (let i = 0; i < topicFamiliarity.length; i += 1) {
+      const entry = topicFamiliarity[i];
+      if (!entry || typeof entry !== 'object') {
+        return { valid: false, error: 'topicFamiliarity array entries must be objects' };
+      }
+
+      const topicName = typeof entry.topic === 'string' ? entry.topic : entry.name;
+      const rawValue = entry.familiarity ?? entry.level ?? entry.value ?? entry.familiarityLevel;
+      const { error } = assignFamiliarity(topicName, rawValue);
+      if (error) {
+        return { valid: false, error };
+      }
+    }
+  } else if (typeof topicFamiliarity === 'object') {
+    for (const [topicName, rawValue] of Object.entries(topicFamiliarity)) {
+      const { error } = assignFamiliarity(topicName, rawValue);
+      if (error) {
+        return { valid: false, error };
+      }
+    }
+  } else {
+    return {
+      valid: false,
+      error: 'topicFamiliarity must be an object mapping topics to familiarity levels or an array of { topic, familiarity }',
+    };
+  }
+
+  const result = Array.from(normalized.entries()).map(([topic, familiarity]) => ({ topic, familiarity }));
+  return { valid: true, value: result };
+}
+
 function buildAttachmentList(label, files) {
   if (!Array.isArray(files) || files.length === 0) return [];
 
