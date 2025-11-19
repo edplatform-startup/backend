@@ -48,9 +48,13 @@ CRITICAL RULES:
 1. **Granularity:** "Atomic" means a lesson that takes 15-45 minutes to complete. Split broad topics. Merge tiny fragments (unless foundational).
 2. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
 3. **No Cycles:** The graph must be strictly Acyclic.
-4. **Intelligent Worker Prompts:** The 'worker_prompt' is for a content generator. It must be specific to the Bloom level and Tone.
+4. **Specific Generation Plans:** Do not use generic instructions. You must generate a specific plan for EACH content format included in the lesson:
+   - **reading:** Provide a prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs").
+   - **video:** Provide 2-3 specific YouTube search queries likely to yield high-quality tutorials.
+   - **quiz:** Provide a prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap").
+   - **flashcards:** Provide a prompt focusing on what to memorize (definitions vs. procedural steps).
 5. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
-6. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content types.
+6. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -63,10 +67,15 @@ Output STRICT VALID JSON format (no markdown, no comments):
       "bloom_level": "Apply",
       "intrinsic_exam_value": 8,
       "architectural_reasoning": "Merged st1_1 and st1_2 to create a cohesive 30-min lesson. Rated 8/10 because the syllabus highlights this for the midterm.",
-      "worker_prompt": "Explain the chain rule using a gear analogy. Focus on problem-solving.",
-      "content_types": ["reading", "flashcards", "quiz"],
       "dependencies": ["limits-intro"],
-      "original_source_ids": ["st1_1", "st1_2"]
+      "original_source_ids": ["st1_1", "st1_2"],
+      
+      "content_plans": {
+         "reading": "Explain the chain rule using a 'peeling the onion' analogy. Focus on identifying inner vs outer functions.",
+         "video": ["chain rule calculus intuition", "chain rule visualization 3blue1brown"],
+         "quiz": "Generate 3 multiple-choice questions. One must involve a trigonometric function inside a polynomial.",
+         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions."
+      }
     }
   ]
 }`;
