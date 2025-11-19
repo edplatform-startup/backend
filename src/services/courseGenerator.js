@@ -98,7 +98,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
       { role: 'user', content: userPrompt },
     ],
     responseFormat: { type: 'json_object' },
-    requestTimeoutMs: 600000, // 10 minutes for Gemini 3 Pro
+    requestTimeoutMs: 1800000, // 30 minutes for long-running course generation
   });
 
   let lessonGraph;
@@ -168,6 +168,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
         maxTokens: 8000,
         messages: [{ role: 'user', content: repairPrompt }],
         responseFormat: { type: 'json_object' },
+        requestTimeoutMs: 1800000, // 30 minutes for repair call as well
       });
 
       const corrections = JSON.parse(repairResult.content);
