@@ -106,7 +106,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
     const cleanJson = result.content
       .replace(/^```json\s*/, '')
       .replace(/^```\s*/, '')
-      .replace(/\s*```$/, '');
+      .replace(/\s*```$/, '')
+      .replace(/\\'/g, "'");
 
     lessonGraph = JSON.parse(cleanJson);
   } catch (e) {
