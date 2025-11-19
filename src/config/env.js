@@ -58,7 +58,7 @@ const courseV2Defaults = {
   lessonsModel: normalizeModel(rawEnv.COURSE_V2_LESSONS_MODEL, rawEnv.MODEL_WRITER || 'x-ai/grok-4-fast'),
   topicsModel: normalizeModel(
     rawEnv.COURSE_V2_TOPICS_MODEL,
-    rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'x-ai/grok-4-fast',
+    rawEnv.TOPIC_MODEL || rawEnv.MODEL_TOPICS || rawEnv.MODEL_WRITER || 'google/gemini-3-pro-preview',
   ),
   fallbackModel: normalizeModel(rawEnv.COURSE_V2_FALLBACK_MODEL, 'meta-llama/llama-3.3-70b-instruct:free'),
   secondaryFallbackModel: normalizeModel(
