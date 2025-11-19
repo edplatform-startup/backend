@@ -8,6 +8,7 @@ export async function callStageLLM({
   maxTokens = 1500,
   allowWeb = false,
   modelOverride = null,
+  requestTimeoutMs,
 }) {
   const {
     model,
@@ -42,6 +43,7 @@ export async function callStageLLM({
     stage,
     messages,
     attachments,
+    requestTimeoutMs,
   });
 
   return { model: chosenModel, result: response };

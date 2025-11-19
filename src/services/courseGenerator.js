@@ -82,6 +82,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
       { role: 'user', content: userPrompt },
     ],
     responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 600000, // 10 minutes for Gemini 3 Pro
   });
 
   let lessonGraph;
