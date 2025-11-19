@@ -324,7 +324,7 @@ export async function synthesizeSyllabus({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
-      maxTokens: 4800,
+      maxTokens: 50000,
       attachments,
       responseFormat: { type: 'json_object' },
     });
@@ -353,7 +353,7 @@ Return corrected JSON only.`,
       stage: STAGES.PLANNER,
       messages: criticMessages,
       allowWeb: false,
-      maxTokens: 4500,
+      maxTokens: 50000,
       attachments,
       responseFormat: { type: 'json_object' },
     });
@@ -487,7 +487,7 @@ Using this information, produce competency-based overviewTopics with fully popul
         { role: 'system', content: systemPrompt.trim() },
         { role: 'user', content: userPrompt.trim() },
       ],
-      maxTokens: 6000,
+      maxTokens: 50000,
       allowWeb: true,
       responseFormat: { type: 'json_object' },
     });
