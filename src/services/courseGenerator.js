@@ -88,10 +88,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
     lessonGraph = JSON.parse(result.content);
   } catch (e) {
     console.error('[LessonArchitect] Failed to parse JSON from Gemini:', e);
-    console.error('[LessonArchitect] Raw Content Length:', result.content ? result.content.length : 'N/A');
-    console.error('[LessonArchitect] Raw Content Preview (First 500):', result.content ? result.content.substring(0, 500) : 'Empty');
-    console.error('[LessonArchitect] Raw Content Preview (Last 500):', result.content ? result.content.substring(result.content.length - 500) : 'Empty');
-    console.error('[LessonArchitect] FULL RAW CONTENT:', result.content); // Log everything to be sure
+    console.error('[LessonArchitect] Raw Content Length:', result?.content ? result.content.length : 'N/A');
+    console.error('[LessonArchitect] FULL RESULT OBJECT:', JSON.stringify(result, null, 2)); // Log full object including raw OpenRouter payload
     throw new Error('Invalid JSON response from Lesson Architect');
   }
 
