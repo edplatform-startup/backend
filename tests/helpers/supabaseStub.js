@@ -19,6 +19,7 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
 
       chain.select = () => chain;
       chain.eq = () => chain;
+      chain.contains = () => chain;
       chain.order = () => chain;
       chain.limit = () => chain;
       chain.or = () => chain;

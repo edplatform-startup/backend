@@ -1,6 +1,7 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { generateLessonGraph, __setLLMCaller } from '../src/services/courseGenerator.js';
+import { callStageLLM } from '../src/services/llmCall.js';
 
 // Mock LLM Caller
 const mockLLMCaller = async ({ messages }) => {
@@ -101,4 +102,8 @@ describe('generateLessonGraph', () => {
     assert.deepStrictEqual(newNode.metadata.original_source_ids, []);
     assert.strictEqual(newNode.metadata.architectural_reasoning, "Reasoning for new lesson");
   });
+});
+
+after(() => {
+  __setLLMCaller(callStageLLM);
 });

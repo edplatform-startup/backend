@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { getSupabase } from '../supabaseClient.js';
 import { generateHierarchicalTopics } from '../services/courseV2.js';
 import {
@@ -6,6 +7,7 @@ import {
   validateFileArray,
   validateUuid,
 } from '../utils/validation.js';
+import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
 
 const router = Router();
 
@@ -204,18 +206,94 @@ import { generateLessonGraph } from '../services/courseGenerator.js';
 
 router.post('/', async (req, res) => {
   try {
-    const { syllabus_text, exam_details, grok_draft, user_confidence_map } = req.body;
+    const {
+      userId,
+      courseId: providedCourseId,
+      courseMetadata,
+      grok_draft,
+      user_confidence_map = {},
+    } = req.body || {};
 
-    // Basic validation
+    if (!userId) {
+      return res.status(400).json({ error: 'Missing required field: userId' });
+    }
+    const userValidation = validateUuid(userId, 'userId');
+    if (!userValidation.valid) {
+      return res.status(400).json({ error: userValidation.error });
+    }
     if (!grok_draft || typeof grok_draft !== 'object') {
       return res.status(400).json({ error: 'Missing or invalid grok_draft' });
     }
 
-    // Call the Lesson Architect
-    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map);
+    let courseId = providedCourseId || uuidv4();
+    if (providedCourseId) {
+      const courseValidation = validateUuid(providedCourseId, 'courseId');
+      if (!courseValidation.valid) {
+        return res.status(400).json({ error: courseValidation.error });
+      }
+      courseId = providedCourseId;
+    }
 
-    // Return the structure (no DB insert yet)
-    return res.json({
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
+
+    const supabase = getSupabase();
+    const courseSummary = {
+      status: 'pending',
+      generated_at: new Date().toISOString(),
+      node_count: finalNodes.length,
+      edge_count: finalEdges.length,
+      course_metadata: isPlainObject(courseMetadata) ? courseMetadata : null,
+    };
+
+    const rowPayload = {
+      id: courseId,
+      user_id: userId,
+      course_data: courseSummary,
+      course_json: {
+        grok_draft,
+        lesson_graph: {
+          nodes: finalNodes,
+          edges: finalEdges,
+        },
+      },
+    };
+
+    const { error: insertError } = await supabase
+      .schema('api')
+      .from('courses')
+      .insert(rowPayload)
+      .select('id')
+      .single();
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        const { error: updateError } = await supabase
+          .schema('api')
+          .from('courses')
+          .update(rowPayload)
+          .eq('id', courseId)
+          .eq('user_id', userId)
+          .select('id')
+          .single();
+        if (updateError) {
+          console.error('[courses] Failed to update existing course:', updateError);
+          return res.status(500).json({ error: 'Failed to persist course metadata', details: updateError.message });
+        }
+      } else {
+        console.error('[courses] Failed to persist course row:', insertError);
+        return res.status(500).json({ error: 'Failed to persist course metadata', details: insertError.message });
+      }
+    }
+
+    const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
+    const workerResult = await generateCourseContent(courseId);
+
+    return res.status(201).json({
+      success: true,
+      courseId,
+      nodeCount: persistResult.nodeCount,
+      edgeCount: persistResult.edgeCount,
+      worker: workerResult,
       course_structure: {
         nodes: finalNodes,
         edges: finalEdges,
@@ -542,6 +620,10 @@ function toTrimmedString(value) {
     return String(value).trim();
   }
   return '';
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export default router;

@@ -10,6 +10,14 @@ import {
   __setCourseV2LLMCaller,
   __resetCourseV2LLMCaller,
 } from '../src/services/courseV2.js';
+import {
+  __setSaveCourseStructureOverride,
+  __resetSaveCourseStructureOverride,
+  __setGenerateCourseContentOverride,
+  __resetGenerateCourseContentOverride,
+} from '../src/services/courseContent.js';
+import { __setLLMCaller } from '../src/services/courseGenerator.js';
+import { callStageLLM } from '../src/services/llmCall.js';
 
 const baseHeaders = { Accept: 'application/json' };
 
@@ -44,6 +52,9 @@ test('courses route validations and behaviors', async (t) => {
     clearSupabaseClient();
     __clearSyllabusSynthesizer();
     __resetCourseV2LLMCaller();
+    __resetSaveCourseStructureOverride();
+    __resetGenerateCourseContentOverride();
+    __setLLMCaller(callStageLLM);
   });
 
   await t.test('rejects missing query parameters', async () => {
@@ -287,13 +298,93 @@ test('courses route validations and behaviors', async (t) => {
     assert.ok(totalSubtopics >= 32);
   });
 
-  await t.test('POST /courses always returns 501', async () => {
+  await t.test('POST /courses requires userId', async () => {
     const res = await request(app)
       .post('/courses')
       .set('Content-Type', 'application/json')
-      .send({ userId: sampleCourseRow.user_id, topics: ['anything'] });
+      .send({ grok_draft: { anything: true } });
 
-    assert.equal(res.status, 501);
-    assert.equal(res.body.error, 'Course generation is not implemented');
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /userId/);
+  });
+
+  await t.test('POST /courses persists the lesson graph and runs worker', async () => {
+    const architectStub = async () => ({
+      result: {
+        content: JSON.stringify({
+          lessons: [
+            {
+              slug_id: 'node-a',
+              title: 'Node A',
+              module_group: 'Week 1',
+              estimated_minutes: 30,
+              bloom_level: 'Understand',
+              intrinsic_exam_value: 5,
+              architectural_reasoning: 'Test node',
+              content_plans: {
+                reading: 'Plan reading',
+                quiz: 'Plan quiz',
+                flashcards: 'Plan flashcards',
+                video: ['sample video search'],
+              },
+              dependencies: [],
+              original_source_ids: ['st1'],
+            },
+            {
+              slug_id: 'node-b',
+              title: 'Node B',
+              module_group: 'Week 1',
+              estimated_minutes: 35,
+              bloom_level: 'Apply',
+              intrinsic_exam_value: 7,
+              architectural_reasoning: 'Depends on node A',
+              content_plans: {
+                reading: 'Plan reading 2',
+                quiz: 'Plan quiz 2',
+                flashcards: 'Plan flashcards 2',
+                video: ['second video'],
+              },
+              dependencies: ['node-a'],
+              original_source_ids: ['st2'],
+            },
+          ],
+        }),
+      },
+    });
+    __setLLMCaller(architectStub);
+
+    let persisted;
+    __setSaveCourseStructureOverride(async (courseId, userId, graph) => {
+      persisted = { courseId, userId, graph };
+      return { nodeCount: graph.finalNodes.length, edgeCount: graph.finalEdges.length };
+    });
+
+    let workerCourseId;
+    __setGenerateCourseContentOverride(async (courseId) => {
+      workerCourseId = courseId;
+      return { processed: 2, failed: 0, status: 'ready' };
+    });
+
+    setSupabaseClient(
+      createSupabaseStub({
+        insertResponses: [{ data: { id: 'new-course' }, error: null }],
+      })
+    );
+
+    const res = await request(app)
+      .post('/courses')
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        grok_draft: { stub: true },
+        user_confidence_map: { st1: 0.8 },
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.worker.status, 'ready');
+    assert.ok(res.body.course_structure.nodes.length);
+    assert.equal(persisted.userId, sampleCourseRow.user_id);
+    assert.equal(workerCourseId, res.body.courseId);
   });
 });

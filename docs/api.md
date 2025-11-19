@@ -191,12 +191,49 @@ Base URL (production): https://api.kognolearn.com
   - 502 Bad Gateway → Model failure or unusable response.
 
 ### POST /courses
-- Purpose: Temporarily disabled. The backend no longer generates courses or assets.
-- Request body: Any payload is accepted but ignored.
-- Behavior: Immediately responds with HTTP 501 to signal the functionality is unimplemented.
+- Purpose: Generate a lesson DAG from a Gemini draft, persist it to Supabase, and synchronously run the content worker that fills every node with reading/quiz/flashcard/video assets.
+- Request body (JSON):
+  ```json
+  {
+    "userId": "uuid-required",
+    "courseId": "uuid-optional",
+    "courseMetadata": { "title": "optional structured metadata" },
+    "grok_draft": { "lessonGraph": { "rough": "gemini output" } },
+    "user_confidence_map": { "slug_id": 0.4 }
+  }
+  ```
+  - `userId` (string, required) – UUID of the course owner.
+  - `courseId` (string, optional) – Supply to reuse/update an existing course row; otherwise a UUID is generated.
+  - `courseMetadata` (object, optional) – Stored in `course_data.course_metadata` for downstream clients.
+  - `grok_draft` (object, required) – Raw "Lesson Architect" draft JSON produced by Gemini/Grok.
+  - `user_confidence_map` (object, optional) – Map of `original_source_id -> confidence score (0-1)` used when averaging `confidence_score` per node.
+- Behavior:
+  1. Validates UUID fields and ensures `grok_draft` is an object.
+  2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
+  3. Inserts or updates `api.courses` with a pending summary (`status: "pending"`, node/edge counts, optional metadata) plus the raw DAG snapshot in `course_json`.
+  4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
+  5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
+     - Calls `x-ai/grok-4-fast` three times (reading Markdown, quiz JSON, flashcards JSON) using strict JSON mode for assessments.
+     - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
+     - Updates each node's `content_payload` to `{ reading, quiz, flashcards, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
+     - Marks nodes with failed generations as `status: "error"` and records the message; the final course `course_data.status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
 - Responses:
-  - 501 Not Implemented → `{ "error": "Course generation is not implemented" }`
-  - 500 Internal Server Error → Only if an unexpected exception occurs while writing the response.
+  - `201 Created` →
+    ```json
+    {
+      "success": true,
+      "courseId": "72b1...",
+      "nodeCount": 24,
+      "edgeCount": 32,
+      "worker": { "processed": 24, "failed": 0, "status": "ready" },
+      "course_structure": { "nodes": [...], "edges": [...] }
+    }
+    ```
+  - `400 Bad Request` → Missing/invalid `userId`, `courseId`, or `grok_draft`.
+  - `500 Internal Server Error` → Supabase write failures or upstream model/worker exceptions (details included in response for debugging).
+- Notes:
+  - Set `YOUTUBE_API_KEY` (or `GOOGLE_API_KEY`) to enable video recommendations; if absent, `video` is returned as `null` but other assets continue.
+  - The worker output is synchronous; responses include the final DAG plus the worker summary so clients can immediately show generated content.
 
 ### POST /flashcards
 - Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).
