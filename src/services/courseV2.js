@@ -324,7 +324,7 @@ export async function synthesizeSyllabus({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
-      maxTokens: 1800,
+      maxTokens: 4800,
       attachments,
       responseFormat: { type: 'json_object' },
     });
@@ -353,7 +353,7 @@ Return corrected JSON only.`,
       stage: STAGES.PLANNER,
       messages: criticMessages,
       allowWeb: false,
-      maxTokens: 1500,
+      maxTokens: 4500,
       attachments,
       responseFormat: { type: 'json_object' },
     });

@@ -10,6 +10,14 @@ export function __setLLMCaller(fn) {
 }
 
 /**
+ * @typedef {Object} ContentPlans
+ * @property {string} [reading] - Prompt for reading generation
+ * @property {string[]} [video] - Search queries for video
+ * @property {string} [quiz] - Prompt for quiz generation
+ * @property {string} [flashcards] - Prompt for flashcard generation
+ */
+
+/**
  * @typedef {Object} LessonNode
  * @property {string} slug_id
  * @property {string} title
@@ -18,8 +26,7 @@ export function __setLLMCaller(fn) {
  * @property {"Remember" | "Understand" | "Apply" | "Analyze" | "Evaluate"} bloom_level
  * @property {number} intrinsic_exam_value
  * @property {string} architectural_reasoning
- * @property {string} worker_prompt
- * @property {string[]} content_types
+ * @property {ContentPlans} content_plans  <-- UPDATED: New structure
  * @property {string[]} dependencies
  * @property {string[]} [original_source_ids]
  */
@@ -100,7 +107,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
   } catch (e) {
     console.error('[LessonArchitect] Failed to parse JSON from Gemini:', e);
     console.error('[LessonArchitect] Raw Content Length:', result?.content ? result.content.length : 'N/A');
-    console.error('[LessonArchitect] FULL RESULT OBJECT:', JSON.stringify(result, null, 2)); // Log full object including raw OpenRouter payload
+    console.error('[LessonArchitect] FULL RESULT OBJECT:', JSON.stringify(result, null, 2));
     throw new Error('Invalid JSON response from Lesson Architect');
   }
 
@@ -228,15 +235,22 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       is_checkpoint: false,
       in_degree: 0,
       out_degree: 0,
+      
+      // --- FIX START ---
+      // Store the plans inside content_payload so the Worker can access them later
       content_payload: {
-        content_types: l.content_types
+        // This preserves the 'content_plans' object (reading prompt, video queries, etc.)
+        generation_plans: l.content_plans || {} 
       },
-      generation_prompt: l.worker_prompt,
+      // We map the 'reading' prompt to the old column just in case, or stringify the whole object
+      generation_prompt: l.content_plans ? JSON.stringify(l.content_plans) : null,
+      // --- FIX END ---
+
       module_ref: l.module_group,
       created_at: new Date().toISOString(),
-      confidence_score: confidenceScore, // Injected confidence
+      confidence_score: confidenceScore, 
       metadata: {
-        original_source_ids: sources, // Keep lineage in metadata
+        original_source_ids: sources, 
         architectural_reasoning: l.architectural_reasoning
       }
     };
