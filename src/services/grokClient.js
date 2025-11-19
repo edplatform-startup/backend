@@ -262,7 +262,7 @@ export function createBrowsePageTool() {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; EdTechBot/1.0)',
           },
-          signal: AbortSignal.timeout(30000), // 30s timeout for browse_page
+          signal: AbortSignal.timeout(180000), // 30s timeout for browse_page
         });
         
         if (!response.ok) {
