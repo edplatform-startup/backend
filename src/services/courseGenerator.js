@@ -76,6 +76,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
   console.log('[LessonArchitect] Calling Gemini 3 Pro...');
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
+    maxTokens: 8000,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -147,6 +148,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     try {
       const { result: repairResult } = await llmCaller({
         stage: STAGES.LESSON_ARCHITECT, // Re-use same stage/model
+        maxTokens: 8000,
         messages: [{ role: 'user', content: repairPrompt }],
         responseFormat: { type: 'json_object' },
       });
