@@ -56,19 +56,5 @@ test('content and course data routes', async (t) => {
     assert.equal(res.body.course.status, 'ready');
   });
 
-  await t.test('GET /content returns data by format and id', async () => {
-    setSupabaseClient(
-      createSupabaseStub({
-        singleResponses: [{ data: { id: 'x1', data: { question: 'Q', answer: 'A', explanation: 'E' } }, error: null }],
-      })
-    );
-
-    const res = await request(app)
-      .get('/content')
-      .query({ format: 'flashcards', id: '11111111-1111-1111-1111-111111111111', userId: '22222222-2222-2222-2222-222222222222' })
-      .set(baseHeaders);
-
-    assert.equal(res.status, 200);
-    assert.deepEqual(res.body.data, { question: 'Q', answer: 'A', explanation: 'E' });
-  });
+  // NOTE: /content route removed; tests for this route intentionally deleted
 });
