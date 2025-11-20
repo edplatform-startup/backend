@@ -24,7 +24,7 @@ router.post('/', async (req, res) => {
     useWebSearch = false,
     responseFormat = 'text',
     temperature = 0.5,
-    maxTokens = 600,
+    maxTokens = 1800,
     attachments = [],
     reasoning,
     userId,
