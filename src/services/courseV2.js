@@ -327,6 +327,7 @@ export async function synthesizeSyllabus({
       maxTokens: 4800,
       attachments,
       responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
     });
 
     const rawContent = result?.content;
@@ -356,6 +357,7 @@ Return corrected JSON only.`,
       maxTokens: 4500,
       attachments,
       responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000, // 2 minutes for repair call
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
@@ -490,6 +492,7 @@ Using this information, produce competency-based overviewTopics with fully popul
       maxTokens: 2200,
       allowWeb: true,
       responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000, // 2 minutes for TOPICS with web search
     });
 
     const parsed = tryParseJson(result?.content);

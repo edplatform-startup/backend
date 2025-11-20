@@ -272,7 +272,7 @@ Base URL (production): https://api.kognolearn.com
   - 400 Bad Request → Missing or empty `topic`, invalid `count`.
   - 500 Internal Server Error → Flashcard generator not configured or unexpected exception.
   - 502 Bad Gateway → Grok returned a non-OK response or malformed JSON.
-  - 504 Gateway Timeout → Grok request exceeded 30 seconds.
+  - 504 Gateway Timeout → Grok request exceeded 120 seconds.
 
 ### GET /college-courses
 - Purpose: Search real-time college course catalogs across 750+ U.S. institutions (via Ellucian Banner systems) by college name and course query. Uses fuzzy string matching to return the top 50 most relevant courses from the latest available term.
