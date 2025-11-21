@@ -335,7 +335,7 @@ router.post('/', async (req, res) => {
     if (!userId) {
       return res.status(400).json({ error: 'Missing required field: userId' });
     }
-   const userValidation = validateUuid(userId, 'userId');
+    const userValidation = validateUuid(userId, 'userId');
     if (!userValidation.valid) {
       return res.status(400).json({ error: userValidation.error });
     }
@@ -386,14 +386,14 @@ router.post('/', async (req, res) => {
 
     // Combine text from courseMetadata (old format) with parsed inputs (new format)
     // Parsed inputs take priority if both are provided
-    const combinedSyllabusText = parsedInputs.syllabusText || 
-      normalizedMetadata.syllabus_text || 
-      normalizedMetadata.syllabusText || 
+    const combinedSyllabusText = parsedInputs.syllabusText ||
+      normalizedMetadata.syllabus_text ||
+      normalizedMetadata.syllabusText ||
       null;
-    
-    const combinedExamDetails = parsedInputs.examFormatDetails || 
-      normalizedMetadata.exam_details || 
-      normalizedMetadata.examDetails || 
+
+    const combinedExamDetails = parsedInputs.examFormatDetails ||
+      normalizedMetadata.exam_details ||
+      normalizedMetadata.examDetails ||
       null;
 
     const rowPayload = {
@@ -515,85 +515,85 @@ router.delete('/', async (req, res) => {
   }
 });
 
-function parseSharedCourseInputs(body) {
-  const {
-    userId,
-    finishByDate,
-    university,
-    courseTitle,
-    courseSelection,
-    syllabusText,
-    syllabusFiles,
-    examFormatDetails,
-    examFiles,
-  } = body;
+// parseSharedCourseInputs is imported from utils/courseInputParser.js; duplicate definition removed.
+const {
+  userId,
+  finishByDate,
+  university,
+  courseTitle,
+  courseSelection,
+  syllabusText,
+  syllabusFiles,
+  examFormatDetails,
+  examFiles,
+} = body;
 
-  if (!userId) {
-    return { valid: false, error: 'Missing required field: userId' };
+if (!userId) {
+  return { valid: false, error: 'Missing required field: userId' };
+}
+
+const uuidValidation = validateUuid(userId, 'userId');
+if (!uuidValidation.valid) {
+  return { valid: false, error: uuidValidation.error };
+}
+
+let finishByDateIso = null;
+let timeRemainingDays = null;
+if (finishByDate != null) {
+  if (!isValidIsoDate(finishByDate)) {
+    return { valid: false, error: 'finishByDate must be a valid ISO 8601 date string' };
   }
-
-  const uuidValidation = validateUuid(userId, 'userId');
-  if (!uuidValidation.valid) {
-    return { valid: false, error: uuidValidation.error };
+  finishByDateIso = new Date(finishByDate).toISOString();
+  const finishDateMs = new Date(finishByDateIso).getTime();
+  if (!Number.isNaN(finishDateMs)) {
+    const diff = finishDateMs - Date.now();
+    timeRemainingDays = Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
   }
+}
 
-  let finishByDateIso = null;
-  let timeRemainingDays = null;
-  if (finishByDate != null) {
-    if (!isValidIsoDate(finishByDate)) {
-      return { valid: false, error: 'finishByDate must be a valid ISO 8601 date string' };
-    }
-    finishByDateIso = new Date(finishByDate).toISOString();
-    const finishDateMs = new Date(finishByDateIso).getTime();
-    if (!Number.isNaN(finishDateMs)) {
-      const diff = finishDateMs - Date.now();
-      timeRemainingDays = Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
-    }
+let normalizedSyllabusText = null;
+if (syllabusText != null) {
+  if (typeof syllabusText !== 'string') {
+    return { valid: false, error: 'syllabusText must be a string when provided' };
   }
+  normalizedSyllabusText = syllabusText.trim() || null;
+}
 
-  let normalizedSyllabusText = null;
-  if (syllabusText != null) {
-    if (typeof syllabusText !== 'string') {
-      return { valid: false, error: 'syllabusText must be a string when provided' };
-    }
-    normalizedSyllabusText = syllabusText.trim() || null;
+let normalizedExamFormatDetails = null;
+if (examFormatDetails != null) {
+  if (typeof examFormatDetails !== 'string') {
+    return { valid: false, error: 'examFormatDetails must be a string when provided' };
   }
+  normalizedExamFormatDetails = examFormatDetails.trim() || null;
+}
 
-  let normalizedExamFormatDetails = null;
-  if (examFormatDetails != null) {
-    if (typeof examFormatDetails !== 'string') {
-      return { valid: false, error: 'examFormatDetails must be a string when provided' };
-    }
-    normalizedExamFormatDetails = examFormatDetails.trim() || null;
-  }
+const syllabusFilesValidation = validateFileArray(syllabusFiles, 'syllabusFiles');
+if (!syllabusFilesValidation.valid) {
+  return { valid: false, error: syllabusFilesValidation.error };
+}
 
-  const syllabusFilesValidation = validateFileArray(syllabusFiles, 'syllabusFiles');
-  if (!syllabusFilesValidation.valid) {
-    return { valid: false, error: syllabusFilesValidation.error };
-  }
+const examFilesValidation = validateFileArray(examFiles, 'examFiles');
+if (!examFilesValidation.valid) {
+  return { valid: false, error: examFilesValidation.error };
+}
 
-  const examFilesValidation = validateFileArray(examFiles, 'examFiles');
-  if (!examFilesValidation.valid) {
-    return { valid: false, error: examFilesValidation.error };
-  }
+const attachments = [
+  ...buildAttachmentList('syllabus', syllabusFilesValidation.value),
+  ...buildAttachmentList('exam', examFilesValidation.value),
+];
 
-  const attachments = [
-    ...buildAttachmentList('syllabus', syllabusFilesValidation.value),
-    ...buildAttachmentList('exam', examFilesValidation.value),
-  ];
-
-  return {
-    valid: true,
-    userId,
-    finishByDateIso,
-    timeRemainingDays,
-    syllabusText: normalizedSyllabusText,
-    examFormatDetails: normalizedExamFormatDetails,
-    syllabusFiles: syllabusFilesValidation.value,
-    examFiles: examFilesValidation.value,
-    attachments,
-    courseSelection: normalizeCourseSelection({ university, courseTitle, rawSelection: courseSelection }),
-  };
+return {
+  valid: true,
+  userId,
+  finishByDateIso,
+  timeRemainingDays,
+  syllabusText: normalizedSyllabusText,
+  examFormatDetails: normalizedExamFormatDetails,
+  syllabusFiles: syllabusFilesValidation.value,
+  examFiles: examFilesValidation.value,
+  attachments,
+  courseSelection: normalizeCourseSelection({ university, courseTitle, rawSelection: courseSelection }),
+};
 }
 
 function normalizeTopics(value) {
