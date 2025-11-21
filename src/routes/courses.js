@@ -9,6 +9,7 @@ import {
 } from '../utils/validation.js';
 import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
 import { generateStudyPlan } from '../services/studyPlan.js';
+import { parseSharedCourseInputs, buildAttachmentList } from '../utils/courseInputParser.js';
 
 const router = Router();
 
@@ -325,12 +326,16 @@ router.post('/', async (req, res) => {
       courseMetadata,
       grok_draft,
       user_confidence_map = {},
+      syllabusText,
+      syllabusFiles,
+      examFormatDetails,
+      examFiles,
     } = req.body || {};
 
     if (!userId) {
       return res.status(400).json({ error: 'Missing required field: userId' });
     }
-    const userValidation = validateUuid(userId, 'userId');
+   const userValidation = validateUuid(userId, 'userId');
     if (!userValidation.valid) {
       return res.status(400).json({ error: userValidation.error });
     }
@@ -345,6 +350,19 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: courseValidation.error });
       }
       courseId = providedCourseId;
+    }
+
+    // Process files and text inputs using the shared utility
+    const parsedInputs = parseSharedCourseInputs({
+      userId,
+      syllabusText,
+      syllabusFiles,
+      examFormatDetails,
+      examFiles,
+    });
+
+    if (!parsedInputs.valid) {
+      return res.status(400).json({ error: parsedInputs.error });
     }
 
     const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
@@ -362,15 +380,28 @@ router.post('/', async (req, res) => {
       normalizedMetadata.end_date ||
       normalizedMetadata.endDate ||
       normalizedMetadata.finish_by_date ||
-      normalizedMetadata.finishByDate,
+      normalizedMetadata.finishByDate ||
+      parsedInputs.finishByDateIso,
     );
+
+    // Combine text from courseMetadata (old format) with parsed inputs (new format)
+    // Parsed inputs take priority if both are provided
+    const combinedSyllabusText = parsedInputs.syllabusText || 
+      normalizedMetadata.syllabus_text || 
+      normalizedMetadata.syllabusText || 
+      null;
+    
+    const combinedExamDetails = parsedInputs.examFormatDetails || 
+      normalizedMetadata.exam_details || 
+      normalizedMetadata.examDetails || 
+      null;
 
     const rowPayload = {
       id: courseId,
       user_id: userId,
       title,
-      syllabus_text: normalizedMetadata.syllabus_text || normalizedMetadata.syllabusText || null,
-      exam_details: normalizedMetadata.exam_details || normalizedMetadata.examDetails || null,
+      syllabus_text: combinedSyllabusText,
+      exam_details: combinedExamDetails,
       start_date: startDate,
       end_date: endDate,
       status: 'pending',
