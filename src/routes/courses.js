@@ -594,7 +594,6 @@ return {
   attachments,
   courseSelection: normalizeCourseSelection({ university, courseTitle, rawSelection: courseSelection }),
 };
-}
 
 function normalizeTopics(value) {
   if (!Array.isArray(value) || value.length === 0) {
