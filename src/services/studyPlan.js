@@ -90,7 +90,10 @@ function hydrateNodes(nodeMap, userStateMap) {
 function calculateTotalTimeNeeded(nodeMap) {
     let total = 0;
     for (const node of nodeMap.values()) {
-        total += node.effective_cost;
+        // Exclude mastered nodes from time calculation
+        if (node.userState.mastery_status !== 'mastered') {
+            total += node.effective_cost;
+        }
     }
     return total;
 }
@@ -135,24 +138,37 @@ function topologicalSort(nodeMap, nodesToInclude = null) {
 }
 
 function runDeepStudyAlgorithm(nodeMap) {
-    // Filter out mastered nodes
+    // Filter out mastered nodes for the study plan
     const nodesToStudy = Array.from(nodeMap.values()).filter(
         (node) => node.userState.mastery_status !== 'mastered'
     );
 
-    // Topological sort
-    return topologicalSort(nodeMap, nodesToStudy);
+    // Get mastered nodes to include in final output
+    const masteredNodes = Array.from(nodeMap.values()).filter(
+        (node) => node.userState.mastery_status === 'mastered'
+    );
+
+    // Topological sort of nodes to study
+    const studyPlan = topologicalSort(nodeMap, nodesToStudy);
+
+    // Merge mastered nodes back in their original positions
+    // We'll do a full topological sort of ALL nodes to get the correct order
+    const allNodesSorted = topologicalSort(nodeMap);
+
+    return allNodesSorted;
 }
 
 function runCramModeAlgorithm(nodeMap, minutesAvailable) {
-    // 1. Identify Target Nodes
-    let targets = Array.from(nodeMap.values()).filter((node) => (node.intrinsic_exam_value || 0) >= 7);
+    // 1. Identify Target Nodes (exclude mastered)
+    let targets = Array.from(nodeMap.values()).filter(
+        (node) => (node.intrinsic_exam_value || 0) >= 7 && node.userState.mastery_status !== 'mastered'
+    );
 
-    // Fallback: If no targets, top 20% by value
+    // Fallback: If no targets, top 20% by value (exclude mastered)
     if (targets.length === 0) {
-        const allNodes = Array.from(nodeMap.values()).sort(
-            (a, b) => (b.intrinsic_exam_value || 0) - (a.intrinsic_exam_value || 0)
-        );
+        const allNodes = Array.from(nodeMap.values())
+            .filter((node) => node.userState.mastery_status !== 'mastered')
+            .sort((a, b) => (b.intrinsic_exam_value || 0) - (a.intrinsic_exam_value || 0));
         const cutoff = Math.ceil(allNodes.length * 0.2);
         targets = allNodes.slice(0, cutoff);
     }
@@ -221,8 +237,14 @@ function runCramModeAlgorithm(nodeMap, minutesAvailable) {
         }
     }
 
-    // 4. Merge & Sort
-    return topologicalSort(nodeMap, finalSelectedNodes);
+    // 4. Merge mastered nodes back in and sort
+    // Get all nodes (including mastered) that should be in the final output
+    const selectedSet = new Set(finalSelectedNodes.map(n => n.id));
+    const allNodesToInclude = Array.from(nodeMap.values()).filter(
+        (node) => selectedSet.has(node.id) || node.userState.mastery_status === 'mastered'
+    );
+
+    return topologicalSort(nodeMap, allNodesToInclude);
 }
 
 function getAllAncestors(nodeMap, nodeId, visited = new Set()) {
@@ -279,13 +301,19 @@ function formatOutput(mode, sortedNodes, nodeMap) {
             }
         }
 
-        totalMinutes += node.effective_cost;
+        // Mastered nodes have 0 duration and don't count toward total time
+        const isMastered = node.userState.mastery_status === 'mastered';
+        const duration = isMastered ? 0 : Math.round(node.effective_cost);
+
+        if (!isMastered) {
+            totalMinutes += node.effective_cost;
+        }
 
         modulesMap.get(moduleTitle).lessons.push({
             id: node.id,
             title: node.title,
             type,
-            duration: Math.round(node.effective_cost),
+            duration,
             is_locked: isLocked,
             status: node.userState.mastery_status || 'pending'
         });
