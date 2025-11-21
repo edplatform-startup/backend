@@ -8,8 +8,125 @@ import {
   validateUuid,
 } from '../utils/validation.js';
 import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
+import { generateStudyPlan } from '../services/studyPlan.js';
 
 const router = Router();
+
+router.get('/:id/plan', async (req, res) => {
+  const { id } = req.params;
+  const { userId, hours } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  if (!hours) {
+    return res.status(400).json({ error: 'hours is required' });
+  }
+
+  const hoursAvailable = parseFloat(hours);
+  if (isNaN(hoursAvailable) || hoursAvailable <= 0) {
+    return res.status(400).json({ error: 'hours must be a positive number' });
+  }
+
+  try {
+    const plan = await generateStudyPlan(id, userId, hoursAvailable);
+    return res.json(plan);
+  } catch (error) {
+    console.error('Error generating study plan:', error);
+    return res.status(500).json({ error: 'Failed to generate study plan', details: error.message });
+  }
+});
+
+router.get('/:courseId/nodes/:nodeId', async (req, res) => {
+  const { courseId, nodeId } = req.params;
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  const nodeValidation = validateUuid(nodeId, 'nodeId');
+  if (!nodeValidation.valid) {
+    return res.status(400).json({ error: nodeValidation.error });
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // First verify the user owns the course
+    const { data: courseData, error: courseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (courseError) {
+      if (courseError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Course not found or access denied' });
+      }
+      console.error('Error verifying course ownership:', courseError);
+      return res.status(500).json({ error: 'Failed to verify course access', details: courseError.message });
+    }
+
+    if (!courseData) {
+      return res.status(404).json({ error: 'Course not found or access denied' });
+    }
+
+    // Fetch the node with all its content
+    const { data: node, error: nodeError } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('*')
+      .eq('id', nodeId)
+      .eq('course_id', courseId)
+      .single();
+
+    if (nodeError) {
+      if (nodeError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Lesson not found' });
+      }
+      console.error('Error fetching lesson:', nodeError);
+      return res.status(500).json({ error: 'Failed to fetch lesson', details: nodeError.message });
+    }
+
+    if (!node) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+
+    // Return the full node data
+    return res.json({
+      success: true,
+      lesson: {
+        id: node.id,
+        course_id: node.course_id,
+        title: node.title,
+        module_ref: node.module_ref,
+        estimated_minutes: node.estimated_minutes,
+        bloom_level: node.bloom_level,
+        intrinsic_exam_value: node.intrinsic_exam_value,
+        confidence_score: node.confidence_score,
+        metadata: node.metadata,
+        content_payload: node.content_payload,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching lesson content:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
 
 router.get('/ids', async (req, res) => {
   const { userId } = req.query;
@@ -237,15 +354,15 @@ router.post('/', async (req, res) => {
     const title = deriveCourseTitle(grok_draft, normalizedMetadata);
     const startDate = coerceDateOnly(
       normalizedMetadata.start_date ||
-        normalizedMetadata.startDate ||
-        normalizedMetadata.begin_date ||
-        normalizedMetadata.beginDate,
+      normalizedMetadata.startDate ||
+      normalizedMetadata.begin_date ||
+      normalizedMetadata.beginDate,
     );
     const endDate = coerceDateOnly(
       normalizedMetadata.end_date ||
-        normalizedMetadata.endDate ||
-        normalizedMetadata.finish_by_date ||
-        normalizedMetadata.finishByDate,
+      normalizedMetadata.endDate ||
+      normalizedMetadata.finish_by_date ||
+      normalizedMetadata.finishByDate,
     );
 
     const rowPayload = {
@@ -486,10 +603,10 @@ function normalizeTopicFamiliarity(topics, topicFamiliarity) {
         typeof rawValue.familiarity === 'string'
           ? rawValue.familiarity.trim()
           : typeof rawValue.level === 'string'
-          ? rawValue.level.trim()
-          : typeof rawValue.value === 'string'
-          ? rawValue.value.trim()
-          : '';
+            ? rawValue.level.trim()
+            : typeof rawValue.value === 'string'
+              ? rawValue.value.trim()
+              : '';
 
       if (candidate) {
         return { value: candidate };
