@@ -332,3 +332,84 @@ Base URL (production): https://api.kognolearn.com
 - Persist course → `POST https://api.kognolearn.com/courses`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`
+### GET /courses/:id/plan
+- **Purpose**: Generate an optimized, personalized study plan for a course based on available time. Returns a learning path optimized for either comprehensive mastery (Deep Study) or high-yield exam preparation (Cram Mode).
+- **Path parameters**:
+  - `id` (string, required) – UUID of the course.
+- **Query parameters**:
+  - `userId` (string, required) – UUID of the user.
+  - `hours` (number, required) – Available study time in hours (must be positive).
+- **Algorithm**:
+  1. **Data Fetching**: Loads course nodes, dependencies, and user state from database.
+  2. **Graph Construction**: Builds in-memory DAG with parent/child relationships.
+  3. **Effective Cost Calculation**: `effective_cost = estimated_minutes × (1 - familiarity_score)`
+  4. **Mode Selection**:
+     - **Deep Study**: Selected when `hours × 60 ≥ total_time_needed × 1.5`
+       - Returns all non-mastered nodes in topological order
+       - Ensures comprehensive understanding of the entire course
+     - **Cram Mode**: Selected when time is limited
+       - Identifies high-value target nodes (`intrinsic_exam_value ≥ 7`)
+       - Fallback: If no targets, selects top 20% by value
+       - Builds prerequisite chains for each target
+       - Dynamic greedy selection with shared ancestor optimization
+       - Maximizes exam value within time constraint
+  5. **Output Formatting**: Groups nodes by module, calculates lock status, determines content type.
+- **Responses**:
+  - `200 OK` → See example below
+  - `400 Bad Request` → Missing or invalid parameters
+  - `500 Internal Server Error` → Database failure or algorithm error
+- **Response Fields**:
+  - `mode` (string) – "Deep Study" or "Cram"
+  - `total_minutes` (number) – Sum of all lesson durations
+  - `modules` (array) – Lessons grouped by module_ref
+    - `title` (string) – Module name
+    - `lessons` (array) – Ordered lessons in dependency order
+      - `id`, `title`, `type`, `duration`, `is_locked`, `status`
+- **Example**:
+  ```bash
+  GET /courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/plan?userId=e6e04dbb&hours=3
+  ```
+  Response:
+  ```json
+  {
+    "mode": "Deep Study",
+    "total_minutes": 162,
+    "modules": [
+      {
+        "title": "Module 1: Logic",
+        "lessons": [
+          {
+            "id": "0503d602-85ef",
+            "title": "Basic Inference Rules",
+            "type": "reading",
+            "duration": 27,
+            "is_locked": false,
+            "status": "pending"
+          }
+        ]
+      }
+    ]
+  }
+  ```
+
+### GET /courses/data
+- **Purpose**: Fetch course metadata (title, syllabus, dates, status) without lesson DAG.
+- **Query parameters**:
+  - `userId` (string, required)
+  - `courseId` (string, required)
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "course": {
+      "id": "...",
+      "user_id": "...",
+      "title": "Discrete Mathematics",
+      "syllabus_text": "...",
+      "exam_details": "...",
+      "start_date": "2025-01-15",
+      "end_date": "2025-05-20",
+      "status": "ready"
+    }
+  }
+  ```

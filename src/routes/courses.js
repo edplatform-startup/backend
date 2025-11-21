@@ -8,8 +8,35 @@ import {
   validateUuid,
 } from '../utils/validation.js';
 import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
+import { generateStudyPlan } from '../services/studyPlan.js';
 
 const router = Router();
+
+router.get('/:id/plan', async (req, res) => {
+  const { id } = req.params;
+  const { userId, hours } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  if (!hours) {
+    return res.status(400).json({ error: 'hours is required' });
+  }
+
+  const hoursAvailable = parseFloat(hours);
+  if (isNaN(hoursAvailable) || hoursAvailable <= 0) {
+    return res.status(400).json({ error: 'hours must be a positive number' });
+  }
+
+  try {
+    const plan = await generateStudyPlan(id, userId, hoursAvailable);
+    return res.json(plan);
+  } catch (error) {
+    console.error('Error generating study plan:', error);
+    return res.status(500).json({ error: 'Failed to generate study plan', details: error.message });
+  }
+});
 
 router.get('/ids', async (req, res) => {
   const { userId } = req.query;
@@ -237,15 +264,15 @@ router.post('/', async (req, res) => {
     const title = deriveCourseTitle(grok_draft, normalizedMetadata);
     const startDate = coerceDateOnly(
       normalizedMetadata.start_date ||
-        normalizedMetadata.startDate ||
-        normalizedMetadata.begin_date ||
-        normalizedMetadata.beginDate,
+      normalizedMetadata.startDate ||
+      normalizedMetadata.begin_date ||
+      normalizedMetadata.beginDate,
     );
     const endDate = coerceDateOnly(
       normalizedMetadata.end_date ||
-        normalizedMetadata.endDate ||
-        normalizedMetadata.finish_by_date ||
-        normalizedMetadata.finishByDate,
+      normalizedMetadata.endDate ||
+      normalizedMetadata.finish_by_date ||
+      normalizedMetadata.finishByDate,
     );
 
     const rowPayload = {
@@ -486,10 +513,10 @@ function normalizeTopicFamiliarity(topics, topicFamiliarity) {
         typeof rawValue.familiarity === 'string'
           ? rawValue.familiarity.trim()
           : typeof rawValue.level === 'string'
-          ? rawValue.level.trim()
-          : typeof rawValue.value === 'string'
-          ? rawValue.value.trim()
-          : '';
+            ? rawValue.level.trim()
+            : typeof rawValue.value === 'string'
+              ? rawValue.value.trim()
+              : '';
 
       if (candidate) {
         return { value: candidate };
