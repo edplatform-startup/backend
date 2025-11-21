@@ -39,6 +39,160 @@ router.get('/:id/plan', async (req, res) => {
   }
 });
 
+// Update user progress for a specific lesson
+router.patch('/:courseId/nodes/:nodeId/progress', async (req, res) => {
+  const { courseId, nodeId } = req.params;
+  const { userId, mastery_status, familiarity_score } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  const nodeValidation = validateUuid(nodeId, 'nodeId');
+  if (!nodeValidation.valid) {
+    return res.status(400).json({ error: nodeValidation.error });
+  }
+
+  // Validate mastery_status if provided
+  const validStatuses = ['pending', 'mastered', 'needs_review'];
+  if (mastery_status && !validStatuses.includes(mastery_status)) {
+    return res.status(400).json({
+      error: `mastery_status must be one of: ${validStatuses.join(', ')}`
+    });
+  }
+
+  // Validate familiarity_score if provided
+  if (familiarity_score !== undefined) {
+    const score = parseFloat(familiarity_score);
+    if (isNaN(score) || score < 0 || score > 1) {
+      return res.status(400).json({ error: 'familiarity_score must be a number between 0 and 1' });
+    }
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // First verify the course exists and user owns it
+    const { data: courseData, error: courseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (courseError || !courseData) {
+      return res.status(404).json({ error: 'Course not found or access denied' });
+    }
+
+    // Verify the node belongs to this course
+    const { data: nodeData, error: nodeError } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('id')
+      .eq('id', nodeId)
+      .eq('course_id', courseId)
+      .single();
+
+    if (nodeError || !nodeData) {
+      return res.status(404).json({ error: 'Lesson not found in this course' });
+    }
+
+    // Build update object
+    const updateData = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (mastery_status) {
+      updateData.mastery_status = mastery_status;
+    }
+
+    if (familiarity_score !== undefined) {
+      updateData.familiarity_score = parseFloat(familiarity_score);
+    }
+
+    // Update or insert user_node_state
+    const { data: existingState, error: fetchError } = await supabase
+      .schema('api')
+      .from('user_node_state')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('node_id', nodeId)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Error fetching user state:', fetchError);
+      return res.status(500).json({ error: 'Failed to fetch progress data', details: fetchError.message });
+    }
+
+    let result;
+    if (existingState) {
+      // Update existing record
+      const { data, error: updateError } = await supabase
+        .schema('api')
+        .from('user_node_state')
+        .update(updateData)
+        .eq('user_id', userId)
+        .eq('node_id', nodeId)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Error updating progress:', updateError);
+        return res.status(500).json({ error: 'Failed to update progress', details: updateError.message });
+      }
+      result = data;
+    } else {
+      // Insert new record
+      const insertData = {
+        user_id: userId,
+        node_id: nodeId,
+        mastery_status: mastery_status || 'pending',
+        familiarity_score: familiarity_score !== undefined ? parseFloat(familiarity_score) : 0.1,
+        created_at: new Date().toISOString(),
+        ...updateData
+      };
+
+      const { data, error: insertError } = await supabase
+        .schema('api')
+        .from('user_node_state')
+        .insert(insertData)
+        .select('*')
+        .single();
+
+      if (insertError) {
+        console.error('Error inserting progress:', insertError);
+        return res.status(500).json({ error: 'Failed to save progress', details: insertError.message });
+      }
+      result = data;
+    }
+
+    return res.json({
+      success: true,
+      progress: {
+        user_id: result.user_id,
+        node_id: result.node_id,
+        mastery_status: result.mastery_status,
+        familiarity_score: result.familiarity_score,
+        updated_at: result.updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Error updating lesson progress:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
 router.get('/:courseId/nodes/:nodeId', async (req, res) => {
   const { courseId, nodeId } = req.params;
   const { userId } = req.query;
@@ -107,6 +261,17 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found' });
     }
 
+    // Check if the lesson is locked based on prerequisites
+    let lockStatus;
+    try {
+      const { checkNodeLockStatus } = await import('../services/lessonLock.js');
+      lockStatus = await checkNodeLockStatus(nodeId, courseId, userId);
+    } catch (lockError) {
+      console.error('Error checking lock status:', lockError);
+      // Don't fail the request if lock check fails, just omit the lock status
+      lockStatus = { isLocked: false, prerequisites: [] };
+    }
+
     // Return the full node data
     return res.json({
       success: true,
@@ -121,6 +286,8 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
         confidence_score: node.confidence_score,
         metadata: node.metadata,
         content_payload: node.content_payload,
+        is_locked: lockStatus.isLocked,
+        prerequisites: lockStatus.prerequisites,
       },
     });
   } catch (error) {

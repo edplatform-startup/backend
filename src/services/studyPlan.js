@@ -261,18 +261,17 @@ function formatOutput(mode, sortedNodes, nodeMap) {
             else if (node.content_payload.quiz) type = 'quiz';
         }
 
-        // Check if locked (immediate parent not completed)
+        // Check if locked (only locked if any parent is in "pending" state)
         let isLocked = false;
         if (nodeMap) {
             const fullNode = nodeMap.get(node.id);
             if (fullNode && fullNode.parents) {
                 for (const parentId of fullNode.parents) {
                     const parent = nodeMap.get(parentId);
-                    // If any parent is not mastered, this node is locked? 
-                    // Usually "locked" means you can't start it. 
-                    // If dependencies are strict, yes.
-                    // Let's assume strict dependencies: all parents must be mastered.
-                    if (parent && parent.userState.mastery_status !== 'mastered') {
+                    // Node is locked only if any parent is in "pending" state
+                    // If parent is "mastered" or "needs_review", the node is unlocked
+                    const parentStatus = parent?.userState?.mastery_status || 'pending';
+                    if (parentStatus === 'pending') {
                         isLocked = true;
                         break;
                     }

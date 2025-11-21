@@ -55,14 +55,20 @@ CRITICAL RULES:
 1. **Granularity:** "Atomic" means a lesson that takes 15-45 minutes to complete. Split broad topics. Merge tiny fragments (unless foundational).
 2. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
 3. **No Cycles:** The graph must be strictly Acyclic.
-4. **Specific Generation Plans:** You must decide which content types are necessary for this lesson (reading, video, quiz, flashcards). You do not need to generate all of them, but you CAN generate all of them if you deem it necessary.
-   - **reading:** Provide a highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
-   - **video:** Provide 2-3 specific YouTube search queries likely to yield high-quality tutorials.
-   - **quiz:** Provide a prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap").
-   - **flashcards:** Provide a prompt focusing on what to memorize (definitions vs. procedural steps).
-5. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
-6. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
-7. **Naming:** NEVER number modules or lessons in the title (e.g., 'Introduction', not '1. Introduction').
+4. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
+   - A lesson can have multiple readings (e.g., theory + examples + edge cases)
+   - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
+   - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
+   - ALL content should flow in a logical learning order for maximum comprehension
+5. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the entire module's content.
+6. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
+   - **reading:** Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
+   - **video:** 2-3 specific YouTube search queries likely to yield high-quality tutorials.
+   - **quiz:** Detailed prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap," "Include one conceptual and two application questions").
+   - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
+7. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
+8. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
+9. **Naming:** NEVER number modules or lessons in the title (e.g., 'Introduction', not '1. Introduction').
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -146,7 +152,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
           newDependencies.push(matches.bestMatch.target);
         } else {
           // Keep it for Stage 2, but track it as broken
-          newDependencies.push(dep); 
+          newDependencies.push(dep);
           badDepsForLesson.push(dep);
         }
       }
@@ -160,12 +166,12 @@ Output STRICT VALID JSON format (no markdown, no comments):
   // Stage 2: Targeted Regeneration
   if (brokenDependenciesMap.size > 0) {
     console.log(`[LessonArchitect] Found ${brokenDependenciesMap.size} lessons with broken dependencies. Attempting LLM repair...`);
-    
+
     const allBadSlugs = new Set();
     for (const deps of brokenDependenciesMap.values()) {
       deps.forEach(d => allBadSlugs.add(d));
     }
-    
+
     const repairPrompt = `You generated these nodes: ${JSON.stringify(Array.from(validSlugs))}.
 You referenced these non-existent dependencies: ${JSON.stringify(Array.from(allBadSlugs))}.
 Return a JSON map correcting the Bad Slugs to existing ones, or map to null to remove.
@@ -190,18 +196,18 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
 
         const finalDeps = [];
         for (const dep of lesson.dependencies) {
-             if (badDeps.includes(dep)) {
-                 const correction = corrections[dep];
-                 if (correction && validSlugs.has(correction)) {
-                     console.log(`[LessonArchitect] LLM repaired '${dep}' -> '${correction}'`);
-                     finalDeps.push(correction);
-                 } else {
-                     // Stage 3: Orphan Fallback
-                     console.warn(`[LessonArchitect] Dropping invalid dependency '${dep}' for lesson '${slug}' to preserve content.`);
-                 }
-             } else {
-                 finalDeps.push(dep);
-             }
+          if (badDeps.includes(dep)) {
+            const correction = corrections[dep];
+            if (correction && validSlugs.has(correction)) {
+              console.log(`[LessonArchitect] LLM repaired '${dep}' -> '${correction}'`);
+              finalDeps.push(correction);
+            } else {
+              // Stage 3: Orphan Fallback
+              console.warn(`[LessonArchitect] Dropping invalid dependency '${dep}' for lesson '${slug}' to preserve content.`);
+            }
+          } else {
+            finalDeps.push(dep);
+          }
         }
         lesson.dependencies = [...new Set(finalDeps)]; // Dedupe
       }
@@ -221,7 +227,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     let confidenceSum = 0;
     let sourceCount = 0;
     const sources = l.original_source_ids || [];
-    
+
     if (sources.length > 0) {
       sources.forEach(sid => {
         if (typeof userConfidenceMap[sid] === 'number') {
@@ -230,7 +236,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
         }
       });
     }
-    
+
     // Default to 0.1 if no sources or no matching scores
     const confidenceScore = sourceCount > 0 ? Number((confidenceSum / sourceCount).toFixed(2)) : 0.1;
 
@@ -245,12 +251,12 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       is_checkpoint: false,
       in_degree: 0,
       out_degree: 0,
-      
+
       // --- FIX START ---
       // Store the plans inside content_payload so the Worker can access them later
       content_payload: {
         // This preserves the 'content_plans' object (reading prompt, video queries, etc.)
-        generation_plans: l.content_plans || {} 
+        generation_plans: l.content_plans || {}
       },
       // We map the 'reading' prompt to the old column just in case, or stringify the whole object
       generation_prompt: l.content_plans ? JSON.stringify(l.content_plans) : null,
@@ -258,16 +264,16 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
 
       module_ref: l.module_group,
       created_at: new Date().toISOString(),
-      confidence_score: confidenceScore, 
+      confidence_score: confidenceScore,
       metadata: {
-        original_source_ids: sources, 
+        original_source_ids: sources,
         architectural_reasoning: l.architectural_reasoning
       }
     };
   });
 
   const finalEdges = [];
-  
+
   // Calculate degrees and build edges
   lessonGraph.lessons.forEach(l => {
     const childId = slugToUuid.get(l.slug_id);
@@ -278,7 +284,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
           parent_id: parentId,
           child_id: childId
         });
-        
+
         // Update degrees
         const childNode = finalNodes.find(n => n.id === childId);
         const parentNode = finalNodes.find(n => n.id === parentId);
