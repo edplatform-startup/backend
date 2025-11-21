@@ -66,13 +66,13 @@ function normalizeGraphInput(lessonGraph = {}) {
   const nodes = Array.isArray(lessonGraph.finalNodes)
     ? lessonGraph.finalNodes
     : Array.isArray(lessonGraph.nodes)
-    ? lessonGraph.nodes
-    : [];
+      ? lessonGraph.nodes
+      : [];
   const edges = Array.isArray(lessonGraph.finalEdges)
     ? lessonGraph.finalEdges
     : Array.isArray(lessonGraph.edges)
-    ? lessonGraph.edges
-    : [];
+      ? lessonGraph.edges
+      : [];
   return { nodes, edges };
 }
 
@@ -105,8 +105,8 @@ async function persistCourseStructure(courseId, userId, lessonGraph) {
     const generationPlans = isPlainObject(basePayload.generation_plans)
       ? basePayload.generation_plans
       : isPlainObject(node.content_plans)
-      ? cloneJson(node.content_plans)
-      : {};
+        ? cloneJson(node.content_plans)
+        : {};
     const contentPayload = {
       ...basePayload,
       status: STATUS_PENDING,
@@ -210,7 +210,7 @@ async function runContentWorker(courseId, options = {}) {
   }
 
   const limit = pendingNodes.length < 20 ? Math.max(1, pendingNodes.length) : options.concurrency || DEFAULT_CONCURRENCY;
-  
+
   // Optimization: Fetch course title once if possible, or we can rely on it being passed or fetched inside.
   // Since we don't have it easily here without another query, let's fetch it once.
   const { data: courseData } = await supabase.schema('api').from('courses').select('title').eq('id', courseId).single();
@@ -247,8 +247,8 @@ async function processNode(node, supabase, courseTitle) {
   const existingMetadata = isPlainObject(payload.metadata)
     ? payload.metadata
     : isPlainObject(node.metadata)
-    ? node.metadata
-    : null;
+      ? node.metadata
+      : null;
 
   const moduleName = node.module_ref || 'General Module';
   const lessonName = node.title || 'Untitled Lesson';
@@ -390,30 +390,299 @@ function parseJsonArray(raw, fallbackKey) {
   return [];
 }
 
+// ============================================================================
+// LaTeX Utilities
+// ============================================================================
+
+/**
+ * Extract LaTeX content from model output, removing markdown code fences if present
+ */
+function extractLatexContent(raw) {
+  if (!raw) return '';
+
+  let content = raw.trim();
+
+  // Remove markdown code fences (```latex ... ``` or ``` ... ```)
+  const fenceMatch = content.match(/^```(?:latex)?\s*\n([\s\S]*?)\n```$/);
+  if (fenceMatch) {
+    content = fenceMatch[1].trim();
+  }
+
+  return content;
+}
+
+/**
+ * Verify LaTeX document structure and common issues
+ * Returns { valid: boolean, errors: string[], warnings: string[] }
+ */
+function verifyLatex(latex) {
+  const errors = [];
+  const warnings = [];
+
+  if (!latex || typeof latex !== 'string') {
+    return { valid: false, errors: ['LaTeX content is empty or invalid'], warnings: [] };
+  }
+
+  // Check for document class
+  if (!latex.includes('\\documentclass')) {
+    errors.push('Missing \\documentclass declaration');
+  }
+
+  // Check for document environment
+  const hasBeginDoc = latex.includes('\\begin{document}');
+  const hasEndDoc = latex.includes('\\end{document}');
+
+  if (!hasBeginDoc) {
+    errors.push('Missing \\begin{document}');
+  }
+  if (!hasEndDoc) {
+    errors.push('Missing \\end{document}');
+  }
+
+  // Check for balanced braces
+  const braceBalance = checkBraceBalance(latex);
+  if (braceBalance !== 0) {
+    errors.push(`Unbalanced braces: ${braceBalance > 0 ? 'too many opening' : 'too many closing'} braces`);
+  }
+
+  // Check for unmatched environments
+  const unmatchedEnvs = findUnmatchedEnvironments(latex);
+  if (unmatchedEnvs.length > 0) {
+    errors.push(`Unmatched environments: ${unmatchedEnvs.join(', ')}`);
+  }
+
+  // Warn about markdown remnants
+  if (latex.includes('**') || latex.includes('##') || /^[\*\-]\s/m.test(latex)) {
+    warnings.push('Possible markdown syntax detected');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings
+  };
+}
+
+/**
+ * Check if braces are balanced
+ * Returns 0 if balanced, positive if more opening, negative if more closing
+ */
+function checkBraceBalance(text) {
+  let balance = 0;
+  let inComment = false;
+
+  for (let i = 0; i < text.length; i++) {
+    // Skip comments
+    if (text[i] === '%' && (i === 0 || text[i - 1] !== '\\')) {
+      inComment = true;
+    }
+    if (inComment && text[i] === '\n') {
+      inComment = false;
+      continue;
+    }
+    if (inComment) continue;
+
+    // Count braces (ignore escaped ones)
+    if (text[i] === '{' && (i === 0 || text[i - 1] !== '\\')) {
+      balance++;
+    } else if (text[i] === '}' && (i === 0 || text[i - 1] !== '\\')) {
+      balance--;
+    }
+  }
+
+  return balance;
+}
+
+/**
+ * Find unmatched \begin{X} and \end{X} pairs
+ * Returns array of unmatched environment names
+ */
+function findUnmatchedEnvironments(text) {
+  const stack = [];
+  const unmatched = [];
+
+  // Match all \begin{envname} and \end{envname}
+  const beginRegex = /\\begin\{([^}]+)\}/g;
+  const endRegex = /\\end\{([^}]+)\}/g;
+
+  const begins = [];
+  const ends = [];
+
+  let match;
+  while ((match = beginRegex.exec(text)) !== null) {
+    begins.push({ type: 'begin', name: match[1], index: match.index });
+  }
+  while ((match = endRegex.exec(text)) !== null) {
+    ends.push({ type: 'end', name: match[1], index: match.index });
+  }
+
+  // Merge and sort by position
+  const all = [...begins, ...ends].sort((a, b) => a.index - b.index);
+
+  for (const item of all) {
+    if (item.type === 'begin') {
+      stack.push(item.name);
+    } else {
+      if (stack.length === 0 || stack[stack.length - 1] !== item.name) {
+        unmatched.push(item.name);
+      } else {
+        stack.pop();
+      }
+    }
+  }
+
+  // Add remaining unclosed environments
+  unmatched.push(...stack);
+
+  return unmatched;
+}
+
+/**
+ * Clean up LaTeX content to fix common issues
+ */
+function cleanupLatex(latex) {
+  if (!latex) return '';
+
+  let cleaned = latex;
+
+  // 1. Remove markdown code fences if present
+  cleaned = extractLatexContent(cleaned);
+
+  // 2. Convert markdown bold/italic to LaTeX (outside math mode)
+  // This is a simple replacement - doesn't handle math mode perfectly but helps
+  cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '\\textbf{$1}');
+  cleaned = cleaned.replace(/\*([^*]+)\*/g, '\\textit{$1}');
+
+  // 3. Convert markdown headers to LaTeX sections (if not in LaTeX format)
+  cleaned = cleaned.replace(/^###\s+(.+)$/gm, '\\subsubsection{$1}');
+  cleaned = cleaned.replace(/^##\s+(.+)$/gm, '\\subsection{$1}');
+  cleaned = cleaned.replace(/^#\s+(.+)$/gm, '\\section{$1}');
+
+  // 4. Convert markdown lists to LaTeX (basic conversion)
+  // This is challenging to do perfectly, so we'll keep it simple
+
+  // 5. Normalize whitespace
+  // Remove excessive blank lines (more than 2)
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+
+  // 6. Ensure document has proper structure if missing
+  if (!cleaned.includes('\\documentclass')) {
+    cleaned = '\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{amssymb}\n\\usepackage{amsthm}\n\\usepackage{geometry}\n\\usepackage{hyperref}\n\\usepackage{enumitem}\n\n' + cleaned;
+  }
+
+  if (!cleaned.includes('\\begin{document}')) {
+    const docClassEnd = cleaned.indexOf('\\documentclass');
+    const insertPos = cleaned.indexOf('\n\n', docClassEnd) + 2;
+    cleaned = cleaned.slice(0, insertPos) + '\\begin{document}\n\n' + cleaned.slice(insertPos);
+  }
+
+  if (!cleaned.includes('\\end{document}')) {
+    cleaned += '\n\n\\end{document}';
+  }
+
+  return cleaned.trim();
+}
+
+
 async function generateReading(title, plan, courseName, moduleName) {
-  const messages = [
-    {
-      role: 'system',
-      content: `You are an elite instructional designer creating rigorous university-level study materials. You are building a reading lesson for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Always return polished Markdown with headers, callouts, and applied examples.`,
-    },
-    {
-      role: 'user',
-      content: `Write a comprehensive university-level reading lesson in Markdown for "${title}". Plan: ${plan}`,
-    },
-  ];
+  const systemPrompt = {
+    role: 'system',
+    content: `You are an elite instructional designer creating rigorous university-level study materials in LaTeX format.
+You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
+
+CRITICAL REQUIREMENTS:
+1. Return ONLY valid LaTeX source code
+2. Use proper document structure with sections, subsections
+3. Generate content appropriate to the topic (technical, humanities, sciences, etc.)
+4. Escape special LaTeX characters when used as text: %, &, #, _, etc.
+5. Use \\textbf{} for emphasis, \\textit{} for italics - NO markdown syntax
+6. Use math mode ($...$) only if the content requires mathematical notation
+7. Structure content with appropriate environments based on topic type
+
+Available packages: amsmath, amssymb, amsthm, geometry, hyperref, graphicx, enumitem`,
+  };
+
+  const userPrompt = {
+    role: 'user',
+    content: `Generate a complete LaTeX document for "${title}".
+Plan: ${plan}
+
+Requirements:
+- Start with \\documentclass{article}
+- Include necessary \\usepackage declarations
+- Use \\begin{document} and \\end{document}
+- Structure with \\section{}, \\subsection{}, \\subsubsection{} as appropriate
+- Use environments suited to the content (itemize, enumerate, description, quotation, etc.)
+- For technical content, use theorem/definition/example environments if appropriate
+- Ensure all braces {} are balanced
+- Properly escape special LaTeX characters when used as text (not commands)
+
+Return ONLY the LaTeX source code, no explanations.`,
+  };
+
+  // First attempt
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4-fast',
     temperature: 0.35,
     maxTokens: 1800,
-    messages,
+    messages: [systemPrompt, userPrompt],
     requestTimeoutMs: 120000,
   });
-  const text = coerceModelText(content);
-  const cleaned = cleanModelOutput(text);
-  if (!cleaned) {
-    throw new Error('Reading generator returned empty content');
+
+  let latex = coerceModelText(content);
+  latex = cleanupLatex(latex);
+
+  // Verify the generated LaTeX
+  let verification = verifyLatex(latex);
+
+  // If invalid, attempt one retry with error feedback
+  if (!verification.valid) {
+    console.warn(`LaTeX generation failed for "${title}". Errors: ${verification.errors.join(', ')}. Retrying...`);
+
+    const retryPrompt = {
+      role: 'user',
+      content: `The previous LaTeX had these errors:
+${verification.errors.map(e => `- ${e}`).join('\n')}
+
+Please fix these issues and regenerate a valid LaTeX document for "${title}".
+Remember: 
+- Include \\documentclass, \\begin{document}, \\end{document}
+- Balance all braces
+- Match all \\begin{env} with \\end{env}
+- NO markdown syntax
+
+Plan: ${plan}`,
+    };
+
+    const retryResult = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.3,
+      maxTokens: 1800,
+      messages: [systemPrompt, retryPrompt],
+      requestTimeoutMs: 120000,
+    });
+
+    latex = coerceModelText(retryResult.content);
+    latex = cleanupLatex(latex);
+    verification = verifyLatex(latex);
   }
-  return cleaned;
+
+  // Log warnings but accept the result
+  if (verification.warnings.length > 0) {
+    console.warn(`LaTeX warnings for "${title}":`, verification.warnings);
+  }
+
+  // If still invalid after retry, log errors but return what we have
+  if (!verification.valid) {
+    console.error(`LaTeX still invalid for "${title}" after retry:`, verification.errors);
+    console.error('Returning cleaned LaTeX despite errors.');
+  }
+
+  if (!latex) {
+    throw new Error('Reading generator returned empty content after cleanup');
+  }
+
+  return latex;
 }
 
 async function generateQuiz(title, plan, courseName, moduleName) {
