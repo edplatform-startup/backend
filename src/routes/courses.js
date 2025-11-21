@@ -9,7 +9,7 @@ import {
 } from '../utils/validation.js';
 import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
 import { generateStudyPlan } from '../services/studyPlan.js';
-import { parseSharedCourseInputs, buildAttachmentList } from '../utils/courseInputParser.js';
+import { parseSharedCourseInputs, buildAttachmentList, toTrimmedString } from '../utils/courseInputParser.js';
 
 const router = Router();
 

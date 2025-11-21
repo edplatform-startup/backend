@@ -158,7 +158,7 @@ function normalizeCourseSelection({ university, courseTitle, rawSelection }) {
   return normalized;
 }
 
-function toTrimmedString(value) {
+export function toTrimmedString(value) {
   if (value == null) return '';
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' || typeof value === 'boolean') {
