@@ -196,7 +196,7 @@ async function runContentWorker(courseId, options = {}) {
   const { data: pendingNodes, error: fetchError } = await supabase
     .schema('api')
     .from('course_nodes')
-    .select('id, title, content_payload, metadata')
+    .select('id, title, content_payload, metadata, module_ref')
     .eq('course_id', courseId)
     .contains('content_payload', { status: STATUS_PENDING });
 
@@ -210,9 +210,15 @@ async function runContentWorker(courseId, options = {}) {
   }
 
   const limit = pendingNodes.length < 20 ? Math.max(1, pendingNodes.length) : options.concurrency || DEFAULT_CONCURRENCY;
+  
+  // Optimization: Fetch course title once if possible, or we can rely on it being passed or fetched inside.
+  // Since we don't have it easily here without another query, let's fetch it once.
+  const { data: courseData } = await supabase.schema('api').from('courses').select('title').eq('id', courseId).single();
+  const courseTitle = courseData?.title || 'Unknown Course';
+
   const results = await runWithConcurrency(pendingNodes, limit, async (node) => {
     try {
-      await processNode(node, supabase);
+      await processNode(node, supabase, courseTitle);
       return { nodeId: node.id };
     } catch (error) {
       await markNodeError(node, supabase, error);
@@ -231,7 +237,7 @@ async function runContentWorker(courseId, options = {}) {
   return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
 }
 
-async function processNode(node, supabase) {
+async function processNode(node, supabase, courseTitle) {
   const payload = isPlainObject(node.content_payload) ? { ...node.content_payload } : {};
   const plans = isPlainObject(payload.generation_plans) ? payload.generation_plans : null;
   if (!plans || Object.keys(plans).length === 0) {
@@ -244,23 +250,29 @@ async function processNode(node, supabase) {
     ? node.metadata
     : null;
 
-  const readingPromise = plans.reading ? generateReading(node.title, plans.reading) : Promise.resolve(null);
-  const quizPromise = plans.quiz ? generateQuiz(node.title, plans.quiz) : Promise.resolve(null);
-  const flashcardsPromise = plans.flashcards ? generateFlashcards(node.title, plans.flashcards) : Promise.resolve(null);
-  const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve(null);
+  const moduleName = node.module_ref || 'General Module';
+  const lessonName = node.title || 'Untitled Lesson';
 
-  const [reading, quiz, flashcards, video] = await Promise.all([
+  const readingPromise = plans.reading ? generateReading(lessonName, plans.reading, courseTitle, moduleName) : Promise.resolve(null);
+  const quizPromise = plans.quiz ? generateQuiz(lessonName, plans.quiz, courseTitle, moduleName) : Promise.resolve(null);
+  const flashcardsPromise = plans.flashcards ? generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName) : Promise.resolve(null);
+  const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve([]);
+
+  const [reading, quiz, flashcards, videos] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
     videoPromise,
   ]);
 
+  const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
+
   const finalPayload = {
     reading,
     quiz,
     flashcards,
-    video,
+    video: videos, // Keep original array structure
+    video_urls: videoUrls, // New CSV field
     generation_plans: plans,
     metadata: existingMetadata,
     status: STATUS_READY,
@@ -352,18 +364,20 @@ function coerceModelText(content) {
   return '';
 }
 
-function stripJsonFences(raw) {
+function cleanModelOutput(raw) {
   return raw
     .trim()
     .replace(/^```json\s*/i, '')
+    .replace(/^```markdown\s*/i, '')
     .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .replace(/\\'/g, "'")
     .trim();
 }
 
 function parseJsonArray(raw, fallbackKey) {
   if (!raw) return [];
-  const stripped = stripJsonFences(raw);
+  const stripped = cleanModelOutput(raw);
   if (!stripped) return [];
   let parsed;
   try {
@@ -376,15 +390,15 @@ function parseJsonArray(raw, fallbackKey) {
   return [];
 }
 
-async function generateReading(title, plan) {
+async function generateReading(title, plan, courseName, moduleName) {
   const messages = [
     {
       role: 'system',
-      content: 'You are an elite instructional designer creating rigorous university-level study materials. Always return polished Markdown with headers, callouts, and applied examples.',
+      content: `You are an elite instructional designer creating rigorous university-level study materials. You are building a reading lesson for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Always return polished Markdown with headers, callouts, and applied examples.`,
     },
     {
       role: 'user',
-      content: `Write a comprehensive university-level reading lesson in Markdown for "${title || 'this lesson'}". ${plan}`,
+      content: `Write a comprehensive university-level reading lesson in Markdown for "${title}". Plan: ${plan}`,
     },
   ];
   const { content } = await grokExecutor({
@@ -395,22 +409,23 @@ async function generateReading(title, plan) {
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
-  if (!text) {
+  const cleaned = cleanModelOutput(text);
+  if (!cleaned) {
     throw new Error('Reading generator returned empty content');
   }
-  return text;
+  return cleaned;
 }
 
-async function generateQuiz(title, plan) {
+async function generateQuiz(title, plan, courseName, moduleName) {
   const messages = [
     {
       role: 'system',
       content:
-        'Produce rigorous assessment content. Always respond with JSON: {"questions": [{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}]}',
+        `You are building a quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Produce rigorous assessment content. Always respond with JSON: {"questions": [{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}]}`,
     },
     {
       role: 'user',
-      content: `Generate a JSON array of 3 multiple-choice questions for "${title || 'this lesson'}". Each item must include { question, options[], correct_index, explanation }. ${plan}`,
+      content: `Generate a JSON array of 3 multiple-choice questions for "${title}". Each item must include { question, options[], correct_index, explanation }. Plan: ${plan}`,
     },
   ];
   const { content } = await grokExecutor({
@@ -445,16 +460,16 @@ function normalizeQuizItem(item, index) {
   };
 }
 
-async function generateFlashcards(title, plan) {
+async function generateFlashcards(title, plan, courseName, moduleName) {
   const messages = [
     {
       role: 'system',
       content:
-        'Return JSON only: {"flashcards": [{"front":"Question?","back":"Answer"}]} with graduate-level precision and mnemonics when helpful.',
+        `You are building flashcards for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Return JSON only: {"flashcards": [{"front":"Question?","back":"Answer"}]} with graduate-level precision and mnemonics when helpful.`,
     },
     {
       role: 'user',
-      content: `Generate a JSON array of 5 flashcards for "${title || 'this topic'}". Each flashcard must have { front, back }. ${plan}`,
+      content: `Generate a JSON array of 5 flashcards for "${title}". Each flashcard must have { front, back }. Plan: ${plan}`,
     },
   ];
   const { content } = await grokExecutor({
@@ -484,21 +499,24 @@ function normalizeFlashcard(card, index) {
 
 async function fetchVideoResource(queries) {
   if (!Array.isArray(queries) || queries.length === 0) {
-    return null;
+    return [];
   }
   if (customYouTubeFetcher) {
     try {
-      return await customYouTubeFetcher(queries);
+      // Expect custom fetcher to return an array or single object, normalize to array
+      const res = await customYouTubeFetcher(queries);
+      return Array.isArray(res) ? res : (res ? [res] : []);
     } catch (error) {
       console.warn('[generateCourseContent] Custom YouTube fetcher failed:', error?.message || error);
-      return null;
+      return [];
     }
   }
   const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    return null;
+    return [];
   }
 
+  const videos = [];
   for (const query of queries) {
     try {
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
@@ -521,14 +539,14 @@ async function fetchVideoResource(queries) {
       if (!first?.id?.videoId) {
         continue;
       }
-      return {
+      videos.push({
         videoId: first.id.videoId,
         title: first.snippet?.title || 'Unknown title',
         thumbnail: first.snippet?.thumbnails?.high?.url || first.snippet?.thumbnails?.default?.url || null,
-      };
+      });
     } catch (error) {
-      console.warn('[generateCourseContent] YouTube search failed:', error?.message || error);
+      console.warn('[generateCourseContent] YouTube search failed for query:', query, error?.message || error);
     }
   }
-  return null;
+  return videos;
 }

@@ -55,13 +55,14 @@ CRITICAL RULES:
 1. **Granularity:** "Atomic" means a lesson that takes 15-45 minutes to complete. Split broad topics. Merge tiny fragments (unless foundational).
 2. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
 3. **No Cycles:** The graph must be strictly Acyclic.
-4. **Specific Generation Plans:** Do not use generic instructions. You must generate a specific plan for EACH content format included in the lesson:
-   - **reading:** Provide a prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs").
+4. **Specific Generation Plans:** You must decide which content types are necessary for this lesson (reading, video, quiz, flashcards). You do not need to generate all of them, but you CAN generate all of them if you deem it necessary.
+   - **reading:** Provide a highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
    - **video:** Provide 2-3 specific YouTube search queries likely to yield high-quality tutorials.
    - **quiz:** Provide a prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap").
    - **flashcards:** Provide a prompt focusing on what to memorize (definitions vs. procedural steps).
 5. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 6. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
+7. **Naming:** NEVER number modules or lessons in the title (e.g., 'Introduction', not '1. Introduction').
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -99,6 +100,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
     ],
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 1800000, // 30 minutes for long-running course generation
+    allowWeb: true,
+    maxToolIterations: 16,
   });
 
   let lessonGraph;

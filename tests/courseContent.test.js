@@ -122,7 +122,7 @@ test('generateCourseContent fills node payloads and marks course ready', async (
     const last = messages[messages.length - 1]?.content || '';
     if (typeof last === 'string' && /multiple-choice/i.test(last)) {
       return {
-        content: JSON.stringify({
+        content: "```json\n" + JSON.stringify({
           questions: [
             {
               question: 'Q1',
@@ -131,22 +131,22 @@ test('generateCourseContent fills node payloads and marks course ready', async (
               explanation: 'Because B.',
             },
           ],
-        }),
+        }) + "\n```"
       };
     }
     if (typeof last === 'string' && /flashcards/i.test(last)) {
       return {
-        content: JSON.stringify({
+        content: "```json\n" + JSON.stringify({
           flashcards: [
             {
               front: 'Front',
               back: 'Back',
             },
           ],
-        }),
+        }) + "\n```"
       };
     }
-    return { content: '# Lesson Body' };
+    return { content: "```markdown\n# Lesson Body\nIt\\'s great.\n```" };
   });
   __setYouTubeFetcher(async () => ({ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }));
 
@@ -155,10 +155,12 @@ test('generateCourseContent fills node payloads and marks course ready', async (
 
     assert.equal(result.status, 'ready');
     assert.equal(nodeUpdates.length, 2);
+    assert.equal(nodeUpdates[0].content_payload.reading, "# Lesson Body\nIt's great.");
     assert.equal(nodeUpdates[0].content_payload.status, 'ready');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.quiz));
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.flashcards));
-    assert.deepEqual(nodeUpdates[0].content_payload.video, { videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' });
+    assert.deepEqual(nodeUpdates[0].content_payload.video, [{ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }]);
+    assert.equal(nodeUpdates[0].content_payload.video_urls, 'https://www.youtube.com/watch?v=vid123');
 
     assert.equal(courseUpdates.length, 1);
     assert.equal(courseUpdates[0].status, 'ready');
