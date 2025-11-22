@@ -256,13 +256,18 @@ async function processNode(node, supabase, courseTitle) {
   const readingPromise = plans.reading ? generateReading(lessonName, plans.reading, courseTitle, moduleName) : Promise.resolve(null);
   const quizPromise = plans.quiz ? generateQuiz(lessonName, plans.quiz, courseTitle, moduleName) : Promise.resolve(null);
   const flashcardsPromise = plans.flashcards ? generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName) : Promise.resolve(null);
+  const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
+  const practiceExamPromise = practiceExamPlan
+    ? generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName)
+    : Promise.resolve(null);
   const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve([]);
 
-  const [reading, quiz, flashcards, videos] = await Promise.all([
+  const [reading, quiz, flashcards, videos, practiceExam] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
     videoPromise,
+    practiceExamPromise,
   ]);
 
   const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
@@ -271,6 +276,7 @@ async function processNode(node, supabase, courseTitle) {
     reading,
     quiz,
     flashcards,
+    practice_exam: practiceExam,
     video: videos, // Keep original array structure
     video_urls: videoUrls, // New CSV field
     generation_plans: plans,
@@ -388,6 +394,17 @@ function parseJsonArray(raw, fallbackKey) {
   if (Array.isArray(parsed)) return parsed;
   if (fallbackKey && Array.isArray(parsed[fallbackKey])) return parsed[fallbackKey];
   return [];
+}
+
+function parseJsonObject(raw, label) {
+  if (!raw) return null;
+  const stripped = cleanModelOutput(raw);
+  if (!stripped) return null;
+  try {
+    return JSON.parse(stripped);
+  } catch (error) {
+    throw new Error(`Failed to parse JSON for ${label}: ${error.message}`);
+  }
 }
 
 // ============================================================================
@@ -590,47 +607,66 @@ async function generateReading(title, plan, courseName, moduleName) {
     content: `You are an elite instructional designer creating rigorous university-level study materials in LaTeX format.
 You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
 
+Always respond with JSON shaped exactly as:
+{
+  "internal_audit": "scratchpad reasoning explaining structure checks",
+  "final_content": {
+    "latex": "FULL LaTeX document"
+  }
+}
+
+The internal_audit is a throwaway scratchpad—never reference it inside the LaTeX. The final_content.latex must contain the entire document.
+
 CRITICAL REQUIREMENTS:
-1. Return ONLY valid LaTeX source code
-2. Use proper document structure with sections, subsections
-3. Generate content appropriate to the topic (technical, humanities, sciences, etc.)
-4. Escape special LaTeX characters when used as text: %, &, #, _, etc.
-5. Use \\textbf{} for emphasis, \\textit{} for italics - NO markdown syntax
-6. Use math mode ($...$) only if the content requires mathematical notation
-7. Structure content with appropriate environments based on topic type
+1. Provide valid LaTeX source (article class) with balanced environments
+2. Use sections/subsections to match the learning plan
+3. Escape special characters (%, &, #, _ ) when literal
+4. Use \\textbf{} / \\textit{} for emphasis, never markdown
+5. Keep math in $...$ only when required
+6. Prefer theorem/definition/example environments for rigorous topics
 
 Available packages: amsmath, amssymb, amsthm, geometry, hyperref, graphicx, enumitem`,
   };
 
   const userPrompt = {
     role: 'user',
-    content: `Generate a complete LaTeX document for "${title}".
-Plan: ${plan}
+    content: `Generate a complete LaTeX document for "${title}" following this plan:
+${plan}
 
-Requirements:
-- Start with \\documentclass{article}
-- Include necessary \\usepackage declarations
-- Use \\begin{document} and \\end{document}
-- Structure with \\section{}, \\subsection{}, \\subsubsection{} as appropriate
-- Use environments suited to the content (itemize, enumerate, description, quotation, etc.)
-- For technical content, use theorem/definition/example environments if appropriate
-- Ensure all braces {} are balanced
-- Properly escape special LaTeX characters when used as text (not commands)
+Return JSON ONLY. Populate final_content.latex with:
+- \\documentclass{article}
+- All required \\usepackage declarations
+- \\begin{document} ... \\end{document}
+- Appropriate section hierarchy
+- Topic-appropriate environments (itemize/enumerate/examples)
+- Escaped literal characters.
 
-Return ONLY the LaTeX source code, no explanations.`,
+Do not place scratchpad text in the LaTeX.`,
   };
 
-  // First attempt
-  const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
-    temperature: 0.35,
-    maxTokens: 1800,
-    messages: [systemPrompt, userPrompt],
-    requestTimeoutMs: 120000,
-  });
+  const renderResponse = async (promptMessages) => {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.35,
+      maxTokens: 1800,
+      messages: promptMessages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000,
+    });
+    const raw = coerceModelText(content);
+    const parsed = parseJsonObject(raw, 'reading');
+    const latexBody = typeof parsed?.final_content?.latex === 'string'
+      ? parsed.final_content.latex
+      : typeof parsed?.final_content === 'string'
+        ? parsed.final_content
+        : '';
+    if (!latexBody) {
+      throw new Error('Reading generator returned empty final_content');
+    }
+    return cleanupLatex(latexBody);
+  };
 
-  let latex = coerceModelText(content);
-  latex = cleanupLatex(latex);
+  let latex = await renderResponse([systemPrompt, userPrompt]);
 
   // Verify the generated LaTeX
   let verification = verifyLatex(latex);
@@ -654,16 +690,15 @@ Remember:
 Plan: ${plan}`,
     };
 
-    const retryResult = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
-      temperature: 0.3,
-      maxTokens: 1800,
-      messages: [systemPrompt, retryPrompt],
-      requestTimeoutMs: 120000,
-    });
+    latex = await renderResponse([
+      systemPrompt,
+      {
+        role: 'user',
+        content: `${retryPrompt.content}
 
-    latex = coerceModelText(retryResult.content);
-    latex = cleanupLatex(latex);
+Remember: respond with the same JSON schema (internal_audit + final_content.latex).`,
+      },
+    ]);
     verification = verifyLatex(latex);
   }
 
@@ -689,12 +724,34 @@ async function generateQuiz(title, plan, courseName, moduleName) {
   const messages = [
     {
       role: 'system',
-      content:
-        `You are building a quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Produce rigorous assessment content. Always respond with JSON: {"questions": [{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}]}`,
+      content: `You are building a graduate-level quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+
+Always respond with JSON:
+{
+  "internal_audit": "global scratchpad validating coverage and difficulty",
+  "quiz": [
+    {
+      "validation_check": "Chain-of-thought ensuring only one correct option",
+      "question": "Student-facing stem",
+      "options": ["..."],
+      "correct_index": 0,
+      "explanation": "Clean rationale with no meta-commentary"
+    }
+  ]
+}
+
+Rules:
+- validation_check is the ONLY place you reason about distractors
+- Explanation must be concise feedback for students (no scratchpad)
+- Exactly one option may be correct, enforce via validation_check.
+`,
     },
     {
       role: 'user',
-      content: `Generate a JSON array of 3 multiple-choice questions for "${title}". Each item must include { question, options[], correct_index, explanation }. Plan: ${plan}`,
+      content: `Generate JSON with a 'quiz' array of 3 multiple-choice questions for "${title}". Follow the plan:
+${plan}
+
+Each question: 4 options, single correct_index, validation_check before finalizing, explanation strictly for students.`,
     },
   ];
   const { content } = await grokExecutor({
@@ -706,11 +763,21 @@ async function generateQuiz(title, plan, courseName, moduleName) {
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
-  const questions = parseJsonArray(text, 'questions');
+  let questions = parseJsonArray(text, 'quiz');
+  if (!questions.length) {
+    questions = parseJsonArray(text, 'questions');
+  }
   if (!questions.length) {
     throw new Error('Quiz generator returned no questions');
   }
-  return questions.map((item, index) => normalizeQuizItem(item, index));
+  const cleaned = questions.map((item) => {
+    if (item && typeof item === 'object') {
+      const { validation_check, step_by_step_thinking, ...rest } = item;
+      return rest;
+    }
+    return item;
+  });
+  return cleaned.map((item, index) => normalizeQuizItem(item, index));
 }
 
 function normalizeQuizItem(item, index) {
@@ -729,16 +796,115 @@ function normalizeQuizItem(item, index) {
   };
 }
 
+async function generatePracticeExam(title, plan, courseName, moduleName) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are creating a high-stakes practice exam for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+
+Always respond with JSON:
+{
+  "internal_audit": "overall reasoning about coverage, pacing, and fairness",
+  "practice_exam": [
+    {
+      "validation_check": "Scratchpad ensuring rubric matches answer and only one resolution path earns full credit",
+      "question": "Student-facing prompt (can include multi-part instructions)",
+      "answer_key": "Model solution in instructor voice",
+      "rubric": "Bulleted scoring rubric tied to sub-parts",
+      "estimated_minutes": 20
+    }
+  ]
+}
+
+Rules:
+- validation_check is required for every item and must audit completeness before final answers
+- answer_key must stay solution-focused, no meta-commentary
+- rubric should reference the same subparts mentioned in the question.`,
+    },
+    {
+      role: 'user',
+      content: `Produce JSON with a 'practice_exam' array of 2 rigorous free-response problems for "${title}".
+Plan / emphasis:
+${plan}
+
+Each problem should require 15-25 minutes, may include labeled subparts (a, b, ...), and must capture authentic exam difficulty.`,
+    },
+  ];
+
+  const { content } = await grokExecutor({
+    model: 'x-ai/grok-4-fast',
+    temperature: 0.25,
+    maxTokens: 1400,
+    messages,
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 120000,
+  });
+
+  const text = coerceModelText(content);
+  const rawItems = parseJsonArray(text, 'practice_exam');
+  if (!rawItems.length) {
+    throw new Error('Practice exam generator returned no problems');
+  }
+
+  const cleaned = rawItems.map((item) => {
+    if (item && typeof item === 'object') {
+      const { validation_check, step_by_step_thinking, ...rest } = item;
+      return rest;
+    }
+    return item;
+  });
+
+  return cleaned.map((item, index) => normalizePracticeExamItem(item, index));
+}
+
+function normalizePracticeExamItem(item, index) {
+  const question = typeof item?.question === 'string' ? item.question.trim() : '';
+  const answerKey = typeof item?.answer_key === 'string' ? item.answer_key.trim() : '';
+  const rubric = typeof item?.rubric === 'string' ? item.rubric.trim() : '';
+  const estimatedMinutesRaw = Number(item?.estimated_minutes);
+  const estimatedMinutes = Number.isFinite(estimatedMinutesRaw) && estimatedMinutesRaw > 0
+    ? Math.round(estimatedMinutesRaw)
+    : 20;
+
+  if (!question || !answerKey) {
+    throw new Error(`Practice exam item ${index + 1} is invalid`);
+  }
+
+  return {
+    question,
+    answer_key: answerKey,
+    rubric: rubric || 'Award full credit only when every subpart is justified with correct reasoning.',
+    estimated_minutes: estimatedMinutes,
+  };
+}
+
 async function generateFlashcards(title, plan, courseName, moduleName) {
   const messages = [
     {
       role: 'system',
       content:
-        `You are building flashcards for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan. Return JSON only: {"flashcards": [{"front":"Question?","back":"Answer"}]} with graduate-level precision and mnemonics when helpful.`,
+        `You are building flashcards for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan.
+
+Always respond with JSON:
+{
+  "internal_audit": "coverage reasoning + memorization heuristics",
+  "flashcards": [
+    {
+      "step_by_step_thinking": "Scratchpad for mnemonic or reasoning",
+      "front": "Prompt shown to learner",
+      "back": "Concise, correct answer"
+    }
+  ]
+}
+
+Never include scratchpad text inside front/back.`,
     },
     {
       role: 'user',
-      content: `Generate a JSON array of 5 flashcards for "${title}". Each flashcard must have { front, back }. Plan: ${plan}`,
+      content: `Generate JSON with a 'flashcards' array of 5 cards for "${title}".
+Plan: ${plan}
+
+Each card must include step_by_step_thinking (scratchpad), then final front/back wording.`,
     },
   ];
   const { content } = await grokExecutor({
@@ -754,7 +920,14 @@ async function generateFlashcards(title, plan, courseName, moduleName) {
   if (!flashcards.length) {
     throw new Error('Flashcard generator returned no cards');
   }
-  return flashcards.map((card, index) => normalizeFlashcard(card, index));
+  const cleaned = flashcards.map((card) => {
+    if (card && typeof card === 'object') {
+      const { step_by_step_thinking, internal_audit, ...rest } = card;
+      return rest;
+    }
+    return card;
+  });
+  return cleaned.map((card, index) => normalizeFlashcard(card, index));
 }
 
 function normalizeFlashcard(card, index) {

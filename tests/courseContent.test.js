@@ -119,34 +119,80 @@ test('generateCourseContent fills node payloads and marks course ready', async (
   setSupabaseClient(stub);
 
   __setGrokExecutor(async ({ messages }) => {
-    const last = messages[messages.length - 1]?.content || '';
-    if (typeof last === 'string' && /multiple-choice/i.test(last)) {
+    const stringifyContent = (payload) => {
+      if (typeof payload === 'string') return payload;
+      if (Array.isArray(payload)) {
+        return payload
+          .map((part) => (typeof part === 'string' ? part : part?.text || ''))
+          .join(' ');
+      }
+      if (payload && typeof payload === 'object' && typeof payload.content === 'string') {
+        return payload.content;
+      }
+      return '';
+    };
+
+    const lastMessage = messages[messages.length - 1] || {};
+    const lastContent = stringifyContent(lastMessage.content);
+
+    if (/practice_exam/i.test(lastContent)) {
       return {
-        content: "```json\n" + JSON.stringify({
-          questions: [
+        content: JSON.stringify({
+          internal_audit: 'ensured free-response coverage',
+          practice_exam: [
             {
+              validation_check: 'One coherent rubric ties to answer key',
+              question: 'Solve the practice exam prompt.',
+              answer_key: 'Detailed solution.',
+              rubric: 'Award points for steps.',
+              estimated_minutes: 20,
+            },
+          ],
+        }),
+      };
+    }
+
+    if (/multiple-choice|quiz/i.test(lastContent)) {
+      return {
+        content: JSON.stringify({
+          internal_audit: 'quiz scratchpad',
+          quiz: [
+            {
+              validation_check: 'Only option B satisfies constraint.',
               question: 'Q1',
               options: ['A', 'B', 'C'],
               correct_index: 1,
               explanation: 'Because B.',
             },
           ],
-        }) + "\n```"
+        }),
       };
     }
-    if (typeof last === 'string' && /flashcards/i.test(last)) {
+
+    if (/flashcards/i.test(lastContent)) {
       return {
-        content: "```json\n" + JSON.stringify({
+        content: JSON.stringify({
+          internal_audit: 'flashcard coverage notes',
           flashcards: [
             {
+              step_by_step_thinking: 'Remind about mnemonic',
               front: 'Front',
               back: 'Back',
             },
           ],
-        }) + "\n```"
+        }),
       };
     }
-    return { content: "```markdown\n# Lesson Body\nIt\\'s great.\n```" };
+
+    const latexDoc = ['\\documentclass{article}', '\\begin{document}', 'Lesson Body', '\\end{document}'].join('\n');
+    return {
+      content: JSON.stringify({
+        internal_audit: 'reading scratchpad',
+        final_content: {
+          latex: latexDoc,
+        },
+      }),
+    };
   });
   __setYouTubeFetcher(async () => ({ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }));
 
@@ -155,10 +201,14 @@ test('generateCourseContent fills node payloads and marks course ready', async (
 
     assert.equal(result.status, 'ready');
     assert.equal(nodeUpdates.length, 2);
-    assert.equal(nodeUpdates[0].content_payload.reading, "# Lesson Body\nIt's great.");
+    assert.equal(
+      nodeUpdates[0].content_payload.reading,
+      '\\documentclass{article}\n\\begin{document}\nLesson Body\n\\end{document}'
+    );
     assert.equal(nodeUpdates[0].content_payload.status, 'ready');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.quiz));
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.flashcards));
+    assert.equal(nodeUpdates[0].content_payload.practice_exam, null);
     assert.deepEqual(nodeUpdates[0].content_payload.video, [{ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }]);
     assert.equal(nodeUpdates[0].content_payload.video_urls, 'https://www.youtube.com/watch?v=vid123');
 

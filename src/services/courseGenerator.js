@@ -15,6 +15,7 @@ export function __setLLMCaller(fn) {
  * @property {string[]} [video] - Search queries for video
  * @property {string} [quiz] - Prompt for quiz generation
  * @property {string} [flashcards] - Prompt for flashcard generation
+ * @property {string} [practice_exam] - Prompt for practice exam generation
  */
 
 /**
@@ -59,6 +60,7 @@ CRITICAL RULES:
    - A lesson can have multiple readings (e.g., theory + examples + edge cases)
    - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
+  - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
    - ALL content should flow in a logical learning order for maximum comprehension
 5. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the entire module's content.
 6. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
@@ -66,6 +68,7 @@ CRITICAL RULES:
    - **video:** 2-3 specific YouTube search queries likely to yield high-quality tutorials.
    - **quiz:** Detailed prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap," "Include one conceptual and two application questions").
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
+  - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
 7. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 8. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 9. **Naming:** NEVER number modules or lessons in the title (e.g., 'Introduction', not '1. Introduction').

@@ -1,32 +1,27 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateStudyPlan } from '../src/services/studyPlan.js';
+import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 
 // Mock Supabase client
 let mockData = {};
 
-// Override the getSupabase function
-const originalModule = await import('../src/supabaseClient.js');
-const getSupabaseMock = () => ({
-    schema: () => ({
-        from: (table) => ({
-            select: () => ({
-                eq: (field, value) => {
-                    if (field === 'user_id') {
-                        return {
-                            eq: () => Promise.resolve(mockData[table] || { data: [], error: null })
-                        };
-                    }
-                    return Promise.resolve(mockData[table] || { data: [], error: null });
-                }
-            })
-        })
-    })
-});
-
-// Simple dependency injection approach
-import * as supabaseModule from '../src/supabaseClient.js';
-supabaseModule.getSupabase = getSupabaseMock;
+const getSupabaseMock = () => {
+    const supabase = {
+        schema() {
+            return supabase;
+        },
+        from(table) {
+            const result = mockData[table] || { data: [], error: null };
+            const chain = Promise.resolve(result);
+            chain.select = () => chain;
+            chain.eq = () => chain;
+            chain.single = () => Promise.resolve(result);
+            return chain;
+        }
+    };
+    return supabase;
+};
 
 describe('Study Plan Generator', () => {
     const mockNodes = [
@@ -55,6 +50,11 @@ describe('Study Plan Generator', () => {
             node_dependencies: { data: mockEdges, error: null },
             user_node_state: { data: mockUserState, error: null }
         };
+        setSupabaseClient(getSupabaseMock());
+    });
+
+    afterEach(() => {
+        clearSupabaseClient();
     });
 
     it('Deep Study Mode: Returns all non-mastered nodes in topological order', async () => {
