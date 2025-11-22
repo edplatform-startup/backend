@@ -604,44 +604,35 @@ function cleanupLatex(latex) {
 async function generateReading(title, plan, courseName, moduleName) {
   const systemPrompt = {
     role: 'system',
-    content: `You are an elite instructional designer creating rigorous university-level study materials in LaTeX format.
+    content: `You are an elite instructional designer producing concise, well-structured, easy-to-read learning content in Markdown.
 You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
 
 Always respond with JSON shaped exactly as:
 {
-  "internal_audit": "scratchpad reasoning explaining structure checks",
+  "internal_audit": "scratchpad reasoning about structure and coverage",
   "final_content": {
-    "latex": "FULL LaTeX document"
+    "markdown": "FULL markdown content - use LaTeX inline only for math (e.g., $...$) or blocks that strictly need LaTeX"
   }
 }
 
-The internal_audit is a throwaway scratchpad—never reference it inside the LaTeX. The final_content.latex must contain the entire document.
+The internal_audit is a throwaway scratchpad — never include it inside the final markdown. Use LaTeX ONLY for math or constructs that cannot be expressed in simple Markdown. The markdown should be clean, readable, and use appropriate headings, lists, code blocks, and inline math where necessary.
 
 CRITICAL REQUIREMENTS:
-1. Provide valid LaTeX source (article class) with balanced environments
-2. Use sections/subsections to match the learning plan
-3. Escape special characters (%, &, #, _ ) when literal
-4. Use \\textbf{} / \\textit{} for emphasis, never markdown
-5. Keep math in $...$ only when required
-6. Prefer theorem/definition/example environments for rigorous topics
-
-Available packages: amsmath, amssymb, amsthm, geometry, hyperref, graphicx, enumitem`,
+1. Prefer Markdown for all text, headings, lists and examples.
+2. Use inline LaTeX ($...$) or display math ($$...$$) only when required.
+3. Keep content clear for students — short paragraphs, helpful examples, and explicit definitions.
+4. Do not include editor scratchpad text inside the markdown.
+5. When examples require equations or formal notation, include LaTeX within math fences only.
+6. Use consistent heading levels matching the plan (e.g., #, ##, ### as appropriate).
+`,
   };
 
   const userPrompt = {
     role: 'user',
-    content: `Generate a complete LaTeX document for "${title}" following this plan:
+    content: `Generate a clear, student-facing Markdown reading for "${title}" following this plan:
 ${plan}
 
-Return JSON ONLY. Populate final_content.latex with:
-- \\documentclass{article}
-- All required \\usepackage declarations
-- \\begin{document} ... \\end{document}
-- Appropriate section hierarchy
-- Topic-appropriate environments (itemize/enumerate/examples)
-- Escaped literal characters.
-
-Do not place scratchpad text in the LaTeX.`,
+Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown should be human-friendly, contain short, well-formatted paragraphs, headings, examples, and use LaTeX only for math or notation that cannot be expressed in Markdown.`,
   };
 
   const renderResponse = async (promptMessages) => {
@@ -655,69 +646,54 @@ Do not place scratchpad text in the LaTeX.`,
     });
     const raw = coerceModelText(content);
     const parsed = parseJsonObject(raw, 'reading');
-    const latexBody = typeof parsed?.final_content?.latex === 'string'
-      ? parsed.final_content.latex
+    // Prefer markdown; fall back to latex extraction when markdown is not supplied
+    let body = typeof parsed?.final_content?.markdown === 'string'
+      ? parsed.final_content.markdown
       : typeof parsed?.final_content === 'string'
         ? parsed.final_content
-        : '';
-    if (!latexBody) {
+        : (typeof parsed?.final_content?.latex === 'string' ? parsed.final_content.latex : '');
+
+    if (!body) {
       throw new Error('Reading generator returned empty final_content');
     }
-    return cleanupLatex(latexBody);
+
+    // If we received LaTeX, extract the inner document text as a fallback; otherwise treat as Markdown
+    if (body.includes('\\documentclass') || body.includes('\\begin{document}')) {
+      // safely extract inner LaTeX content and keep as-is (student-facing) — we preserve math
+      const latexOnly = extractLatexContent(body);
+      return cleanupLatex(latexOnly);
+    }
+
+    return cleanupMarkdown(body);
   };
+  let resultText = await renderResponse([systemPrompt, userPrompt]);
 
-  let latex = await renderResponse([systemPrompt, userPrompt]);
-
-  // Verify the generated LaTeX
-  let verification = verifyLatex(latex);
-
-  // If invalid, attempt one retry with error feedback
-  if (!verification.valid) {
-    console.warn(`LaTeX generation failed for "${title}". Errors: ${verification.errors.join(', ')}. Retrying...`);
-
-    const retryPrompt = {
+  if (!resultText || !resultText.trim()) {
+    // Retry once with a clear instruction
+    const retryAsk = {
       role: 'user',
-      content: `The previous LaTeX had these errors:
-${verification.errors.map(e => `- ${e}`).join('\n')}
-
-Please fix these issues and regenerate a valid LaTeX document for "${title}".
-Remember: 
-- Include \\documentclass, \\begin{document}, \\end{document}
-- Balance all braces
-- Match all \\begin{env} with \\end{env}
-- NO markdown syntax
-
-Plan: ${plan}`,
+      content: `The previous response was empty or invalid. Re-run and produce final_content.markdown containing clean Markdown (use LaTeX only for math). Do not include internal_audit in final content. Plan: ${plan}`,
     };
-
-    latex = await renderResponse([
-      systemPrompt,
-      {
-        role: 'user',
-        content: `${retryPrompt.content}
-
-Remember: respond with the same JSON schema (internal_audit + final_content.latex).`,
-      },
-    ]);
-    verification = verifyLatex(latex);
+    resultText = await renderResponse([systemPrompt, retryAsk]);
   }
 
-  // Log warnings but accept the result
-  if (verification.warnings.length > 0) {
-    console.warn(`LaTeX warnings for "${title}":`, verification.warnings);
+  if (!resultText || !resultText.trim()) {
+    throw new Error('Reading generator returned empty content after retry');
   }
 
-  // If still invalid after retry, log errors but return what we have
-  if (!verification.valid) {
-    console.error(`LaTeX still invalid for "${title}" after retry:`, verification.errors);
-    console.error('Returning cleaned LaTeX despite errors.');
-  }
+  return resultText;
+}
 
-  if (!latex) {
-    throw new Error('Reading generator returned empty content after cleanup');
-  }
-
-  return latex;
+function cleanupMarkdown(md) {
+  if (!md || typeof md !== 'string') return '';
+  let out = md.trim();
+  // Remove triple-backtick fences producing JSON or markdown blocks accidentally captured
+  out = out.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/, '');
+  // Normalize line endings and excessive blank lines
+  out = out.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  // Trim trailing spaces on each line
+  out = out.split('\n').map((l) => l.replace(/\s+$/,'' )).join('\n');
+  return out.trim();
 }
 
 async function generateQuiz(title, plan, courseName, moduleName) {

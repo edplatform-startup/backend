@@ -184,12 +184,12 @@ test('generateCourseContent fills node payloads and marks course ready', async (
       };
     }
 
-    const latexDoc = ['\\documentclass{article}', '\\begin{document}', 'Lesson Body', '\\end{document}'].join('\n');
+    const mdDoc = "# Lesson Body\nIt's great.";
     return {
       content: JSON.stringify({
         internal_audit: 'reading scratchpad',
         final_content: {
-          latex: latexDoc,
+          markdown: mdDoc,
         },
       }),
     };
@@ -201,10 +201,7 @@ test('generateCourseContent fills node payloads and marks course ready', async (
 
     assert.equal(result.status, 'ready');
     assert.equal(nodeUpdates.length, 2);
-    assert.equal(
-      nodeUpdates[0].content_payload.reading,
-      '\\documentclass{article}\n\\begin{document}\nLesson Body\n\\end{document}'
-    );
+    assert.equal(nodeUpdates[0].content_payload.reading, "# Lesson Body\nIt's great.");
     assert.equal(nodeUpdates[0].content_payload.status, 'ready');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.quiz));
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.flashcards));
