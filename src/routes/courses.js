@@ -497,6 +497,7 @@ router.post('/', async (req, res) => {
       syllabusFiles,
       examFormatDetails,
       examFiles,
+      seconds_to_complete,
     } = req.body || {};
 
     if (!userId) {
@@ -572,6 +573,7 @@ router.post('/', async (req, res) => {
       start_date: startDate,
       end_date: endDate,
       status: 'pending',
+      seconds_to_complete: typeof seconds_to_complete === 'number' ? seconds_to_complete : null,
     };
 
     const { error: insertError } = await supabase
@@ -678,6 +680,83 @@ router.delete('/', async (req, res) => {
     return res.json({ success: true, courseId });
   } catch (error) {
     console.error('Unhandled error deleting course:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+router.patch('/:courseId/settings', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, seconds_to_complete } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  if (seconds_to_complete !== undefined && (typeof seconds_to_complete !== 'number' || seconds_to_complete < 0)) {
+    return res.status(400).json({ error: 'seconds_to_complete must be a non-negative number' });
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // Verify course exists and user owns it
+    const { data: course, error: fetchError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('id', courseId)
+      .single();
+
+    if (fetchError) {
+      if (fetchError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Course not found' });
+      }
+      console.error('Supabase error verifying course:', fetchError);
+      return res.status(500).json({ error: 'Failed to verify course', details: fetchError.message });
+    }
+
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const updateData = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (seconds_to_complete !== undefined) {
+      updateData.seconds_to_complete = seconds_to_complete;
+    }
+
+    const { data: updatedCourse, error: updateError } = await supabase
+      .schema('api')
+      .from('courses')
+      .update(updateData)
+      .eq('id', courseId)
+      .select('id, seconds_to_complete, updated_at')
+      .single();
+
+    if (updateError) {
+      console.error('Supabase error updating course settings:', updateError);
+      return res.status(500).json({ error: 'Failed to update course settings', details: updateError.message });
+    }
+
+    return res.json({
+      success: true,
+      settings: updatedCourse,
+    });
+  } catch (error) {
+    console.error('Unhandled error updating course settings:', error);
     return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });

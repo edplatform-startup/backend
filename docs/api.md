@@ -141,6 +141,29 @@ Base URL (production): https://api.kognolearn.com
   - 404 Not Found → No content with that id in the specified format.
   - 500 Internal Server Error → Database error.
 
+### PATCH /courses/:courseId/settings
+- Purpose: Update course settings, specifically `seconds_to_complete`.
+- Path parameters:
+  - `courseId` (string, required) – UUID of the course.
+- Request body (JSON):
+  - `userId` (string, required) – UUID of the course owner.
+  - `seconds_to_complete` (number, optional) – Non-negative integer representing the time limit in seconds.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "settings": {
+        "id": "...",
+        "seconds_to_complete": 3600,
+        "updated_at": "..."
+      }
+    }
+    ```
+  - 400 Bad Request → Missing `userId`, invalid UUIDs, or invalid `seconds_to_complete`.
+  - 404 Not Found → Course not found or access denied.
+  - 500 Internal Server Error → Database error.
+
 ### POST /courses/topics
 - Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + competency-based subtopics with Deep/Cram metadata) before full course generation.
 - Request body (JSON):

@@ -379,4 +379,78 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(persisted.userId, sampleCourseRow.user_id);
     assert.equal(workerCourseId, res.body.courseId);
   });
+
+  await t.test('POST /courses accepts seconds_to_complete', async () => {
+    const architectStub = async () => ({
+      result: {
+        content: JSON.stringify({
+          lessons: [],
+        }),
+      },
+    });
+    __setLLMCaller(architectStub);
+
+    __setSaveCourseStructureOverride(async () => ({ nodeCount: 0, edgeCount: 0 }));
+    __setGenerateCourseContentOverride(async () => ({ processed: 0, failed: 0, status: 'ready' }));
+
+    let insertedPayload;
+    setSupabaseClient(
+      createSupabaseStub({
+        insertResponses: [{
+          data: { id: 'new-course-with-seconds' },
+          error: null,
+          onInsert: (payload) => { insertedPayload = payload; }
+        }],
+      })
+    );
+
+    const res = await request(app)
+      .post('/courses')
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        grok_draft: { stub: true },
+        seconds_to_complete: 3600,
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(insertedPayload.seconds_to_complete, 3600);
+  });
+
+  await t.test('PATCH /courses/:courseId/settings updates seconds_to_complete', async () => {
+    setSupabaseClient(
+      createSupabaseStub({
+        singleResponses: [{ data: { id: sampleCourseRow.id }, error: null }], // For verification
+        updateResponses: [{
+          data: { id: sampleCourseRow.id, seconds_to_complete: 7200, updated_at: new Date().toISOString() },
+          error: null
+        }],
+      })
+    );
+
+    const res = await request(app)
+      .patch(`/courses/${sampleCourseRow.id}/settings`)
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        seconds_to_complete: 7200,
+      });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.settings.seconds_to_complete, 7200);
+  });
+
+  await t.test('PATCH /courses/:courseId/settings validates input', async () => {
+    const res = await request(app)
+      .patch(`/courses/${sampleCourseRow.id}/settings`)
+      .set('Content-Type', 'application/json')
+      .send({
+        userId: sampleCourseRow.user_id,
+        seconds_to_complete: -100,
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /seconds_to_complete must be a non-negative number/);
+  });
 });
