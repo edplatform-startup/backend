@@ -7,15 +7,25 @@ import { getSupabase } from '../supabaseClient.js';
  * @param {number} hoursAvailable - The number of hours the user has available.
  * @returns {Promise<object>} - The study plan object.
  */
-export async function generateStudyPlan(courseId, userId, hoursAvailable) {
-    if (!courseId || !userId || hoursAvailable === undefined) {
-        throw new Error('Missing required parameters: courseId, userId, hoursAvailable');
+export async function generateStudyPlan(courseId, userId) {
+    if (!courseId || !userId) {
+        throw new Error('Missing required parameters: courseId, userId');
     }
 
-    const minutesAvailable = hoursAvailable * 60;
-
     // 1. Data Fetching & Hydration
-    const { nodes, edges, userStateMap } = await fetchData(courseId, userId);
+    const { nodes, edges, userStateMap, course } = await fetchData(courseId, userId);
+    
+    // Determine available time from DB
+    const secondsToComplete = course?.seconds_to_complete;
+    if (typeof secondsToComplete !== 'number' || secondsToComplete <= 0) {
+        // Fallback or error? Let's error for now as per requirement "use the seconds_to_complete field"
+        // Or maybe default to a reasonable time if not set? 
+        // Given the user explicitly asked to use this field, missing it implies the course isn't ready for planning.
+        throw new Error('Course time limit (seconds_to_complete) is not set');
+    }
+    
+    const minutesAvailable = secondsToComplete / 60;
+
     const graph = buildGraph(nodes, edges);
     hydrateNodes(graph, userStateMap);
 
@@ -38,15 +48,17 @@ export async function generateStudyPlan(courseId, userId, hoursAvailable) {
 async function fetchData(courseId, userId) {
     const supabase = getSupabase();
 
-    const [nodesResult, edgesResult, userStateResult] = await Promise.all([
+    const [nodesResult, edgesResult, userStateResult, courseResult] = await Promise.all([
         supabase.schema('api').from('course_nodes').select('*').eq('course_id', courseId),
         supabase.schema('api').from('node_dependencies').select('*').eq('course_id', courseId),
         supabase.schema('api').from('user_node_state').select('*').eq('course_id', courseId).eq('user_id', userId),
+        supabase.schema('api').from('courses').select('seconds_to_complete').eq('id', courseId).single(),
     ]);
 
     if (nodesResult.error) throw new Error(`Failed to fetch nodes: ${nodesResult.error.message}`);
     if (edgesResult.error) throw new Error(`Failed to fetch edges: ${edgesResult.error.message}`);
     if (userStateResult.error) throw new Error(`Failed to fetch user state: ${userStateResult.error.message}`);
+    if (courseResult.error) throw new Error(`Failed to fetch course info: ${courseResult.error.message}`);
 
     const userStateMap = new Map();
     userStateResult.data.forEach((state) => {
@@ -57,6 +69,7 @@ async function fetchData(courseId, userId) {
         nodes: nodesResult.data,
         edges: edgesResult.data,
         userStateMap,
+        course: courseResult.data,
     };
 }
 

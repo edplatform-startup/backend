@@ -15,23 +15,14 @@ const router = Router();
 
 router.get('/:id/plan', async (req, res) => {
   const { id } = req.params;
-  const { userId, hours } = req.query;
+  const { userId } = req.query;
 
   if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
   }
 
-  if (!hours) {
-    return res.status(400).json({ error: 'hours is required' });
-  }
-
-  const hoursAvailable = parseFloat(hours);
-  if (isNaN(hoursAvailable) || hoursAvailable <= 0) {
-    return res.status(400).json({ error: 'hours must be a positive number' });
-  }
-
   try {
-    const plan = await generateStudyPlan(id, userId, hoursAvailable);
+    const plan = await generateStudyPlan(id, userId);
     return res.json(plan);
   } catch (error) {
     console.error('Error generating study plan:', error);

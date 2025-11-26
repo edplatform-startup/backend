@@ -208,6 +208,8 @@ test('generateCourseContent fills node payloads and marks course ready', async (
     assert.equal(nodeUpdates[0].content_payload.practice_exam, null);
     assert.deepEqual(nodeUpdates[0].content_payload.video, [{ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }]);
     assert.equal(nodeUpdates[0].content_payload.video_urls, 'https://www.youtube.com/watch?v=vid123');
+    assert.ok(Array.isArray(nodeUpdates[0].content_payload.video_logs));
+    assert.ok(nodeUpdates[0].content_payload.video_logs.some(l => l.includes('Using custom YouTube fetcher')));
 
     assert.equal(courseUpdates.length, 1);
     assert.equal(courseUpdates[0].status, 'ready');

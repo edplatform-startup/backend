@@ -58,7 +58,8 @@ describe('Study Plan Generator', () => {
     });
 
     it('Deep Study Mode: Returns all non-mastered nodes in topological order', async () => {
-        const plan = await generateStudyPlan('course1', 'user1', 3);
+        mockData.courses = { data: { seconds_to_complete: 3 * 3600 }, error: null };
+        const plan = await generateStudyPlan('course1', 'user1');
 
         assert.equal(plan.mode, 'Deep Study');
         assert.ok(plan.modules.length > 0);
@@ -70,13 +71,15 @@ describe('Study Plan Generator', () => {
     });
 
     it('Cram Mode: Returns empty when no chains fit', async () => {
-        const plan = await generateStudyPlan('course1', 'user1', 1);
+        mockData.courses = { data: { seconds_to_complete: 1 * 3600 }, error: null };
+        const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
         assert.equal(plan.total_minutes, 0);
     });
 
     it('Cram Mode: Shared Ancestor Logic', async () => {
-        const plan = await generateStudyPlan('course1', 'user1', 1.84);
+        mockData.courses = { data: { seconds_to_complete: 1.84 * 3600 }, error: null };
+        const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
         const lessons = plan.modules.flatMap(m => m.lessons);
         assert.equal(lessons.length, 4); // A, B, C, D
@@ -86,8 +89,9 @@ describe('Study Plan Generator', () => {
         const lowValueNodes = mockNodes.map(n => ({ ...n, intrinsic_exam_value: 5 }));
         lowValueNodes[2].intrinsic_exam_value = 6; // C slightly higher
         mockData.course_nodes = { data: lowValueNodes, error: null };
+        mockData.courses = { data: { seconds_to_complete: 1.5 * 3600 }, error: null };
 
-        const plan = await generateStudyPlan('course1', 'user1', 1.5);
+        const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
         const lessons = plan.modules.flatMap(m => m.lessons);
         assert.ok(lessons.length > 0); // Should have some nodes

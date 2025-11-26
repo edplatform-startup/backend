@@ -220,7 +220,8 @@ Base URL (production): https://api.kognolearn.com
     "courseId": "uuid-optional",
     "courseMetadata": { "title": "optional structured metadata" },
     "grok_draft": { "lessonGraph": { "rough": "gemini output" } },
-    "user_confidence_map": { "slug_id": 0.4 }
+    "user_confidence_map": { "slug_id": 0.4 },
+    "seconds_to_complete": 3600
   }
   ```
   - `userId` (string, required) – UUID of the course owner.
@@ -228,6 +229,7 @@ Base URL (production): https://api.kognolearn.com
   - `courseMetadata` (object, optional) – Used to populate `title`, `syllabus_text`, `exam_details`, and start/end dates in `api.courses`.
   - `grok_draft` (object, required) – Raw "Lesson Architect" draft JSON produced by Gemini/Grok.
   - `user_confidence_map` (object, optional) – Map of `original_source_id -> confidence score (0-1)` used when averaging `confidence_score` per node.
+  - `seconds_to_complete` (number, optional) – Time limit in seconds for the course.
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
@@ -361,13 +363,12 @@ Base URL (production): https://api.kognolearn.com
   - `id` (string, required) – UUID of the course.
 - **Query parameters**:
   - `userId` (string, required) – UUID of the user.
-  - `hours` (number, required) – Available study time in hours (must be positive).
 - **Algorithm**:
-  1. **Data Fetching**: Loads course nodes, dependencies, and user state from database.
+  1. **Data Fetching**: Loads course nodes, dependencies, user state, and course settings (specifically `seconds_to_complete`) from database.
   2. **Graph Construction**: Builds in-memory DAG with parent/child relationships.
   3. **Effective Cost Calculation**: `effective_cost = estimated_minutes × (1 - familiarity_score)`
   4. **Mode Selection**:
-     - **Deep Study**: Selected when `hours × 60 ≥ total_time_needed × 1.5`
+     - **Deep Study**: Selected when `(seconds_to_complete / 60) ≥ total_time_needed × 1.5`
        - Returns all non-mastered nodes in topological order
        - Ensures comprehensive understanding of the entire course
      - **Cram Mode**: Selected when time is limited
@@ -390,7 +391,7 @@ Base URL (production): https://api.kognolearn.com
       - `id`, `title`, `type`, `duration`, `is_locked`, `status`
 - **Example**:
   ```bash
-  GET /courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/plan?userId=e6e04dbb&hours=3
+  GET /courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/plan?userId=e6e04dbb
   ```
   Response:
   ```json

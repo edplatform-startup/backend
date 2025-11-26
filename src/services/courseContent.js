@@ -260,9 +260,9 @@ async function processNode(node, supabase, courseTitle) {
   const practiceExamPromise = practiceExamPlan
     ? generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName)
     : Promise.resolve(null);
-  const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve([]);
+  const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve({ videos: [], logs: [] });
 
-  const [reading, quiz, flashcards, videos, practiceExam] = await Promise.all([
+  const [reading, quiz, flashcards, videoResult, practiceExam] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
@@ -270,6 +270,8 @@ async function processNode(node, supabase, courseTitle) {
     practiceExamPromise,
   ]);
 
+  const videos = videoResult?.videos || [];
+  const videoLogs = videoResult?.logs || [];
   const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
 
   const finalPayload = {
@@ -279,6 +281,7 @@ async function processNode(node, supabase, courseTitle) {
     practice_exam: practiceExam,
     video: videos, // Keep original array structure
     video_urls: videoUrls, // New CSV field
+    video_logs: videoLogs, // Detailed logs
     generation_plans: plans,
     metadata: existingMetadata,
     status: STATUS_READY,
@@ -916,27 +919,39 @@ function normalizeFlashcard(card, index) {
 }
 
 async function fetchVideoResource(queries) {
+  const logs = [];
+  const videos = [];
+
   if (!Array.isArray(queries) || queries.length === 0) {
-    return [];
-  }
-  if (customYouTubeFetcher) {
-    try {
-      // Expect custom fetcher to return an array or single object, normalize to array
-      const res = await customYouTubeFetcher(queries);
-      return Array.isArray(res) ? res : (res ? [res] : []);
-    } catch (error) {
-      console.warn('[generateCourseContent] Custom YouTube fetcher failed:', error?.message || error);
-      return [];
-    }
-  }
-  const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    return [];
+    logs.push('No queries provided for video search.');
+    return { videos, logs };
   }
 
-  const videos = [];
+  if (customYouTubeFetcher) {
+    try {
+      logs.push('Using custom YouTube fetcher.');
+      // Expect custom fetcher to return an array or single object, normalize to array
+      const res = await customYouTubeFetcher(queries);
+      const fetchedVideos = Array.isArray(res) ? res : (res ? [res] : []);
+      logs.push(`Custom fetcher returned ${fetchedVideos.length} videos.`);
+      return { videos: fetchedVideos, logs };
+    } catch (error) {
+      const msg = `Custom YouTube fetcher failed: ${error?.message || error}`;
+      console.warn('[generateCourseContent]', msg);
+      logs.push(msg);
+      return { videos: [], logs };
+    }
+  }
+
+  const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    logs.push('No YouTube/Google API key found in environment variables.');
+    return { videos, logs };
+  }
+
   for (const query of queries) {
     try {
+      logs.push(`Searching YouTube for query: "${query}"`);
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('q', query);
@@ -950,21 +965,31 @@ async function fetchVideoResource(queries) {
       });
 
       if (!response.ok) {
+        const errorBody = await response.text();
+        const msg = `YouTube API error: ${response.status} ${response.statusText} - ${errorBody}`;
+        logs.push(msg);
         continue;
       }
+
       const data = await response.json();
       const first = Array.isArray(data?.items) ? data.items[0] : null;
       if (!first?.id?.videoId) {
+        logs.push(`No video found for query: "${query}"`);
         continue;
       }
+
       videos.push({
         videoId: first.id.videoId,
         title: first.snippet?.title || 'Unknown title',
         thumbnail: first.snippet?.thumbnails?.high?.url || first.snippet?.thumbnails?.default?.url || null,
       });
+      logs.push(`Found video for query "${query}": ${first.id.videoId}`);
+
     } catch (error) {
-      console.warn('[generateCourseContent] YouTube search failed for query:', query, error?.message || error);
+      const msg = `YouTube search exception for query "${query}": ${error?.message || error}`;
+      console.warn('[generateCourseContent]', msg);
+      logs.push(msg);
     }
   }
-  return videos;
+  return { videos, logs };
 }

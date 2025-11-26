@@ -453,4 +453,62 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(res.status, 400);
     assert.match(res.body.error, /seconds_to_complete must be a non-negative number/);
   });
+
+  await t.test('GET /courses/:id/plan uses seconds_to_complete from DB', async () => {
+    const courseId = 'course-plan-1';
+    const userId = 'user-plan-1';
+    
+    setSupabaseClient(
+      createSupabaseStub({
+        listResponses: [
+          { data: [{ id: 'node1', estimated_minutes: 30, content_payload: {} }], error: null }, // nodes
+          { data: [], error: null }, // edges
+          { data: [], error: null }, // user state
+        ],
+        singleResponses: [
+          { data: null, error: null }, // consumed by nodes call
+          { data: null, error: null }, // consumed by edges call
+          { data: null, error: null }, // consumed by user state call
+          { data: { seconds_to_complete: 3600 }, error: null }, // course info
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .get(`/courses/${courseId}/plan`)
+      .query({ userId })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.mode, 'Deep Study'); // 60 mins available, 30 mins needed -> Deep Study
+  });
+
+  await t.test('GET /courses/:id/plan errors if seconds_to_complete is missing', async () => {
+    const courseId = 'course-plan-2';
+    const userId = 'user-plan-2';
+    
+    setSupabaseClient(
+      createSupabaseStub({
+        listResponses: [
+          { data: [], error: null }, // nodes
+          { data: [], error: null }, // edges
+          { data: [], error: null }, // user state
+        ],
+        singleResponses: [
+          { data: null, error: null }, // consumed by nodes call
+          { data: null, error: null }, // consumed by edges call
+          { data: null, error: null }, // consumed by user state call
+          { data: { seconds_to_complete: null }, error: null }, // course info
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .get(`/courses/${courseId}/plan`)
+      .query({ userId })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 500);
+    assert.match(res.body.details, /Course time limit \(seconds_to_complete\) is not set/);
+  });
 });
