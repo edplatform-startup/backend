@@ -53,7 +53,7 @@ test('saveCourseStructure stores nodes, edges, and user state with pending statu
   assert.equal(insertedNode.user_id, 'user-1');
   assert.equal(insertedNode.content_payload.status, 'pending');
   assert.ok(insertedNode.content_payload.generation_plans.reading);
-  assert.ok(insertedNode.generation_prompt.includes('reading'));
+  assert.ok(insertedNode.content_payload.generation_plans.reading);
 
   assert.equal(edgePayloads.length, 1);
   assert.deepEqual(edgePayloads[0], [{ course_id: 'course-1', parent_id: 'node-root', child_id: 'node-1' }]);

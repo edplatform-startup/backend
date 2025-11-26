@@ -1,5 +1,6 @@
 import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat } from './grokClient.js';
+import { tryParseJson } from '../utils/jsonUtils.js';
 
 const STATUS_PENDING = 'pending';
 const STATUS_READY = 'ready';
@@ -129,7 +130,6 @@ async function persistCourseStructure(courseId, userId, lessonGraph) {
       out_degree: node.out_degree ?? 0,
       module_ref: node.module_ref ?? null,
       confidence_score: typeof node.confidence_score === 'number' ? node.confidence_score : 0.1,
-      generation_prompt: generationPlans ? JSON.stringify(generationPlans) : node.generation_prompt ?? null,
       content_payload: contentPayload,
       metadata,
       created_at: node.created_at ?? nowIso,
@@ -253,14 +253,36 @@ async function processNode(node, supabase, courseTitle) {
   const moduleName = node.module_ref || 'General Module';
   const lessonName = node.title || 'Untitled Lesson';
 
-  const readingPromise = plans.reading ? generateReading(lessonName, plans.reading, courseTitle, moduleName) : Promise.resolve(null);
-  const quizPromise = plans.quiz ? generateQuiz(lessonName, plans.quiz, courseTitle, moduleName) : Promise.resolve(null);
-  const flashcardsPromise = plans.flashcards ? generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName) : Promise.resolve(null);
+  // Wrap each generator in a try-catch to prevent one failure from blocking the whole node
+  const safeGenerate = async (promise, label) => {
+    try {
+      return await promise;
+    } catch (error) {
+      console.error(`[generateCourseContent] ${label} generation failed for node ${node.id}:`, error);
+      return null; // Return null to indicate failure but allow other content to proceed
+    }
+  };
+
+  const readingPromise = plans.reading 
+    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName), 'Reading')
+    : Promise.resolve(null);
+    
+  const quizPromise = plans.quiz 
+    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName), 'Quiz')
+    : Promise.resolve(null);
+    
+  const flashcardsPromise = plans.flashcards 
+    ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName), 'Flashcards')
+    : Promise.resolve(null);
+    
   const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
   const practiceExamPromise = practiceExamPlan
-    ? generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName)
+    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName), 'Practice Exam')
     : Promise.resolve(null);
-  const videoPromise = plans.video ? fetchVideoResource(plans.video) : Promise.resolve({ videos: [], logs: [] });
+    
+  const videoPromise = plans.video 
+    ? safeGenerate(fetchVideoResource(plans.video), 'Video')
+    : Promise.resolve({ videos: [], logs: [] });
 
   const [reading, quiz, flashcards, videoResult, practiceExam] = await Promise.all([
     readingPromise,
@@ -386,25 +408,20 @@ function cleanModelOutput(raw) {
 
 function parseJsonArray(raw, fallbackKey) {
   if (!raw) return [];
-  const stripped = cleanModelOutput(raw);
-  if (!stripped) return [];
-  let parsed;
   try {
-    parsed = JSON.parse(stripped);
+    const parsed = tryParseJson(raw, 'parseJsonArray');
+    if (Array.isArray(parsed)) return parsed;
+    if (fallbackKey && Array.isArray(parsed[fallbackKey])) return parsed[fallbackKey];
+    return [];
   } catch (error) {
     throw new Error(`Failed to parse JSON for ${fallbackKey}: ${error.message}`);
   }
-  if (Array.isArray(parsed)) return parsed;
-  if (fallbackKey && Array.isArray(parsed[fallbackKey])) return parsed[fallbackKey];
-  return [];
 }
 
 function parseJsonObject(raw, label) {
   if (!raw) return null;
-  const stripped = cleanModelOutput(raw);
-  if (!stripped) return null;
   try {
-    return JSON.parse(stripped);
+    return tryParseJson(raw, label);
   } catch (error) {
     throw new Error(`Failed to parse JSON for ${label}: ${error.message}`);
   }
