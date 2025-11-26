@@ -24,8 +24,9 @@ Base URL (production): https://api.kognolearn.com
 ## Endpoints
 
 ### GET /
- POST `/chat` — general-purpose chat endpoint for Grok 4 Fast
-  - 200 OK → `{ "status": "ok" }`
+- Purpose: Health check / Root.
+- Responses:
+  - 200 OK → `{ "name": "edtech-backend-api", "ok": true }`
 
 ### POST /chat
 - Purpose: General-purpose chat endpoint for Grok 4 Fast (OpenRouter). Accepts a system prompt and a user message, plus optional context, attachments, and model controls. Returns the model's response.
@@ -109,15 +110,27 @@ Base URL (production): https://api.kognolearn.com
   - 400 Bad Request → Missing/invalid `userId`.
   - 500 Internal Server Error → Database error.
 
-- Purpose: Fetch just the stored course metadata row for a given `courseId`, verifying ownership.
-- Query parameters:
+### GET /courses/data
+- **Purpose**: Fetch course metadata (title, syllabus, dates, status) without lesson DAG.
+- **Query parameters**:
   - `userId` (string, required)
   - `courseId` (string, required)
-- Responses:
-  - 200 OK → `{ "success": true, "course": CourseRow }`
-  - 400 Bad Request → Missing parameters or invalid UUID formats.
-  - 404 Not Found → No matching record for the user.
-  - 500 Internal Server Error → Supabase query failure.
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "course": {
+      "id": "...",
+      "user_id": "...",
+      "title": "Discrete Mathematics",
+      "syllabus_text": "...",
+      "exam_details": "...",
+      "start_date": "2025-01-15",
+      "end_date": "2025-05-20",
+      "status": "ready"
+    }
+  }
+  ```
 
 ### DELETE /courses
 - Purpose: Delete a stored course row (and its linked assets) for a user.
@@ -129,17 +142,6 @@ Base URL (production): https://api.kognolearn.com
   - 400 Bad Request → Missing parameters or invalid UUID formats.
   - 404 Not Found → Course absent or belongs to another user.
   - 500 Internal Server Error → Supabase delete failure.
-
-- Purpose: Fetch the stored per-format content JSON by format and id.
-- Query parameters:
-  - `format` (string, required) – One of `video`, `reading`, `flashcards`, `mini_quiz`, `practice_exam`.
-  - `id` (string, required) – UUID of the content row (matches the `course_nodes.id`).
-  - `userId` (string, required) – UUID of the requesting user; must own the content.
-- Responses:
-  - 200 OK → `{ "id": "...", "format": "...", "data": { ... } }`
-  - 400 Bad Request → Invalid format or id.
-  - 404 Not Found → No content with that id in the specified format.
-  - 500 Internal Server Error → Database error.
 
 ### PATCH /courses/:courseId/settings
 - Purpose: Update course settings, specifically `seconds_to_complete`.
@@ -162,6 +164,33 @@ Base URL (production): https://api.kognolearn.com
     ```
   - 400 Bad Request → Missing `userId`, invalid UUIDs, or invalid `seconds_to_complete`.
   - 404 Not Found → Course not found or access denied.
+  - 500 Internal Server Error → Database error.
+
+### PATCH /courses/:courseId/nodes/:nodeId/progress
+- Purpose: Update user progress (mastery status and familiarity score) for a specific lesson.
+- Path parameters:
+  - `courseId` (string, required) – UUID of the course.
+  - `nodeId` (string, required) – UUID of the lesson/node.
+- Request body (JSON):
+  - `userId` (string, required) – UUID of the user.
+  - `mastery_status` (string, optional) – One of `"pending"`, `"mastered"`, `"needs_review"`.
+  - `familiarity_score` (number, optional) – Float between 0 and 1.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "progress": {
+        "user_id": "...",
+        "node_id": "...",
+        "mastery_status": "mastered",
+        "familiarity_score": 0.8,
+        "updated_at": "..."
+      }
+    }
+    ```
+  - 400 Bad Request → Missing parameters or invalid values.
+  - 404 Not Found → Course or lesson not found.
   - 500 Internal Server Error → Database error.
 
 ### POST /courses/topics
@@ -221,7 +250,11 @@ Base URL (production): https://api.kognolearn.com
     "courseMetadata": { "title": "optional structured metadata" },
     "grok_draft": { "lessonGraph": { "rough": "gemini output" } },
     "user_confidence_map": { "slug_id": 0.4 },
-    "seconds_to_complete": 3600
+    "seconds_to_complete": 3600,
+    "syllabusText": "string (optional)",
+    "syllabusFiles": [ { "name": "...", "url": "..." } ],
+    "examFormatDetails": "string (optional)",
+    "examFiles": [ { "name": "...", "url": "..." } ]
   }
   ```
   - `userId` (string, required) – UUID of the course owner.
@@ -230,6 +263,10 @@ Base URL (production): https://api.kognolearn.com
   - `grok_draft` (object, required) – Raw "Lesson Architect" draft JSON produced by Gemini/Grok.
   - `user_confidence_map` (object, optional) – Map of `original_source_id -> confidence score (0-1)` used when averaging `confidence_score` per node.
   - `seconds_to_complete` (number, optional) – Time limit in seconds for the course.
+  - `syllabusText` (string, optional) – Raw text of the syllabus.
+  - `syllabusFiles` (array, optional) – Array of file objects for the syllabus.
+  - `examFormatDetails` (string, optional) – Raw text of exam details.
+  - `examFiles` (array, optional) – Array of file objects for exam details.
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
@@ -258,105 +295,6 @@ Base URL (production): https://api.kognolearn.com
   - Set `YOUTUBE_API_KEY` (or `GOOGLE_API_KEY`) to enable video recommendations; if absent, `video` is returned as `null` but other assets continue.
   - The worker output is synchronous; responses include the final DAG plus the worker summary so clients can immediately show generated content.
 
-### POST /flashcards
-- Purpose: Generate flashcards for a topic via Grok-4-Fast (OpenRouter).
-- Request body (JSON):
-  ```json
-  {
-    "topic": "Operating systems caching",
-    "count": 5
-  }
-  ```
-  - `topic` (string, required) – Subject to cover. Trims whitespace.
-  - `count` (integer, optional) – Number of flashcards to request (1–20). Defaults to 5.
-- Behavior:
-  - Sends a structured prompt to Grok-4-Fast via OpenRouter demanding a strict JSON object response.
-  - Validates the returned structure (keys "1".."n" with arrays of `[question, answer, explanation]`).
-  - Returns the flashcards object directly to the client.
-- Responses:
-  - 200 OK →
-    ```json
-    {
-      "1": [
-        "Define cache hit rate and how it’s computed.",
-        "Hit rate = hits / total accesses.",
-        "Often computed over a trace; miss rate = 1 - hit rate."
-      ],
-      "2": [
-        "What is virtual memory?",
-        "Illusion of contiguous address space via paging.",
-        "Enables isolation, protection; page tables + TLB."
-      ],
-      "3": [
-        "Explain TLB misses.",
-        "A miss in the translation cache requiring a page table walk.",
-        "Can trigger page faults if mapping absent."
-      ]
-    }
-    ```
-  - 400 Bad Request → Missing or empty `topic`, invalid `count`.
-  - 500 Internal Server Error → Flashcard generator not configured or unexpected exception.
-  - 502 Bad Gateway → Grok returned a non-OK response or malformed JSON.
-  - 504 Gateway Timeout → Grok request exceeded 120 seconds.
-
-### GET /college-courses
-- Purpose: Search real-time college course catalogs across 750+ U.S. institutions (via Ellucian Banner systems) by college name and course query. Uses fuzzy string matching to return the top 50 most relevant courses from the latest available term.
-- External API Used: `https://api.collegeplanner.io/v1` (unofficial, public, no auth required)
-- Query parameters:
-  - `college` (string, **required**) – Name of the college (e.g., `"University of Washington"`, `"Stanford"`, `"MIT"`). Fuzzy-matched against known institutions.
-  - `course` (string, **required**) – Course code or title keyword (e.g., `"cs50"`, `"intro to machine learning"`). Used for similarity scoring across `code` and `title`.
-- Behavior:
-  1. Fuzzy-matches the `college` name to the closest known institution (minimum similarity threshold: 0.5).
-  2. Fetches the **latest term** (e.g., `202508`) for that college.
-  3. Retrieves **all subjects** and **all courses** in that term.
-  4. Computes **string similarity** between the `course` query and each course’s `code + title`.
-  5. Returns the **top 50 most similar courses**, sorted by relevance.
-- Responses:
-  - 200 OK →
-    ```json
-    {
-      "college": "University of Washington",
-      "query": "cs50",
-      "count": 10,
-      "items": [
-        {
-          "code": "CSE 142",
-          "title": "Computer Programming I"
-        },
-        {
-          "code": "INFO 201",
-          "title": "Technical Foundations of Informatics"
-        },
-        {
-          "code": "CSE 143",
-          "title": "Computer Programming II"
-        }
-        // ... up to 50 results
-      ]
-    }
-
-## Errors (generic)
-- 404 Not Found → Unknown route or unsupported HTTP verb.
-- 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
-
-## Notes
-- Every response uses JSON.
-- Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
-- Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
-
-## Examples
-- List user courses → `GET https://api.kognolearn.com/courses?userId=...`
-  - Response: `{ "success": true, "count": 1, "courses": [Course] }`
-- Fetch specific course → `GET https://api.kognolearn.com/courses?userId=...&courseId=...`
-  - Response: `{ "success": true, "course": Course }`
-- Search catalog → `GET https://api.kognolearn.com/college-courses?query=cs50`
-  - Response: `{ "query": "cs50", "count": 1, "items": [{"code":"CS50","title":"Introduction to CS"}] }`
-- Generate topics → `POST https://api.kognolearn.com/courses/topics`
-  - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
-- Persist course → `POST https://api.kognolearn.com/courses`
-  - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
-  - Response: `{ "courseId": "<uuid>" }`
 ### GET /courses/:id/plan
 - **Purpose**: Generate an optimized, personalized study plan for a course based on available time. Returns a learning path optimized for either comprehensive mastery (Deep Study) or high-yield exam preparation (Cram Mode).
 - **Path parameters**:
@@ -413,28 +351,6 @@ Base URL (production): https://api.kognolearn.com
         ]
       }
     ]
-  }
-  ```
-
-### GET /courses/data
-- **Purpose**: Fetch course metadata (title, syllabus, dates, status) without lesson DAG.
-- **Query parameters**:
-  - `userId` (string, required)
-  - `courseId` (string, required)
-- **Response (200)**:
-  ```json
-  {
-    "success": true,
-    "course": {
-      "id": "...",
-      "user_id": "...",
-      "title": "Discrete Mathematics",
-      "syllabus_text": "...",
-      "exam_details": "...",
-      "start_date": "2025-01-15",
-      "end_date": "2025-05-20",
-      "status": "ready"
-    }
   }
   ```
 
@@ -512,3 +428,24 @@ Base URL (production): https://api.kognolearn.com
   ```bash
   GET /courses/1cb57cda-a88d/nodes/0503d602-85ef?userId=e6e04dbb
   ```
+
+## Errors (generic)
+- 404 Not Found → Unknown route or unsupported HTTP verb.
+- 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
+
+## Notes
+- Every response uses JSON.
+- Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
+- Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
+
+## Examples
+- List user courses → `GET https://api.kognolearn.com/courses?userId=...`
+  - Response: `{ "success": true, "count": 1, "courses": [Course] }`
+- Fetch specific course → `GET https://api.kognolearn.com/courses?userId=...&courseId=...`
+  - Response: `{ "success": true, "course": Course }`
+- Generate topics → `POST https://api.kognolearn.com/courses/topics`
+  - Body: see `/courses/topics` section.
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
+- Persist course → `POST https://api.kognolearn.com/courses`
+  - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
+  - Response: `{ "courseId": "<uuid>" }`

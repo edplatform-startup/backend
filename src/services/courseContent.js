@@ -940,16 +940,20 @@ async function fetchVideoResource(queries) {
   const videos = [];
 
   if (!Array.isArray(queries) || queries.length === 0) {
-    logs.push('No queries provided for video search.');
+    const msg = 'No queries provided for video search.';
+    console.log(`[generateCourseContent] ${msg}`);
+    logs.push(msg);
     return { videos, logs };
   }
 
   if (customYouTubeFetcher) {
     try {
+      console.log('[generateCourseContent] Using custom YouTube fetcher.');
       logs.push('Using custom YouTube fetcher.');
       // Expect custom fetcher to return an array or single object, normalize to array
       const res = await customYouTubeFetcher(queries);
       const fetchedVideos = Array.isArray(res) ? res : (res ? [res] : []);
+      console.log(`[generateCourseContent] Custom fetcher returned ${fetchedVideos.length} videos.`);
       logs.push(`Custom fetcher returned ${fetchedVideos.length} videos.`);
       return { videos: fetchedVideos, logs };
     } catch (error) {
@@ -962,12 +966,15 @@ async function fetchVideoResource(queries) {
 
   const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    logs.push('No YouTube/Google API key found in environment variables.');
+    const msg = 'No YouTube/Google API key found in environment variables. Video generation skipped.';
+    console.warn(`[generateCourseContent] ${msg}`);
+    logs.push(msg);
     return { videos, logs };
   }
 
   for (const query of queries) {
     try {
+      console.log(`[generateCourseContent] Searching YouTube for query: "${query}"`);
       logs.push(`Searching YouTube for query: "${query}"`);
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
@@ -984,6 +991,7 @@ async function fetchVideoResource(queries) {
       if (!response.ok) {
         const errorBody = await response.text();
         const msg = `YouTube API error: ${response.status} ${response.statusText} - ${errorBody}`;
+        console.error(`[generateCourseContent] ${msg}`);
         logs.push(msg);
         continue;
       }
@@ -991,7 +999,9 @@ async function fetchVideoResource(queries) {
       const data = await response.json();
       const first = Array.isArray(data?.items) ? data.items[0] : null;
       if (!first?.id?.videoId) {
-        logs.push(`No video found for query: "${query}"`);
+        const msg = `No video found for query: "${query}"`;
+        console.log(`[generateCourseContent] ${msg}`);
+        logs.push(msg);
         continue;
       }
 
@@ -1000,7 +1010,9 @@ async function fetchVideoResource(queries) {
         title: first.snippet?.title || 'Unknown title',
         thumbnail: first.snippet?.thumbnails?.high?.url || first.snippet?.thumbnails?.default?.url || null,
       });
-      logs.push(`Found video for query "${query}": ${first.id.videoId}`);
+      const successMsg = `Found video for query "${query}": ${first.id.videoId}`;
+      console.log(`[generateCourseContent] ${successMsg}`);
+      logs.push(successMsg);
 
     } catch (error) {
       const msg = `YouTube search exception for query "${query}": ${error?.message || error}`;
