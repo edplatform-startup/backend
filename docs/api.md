@@ -125,8 +125,7 @@ Base URL (production): https://api.kognolearn.com
       "title": "Discrete Mathematics",
       "syllabus_text": "...",
       "exam_details": "...",
-      "start_date": "2025-01-15",
-      "end_date": "2025-05-20",
+
       "status": "ready"
     }
   }
@@ -259,7 +258,7 @@ Base URL (production): https://api.kognolearn.com
   ```
   - `userId` (string, required) – UUID of the course owner.
   - `courseId` (string, optional) – Supply to reuse/update an existing course row; otherwise a UUID is generated.
-  - `courseMetadata` (object, optional) – Used to populate `title`, `syllabus_text`, `exam_details`, and start/end dates in `api.courses`.
+  - `courseMetadata` (object, optional) – Used to populate `title`, `syllabus_text`, and `exam_details` in `api.courses`.
   - `grok_draft` (object, required) – Raw "Lesson Architect" draft JSON produced by Gemini/Grok.
   - `user_confidence_map` (object, optional) – Map of `original_source_id -> confidence score (0-1)` used when averaging `confidence_score` per node.
   - `seconds_to_complete` (number, optional) – Time limit in seconds for the course.
@@ -270,7 +269,7 @@ Base URL (production): https://api.kognolearn.com
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
-  3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, normalized start/end dates, and sets `status: "pending"` for downstream progress tracking.
+  3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, and sets `status: "pending"` for downstream progress tracking.
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
      - Calls `x-ai/grok-4-fast` three times (reading Markdown, quiz JSON, flashcards JSON) using strict JSON mode for assessments.

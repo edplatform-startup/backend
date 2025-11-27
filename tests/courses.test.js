@@ -35,8 +35,6 @@ const sampleCourseRow = {
   created_at: '2025-10-17T12:34:56.789Z',
   syllabus_text: 'Syllabus content',
   exam_details: sampleExamDetails,
-  start_date: '2025-09-15',
-  end_date: '2025-12-15',
 };
 
 test('courses route validations and behaviors', async (t) => {
@@ -98,7 +96,7 @@ test('courses route validations and behaviors', async (t) => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    assert.deepEqual(res.body.course, sampleCourseRow);
+    assert.deepEqual(res.body.course, { ...sampleCourseRow, total_estimated_hours: 0 });
   });
 
   await t.test('returns 404 when course not found', async () => {

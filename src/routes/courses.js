@@ -337,7 +337,7 @@ router.get('/data', async (req, res) => {
     const { data, error } = await supabase
       .schema('api')
       .from('courses')
-      .select('id, user_id, title, syllabus_text, exam_details, start_date, end_date, status')
+      .select('id, user_id, title, syllabus_text, exam_details, status')
       .eq('user_id', userId)
       .eq('id', courseId)
       .single();
@@ -573,19 +573,7 @@ router.post('/', async (req, res) => {
     const supabase = getSupabase();
     const normalizedMetadata = isPlainObject(courseMetadata) ? courseMetadata : {};
     const title = deriveCourseTitle(grok_draft, normalizedMetadata);
-    const startDate = coerceDateOnly(
-      normalizedMetadata.start_date ||
-      normalizedMetadata.startDate ||
-      normalizedMetadata.begin_date ||
-      normalizedMetadata.beginDate,
-    );
-    const endDate = coerceDateOnly(
-      normalizedMetadata.end_date ||
-      normalizedMetadata.endDate ||
-      normalizedMetadata.finish_by_date ||
-      normalizedMetadata.finishByDate ||
-      parsedInputs.finishByDateIso,
-    );
+
 
     // Combine text from courseMetadata (old format) with parsed inputs (new format)
     // Parsed inputs take priority if both are provided
@@ -605,8 +593,7 @@ router.post('/', async (req, res) => {
       title,
       syllabus_text: combinedSyllabusText,
       exam_details: combinedExamDetails,
-      start_date: startDate,
-      end_date: endDate,
+
       status: 'pending',
       seconds_to_complete: typeof finalSecondsToComplete === 'number' ? finalSecondsToComplete : null,
     };

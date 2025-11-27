@@ -37,8 +37,6 @@ test('content and course data routes', async (t) => {
             status: 'ready',
             syllabus_text: 'syllabus',
             exam_details: 'midterm + final',
-            start_date: '2025-09-01',
-            end_date: '2025-12-01',
           },
           error: null,
         }],
