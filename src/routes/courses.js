@@ -406,7 +406,20 @@ router.get('/', async (req, res) => {
         return res.status(404).json({ error: 'Course not found' });
       }
 
-      return res.json({ success: true, course: data });
+      // Calculate total estimated hours from nodes
+      const { data: nodes, error: nodesError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .select('estimated_minutes')
+        .eq('course_id', courseId);
+
+      let totalHours = 0;
+      if (!nodesError && nodes) {
+        const totalMinutes = nodes.reduce((sum, node) => sum + (node.estimated_minutes || 0), 0);
+        totalHours = totalMinutes / 60;
+      }
+
+      return res.json({ success: true, course: { ...data, total_estimated_hours: totalHours } });
     }
 
     const { data, error } = await supabase
@@ -425,6 +438,28 @@ router.get('/', async (req, res) => {
     }
 
     const courses = Array.isArray(data) ? data : [];
+
+    if (courses.length > 0) {
+      const courseIds = courses.map((c) => c.id);
+      const { data: nodes, error: nodesError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .select('course_id, estimated_minutes')
+        .in('course_id', courseIds);
+
+      if (!nodesError && nodes) {
+        const minutesMap = {};
+        nodes.forEach((node) => {
+          minutesMap[node.course_id] = (minutesMap[node.course_id] || 0) + (node.estimated_minutes || 0);
+        });
+
+        courses.forEach((course) => {
+          const totalMinutes = minutesMap[course.id] || 0;
+          course.total_estimated_hours = totalMinutes / 60;
+        });
+      }
+    }
+
     return res.json({ success: true, count: courses.length, courses });
   } catch (error) {
     console.error('Unhandled error fetching courses:', error);

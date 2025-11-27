@@ -23,6 +23,7 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
       chain.order = () => chain;
       chain.limit = () => chain;
       chain.or = () => chain;
+      chain.in = () => chain;
 
       chain.single = () => Promise.resolve(singleResp);
 

@@ -2,6 +2,7 @@ import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import yts from 'yt-search';
+import { image_search } from 'duckduckgo-images-api';
 
 const STATUS_PENDING = 'pending';
 const STATUS_READY = 'ready';
@@ -14,6 +15,15 @@ let customSaveCourseStructure = null;
 let customGenerateContent = null;
 let grokExecutor = executeOpenRouterChat;
 let customYouTubeFetcher = null;
+let customImageSearch = null;
+
+export function __setImageSearch(fn) {
+  customImageSearch = typeof fn === 'function' ? fn : null;
+}
+
+export function __resetImageSearch() {
+  customImageSearch = null;
+}
 
 export function __setSaveCourseStructureOverride(fn) {
   customSaveCourseStructure = typeof fn === 'function' ? fn : null;
@@ -622,6 +632,162 @@ function cleanupLatex(latex) {
 }
 
 
+
+
+/**
+ * Split markdown content into logical chunks.
+ * Avoids splitting inside code blocks or LaTeX.
+ * Merges small chunks.
+ */
+function splitContentIntoChunks(markdown) {
+  if (!markdown) return [];
+
+  const lines = markdown.split('\n');
+  const chunks = [];
+  let currentChunk = [];
+  let inCodeBlock = false;
+  let inLatexBlock = false;
+
+  for (const line of lines) {
+    // Toggle block states
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+    }
+    if (line.trim().startsWith('$$')) {
+      inLatexBlock = !inLatexBlock;
+    }
+
+    // Check for split points (headers) only if not in a block
+    const isHeader = /^#{1,3}\s/.test(line);
+    
+    if (isHeader && !inCodeBlock && !inLatexBlock && currentChunk.length > 0) {
+      // Push current chunk if it has substantive content
+      const chunkText = currentChunk.join('\n').trim();
+      if (chunkText) {
+        chunks.push(chunkText);
+      }
+      currentChunk = [line];
+    } else {
+      currentChunk.push(line);
+    }
+  }
+
+  // Push last chunk
+  if (currentChunk.length > 0) {
+    const chunkText = currentChunk.join('\n').trim();
+    if (chunkText) {
+      chunks.push(chunkText);
+    }
+  }
+
+  // Filter and merge small chunks
+  const mergedChunks = [];
+  let buffer = '';
+
+  for (const chunk of chunks) {
+    // If chunk is very short (e.g. just a header or < 100 chars), append to buffer
+    // But if it starts with a header, we generally want to keep it unless it's empty content
+    const isJustHeader = /^#{1,3}\s+[^\n]*$/.test(chunk.trim());
+    
+    if (chunk.length < 100 && !isJustHeader && buffer) {
+      buffer += '\n\n' + chunk;
+    } else {
+      if (buffer) {
+        mergedChunks.push(buffer);
+      }
+      buffer = chunk;
+    }
+  }
+  if (buffer) {
+    mergedChunks.push(buffer);
+  }
+
+  return mergedChunks;
+}
+
+/**
+ * Fetch an image for a chunk using DuckDuckGo.
+ */
+async function fetchImageForChunk(chunkText, courseTitle) {
+  if (customImageSearch) {
+    return customImageSearch(chunkText, courseTitle);
+  }
+  try {
+    // Extract heading or first sentence for query
+    const headingMatch = chunkText.match(/^#{1,6}\s+(.+)$/m);
+    const firstLine = chunkText.split('\n')[0].replace(/^#+\s+/, '');
+    const queryTerm = headingMatch ? headingMatch[1] : firstLine;
+    
+    // Construct concise query
+    const query = `${courseTitle} ${queryTerm} educational illustration`;
+    
+    const results = await image_search({ query, moderate: true, iterations: 1 });
+    if (results && results.length > 0) {
+      return results[0].image;
+    }
+  } catch (error) {
+    console.warn('[fetchImageForChunk] Image search failed:', error.message);
+  }
+  return null;
+}
+
+/**
+ * Generate a single multiple-choice question for a chunk.
+ */
+async function generateInlineQuestion(chunkText) {
+  const systemPrompt = {
+    role: 'system',
+    content: `You are a tutor creating a single multiple-choice question to test understanding of the provided text.
+Return JSON ONLY:
+{
+  "question": "string",
+  "options": ["A", "B", "C", "D"],
+  "answerIndex": number (0-3),
+  "explanation": "string"
+}
+Ensure answerIndex is valid.`,
+  };
+
+  const userPrompt = {
+    role: 'user',
+    content: `Create one multiple-choice question for this content:\n\n${chunkText.slice(0, 1000)}...`,
+  };
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.2,
+      maxTokens: 500,
+      messages: [systemPrompt, userPrompt],
+      responseFormat: { type: 'json_object' },
+    });
+
+    const raw = coerceModelText(content);
+    const parsed = parseJsonObject(raw, 'inline_question');
+
+    if (!parsed || !parsed.question || !Array.isArray(parsed.options) || parsed.options.length < 2) {
+      return null;
+    }
+
+    const answerIndex = Number.isInteger(parsed.answerIndex) ? parsed.answerIndex : 0;
+    const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
+    
+    // Format as Markdown
+    let md = `\n\n**Question:** ${parsed.question}\n\n`;
+    parsed.options.forEach((opt, i) => {
+      const letter = ['A', 'B', 'C', 'D'][i];
+      md += `- ${letter}. ${opt}\n`;
+    });
+    
+    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
+    
+    return md;
+  } catch (error) {
+    console.warn('[generateInlineQuestion] Failed to generate question:', error.message);
+    return null;
+  }
+}
+
 async function generateReading(title, plan, courseName, moduleName) {
   const systemPrompt = {
     role: 'system',
@@ -702,6 +868,39 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     throw new Error('Reading generator returned empty content after retry');
   }
 
+  // --- ENRICHMENT STEP ---
+  try {
+    const chunks = splitContentIntoChunks(resultText);
+    const enrichedChunks = [];
+    const MAX_ENRICHED = 5;
+
+    for (let i = 0; i < chunks.length; i++) {
+      let chunk = chunks[i];
+      
+      // Only enrich the first N chunks
+      if (i < MAX_ENRICHED) {
+        // 1. Fetch Image
+        const imageUrl = await fetchImageForChunk(chunk, courseName);
+        if (imageUrl) {
+          chunk += `\n\n![Illustration](${imageUrl})\n\n`;
+        }
+
+        // 2. Generate Question
+        const questionMd = await generateInlineQuestion(chunk);
+        if (questionMd) {
+          chunk += questionMd;
+        }
+      }
+      
+      enrichedChunks.push(chunk);
+    }
+    
+    resultText = enrichedChunks.join('\n\n---\n\n');
+  } catch (enrichError) {
+    console.error('[generateReading] Enrichment failed, returning plain text:', enrichError);
+    // Fallback to original text if enrichment blows up
+  }
+
   return resultText;
 }
 
@@ -741,14 +940,17 @@ Rules:
 - validation_check is the ONLY place you reason about distractors
 - Explanation must be concise feedback for students (no scratchpad)
 - Exactly one option may be correct, enforce via validation_check.
+- Ensure questions vary in difficulty (Easy, Medium, Hard).
+- You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).
 `,
     },
     {
       role: 'user',
-      content: `Generate JSON with a 'quiz' array of 3 multiple-choice questions for "${title}". Follow the plan:
+      content: `Generate JSON with a 'quiz' array of 3-5 standard multiple-choice questions plus 1 extra "Challenge Question" (total 4-6 questions) for "${title}". 
+Follow the plan:
 ${plan}
 
-Each question: 4 options, single correct_index, validation_check before finalizing, explanation strictly for students.`,
+Each question: 4 options, single correct_index, validation_check before finalizing, explanation strictly for students. Ensure the last question is the Challenge Question.`,
     },
   ];
   const { content } = await grokExecutor({

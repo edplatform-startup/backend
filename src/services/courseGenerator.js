@@ -71,7 +71,7 @@ CRITICAL RULES:
 6. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
    - **video:** 2-3 specific YouTube search queries. IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.
-   - **quiz:** Detailed prompt for an examiner (e.g., "Create 3 questions that test the 'add constant' trap," "Include one conceptual and two application questions").
+   - **quiz:** Detailed prompt for an examiner. Explicitly request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that would test even a strong student.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
 7. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
