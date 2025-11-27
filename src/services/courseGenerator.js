@@ -1,6 +1,16 @@
 import { v4 as uuidv4 } from 'uuid';
 import stringSimilarity from 'string-similarity';
-import { callStageLLM as llmCaller } from './llmCall.js';
+import { callStageLLM as defaultLLMCaller } from './llmCall.js';
+
+let llmCaller = defaultLLMCaller;
+
+export function __setLLMCaller(fn) {
+  llmCaller = fn;
+}
+
+export function __resetLLMCaller() {
+  llmCaller = defaultLLMCaller;
+}
 import { STAGES } from './modelRouter.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 

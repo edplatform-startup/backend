@@ -489,7 +489,16 @@ router.post('/', async (req, res) => {
       examFormatDetails,
       examFiles,
       seconds_to_complete,
+      hours,
+      minutes,
     } = req.body || {};
+
+    let finalSecondsToComplete = seconds_to_complete;
+    if (typeof finalSecondsToComplete !== 'number' && (typeof hours === 'number' || typeof minutes === 'number')) {
+      const h = typeof hours === 'number' ? hours : 0;
+      const m = typeof minutes === 'number' ? minutes : 0;
+      finalSecondsToComplete = (h * 3600) + (m * 60);
+    }
 
     if (!userId) {
       return res.status(400).json({ error: 'Missing required field: userId' });
@@ -564,7 +573,7 @@ router.post('/', async (req, res) => {
       start_date: startDate,
       end_date: endDate,
       status: 'pending',
-      seconds_to_complete: typeof seconds_to_complete === 'number' ? seconds_to_complete : null,
+      seconds_to_complete: typeof finalSecondsToComplete === 'number' ? finalSecondsToComplete : null,
     };
 
     const { error: insertError } = await supabase
@@ -677,7 +686,7 @@ router.delete('/', async (req, res) => {
 
 router.patch('/:courseId/settings', async (req, res) => {
   const { courseId } = req.params;
-  const { userId, seconds_to_complete } = req.body;
+  const { userId, seconds_to_complete, hours, minutes } = req.body;
 
   if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
@@ -727,6 +736,10 @@ router.patch('/:courseId/settings', async (req, res) => {
 
     if (seconds_to_complete !== undefined) {
       updateData.seconds_to_complete = seconds_to_complete;
+    } else if (typeof hours === 'number' || typeof minutes === 'number') {
+      const h = typeof hours === 'number' ? hours : 0;
+      const m = typeof minutes === 'number' ? minutes : 0;
+      updateData.seconds_to_complete = (h * 3600) + (m * 60);
     }
 
     const { data: updatedCourse, error: updateError } = await supabase
