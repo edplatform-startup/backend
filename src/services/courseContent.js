@@ -1,6 +1,7 @@
 import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
+import yts from 'yt-search';
 
 const STATUS_PENDING = 'pending';
 const STATUS_READY = 'ready';
@@ -281,7 +282,7 @@ async function processNode(node, supabase, courseTitle) {
     : Promise.resolve(null);
     
   const videoPromise = plans.video 
-    ? safeGenerate(fetchVideoResource(plans.video), 'Video')
+    ? safeGenerate(generateVideoSelection(plans.video), 'Video')
     : Promise.resolve({ videos: [], logs: [] });
 
   const [reading, quiz, flashcards, videoResult, practiceExam] = await Promise.all([
@@ -935,7 +936,7 @@ function normalizeFlashcard(card, index) {
   return { front, back };
 }
 
-async function fetchVideoResource(queries) {
+async function generateVideoSelection(queries) {
   const logs = [];
   const videos = [];
 
@@ -946,15 +947,16 @@ async function fetchVideoResource(queries) {
     return { videos, logs };
   }
 
+  // Use the first query as requested
+  const query = queries[0];
+  logs.push(`Selected query for processing: "${query}"`);
+
   if (customYouTubeFetcher) {
     try {
       console.log('[generateCourseContent] Using custom YouTube fetcher.');
       logs.push('Using custom YouTube fetcher.');
-      // Expect custom fetcher to return an array or single object, normalize to array
-      const res = await customYouTubeFetcher(queries);
+      const res = await customYouTubeFetcher([query]);
       const fetchedVideos = Array.isArray(res) ? res : (res ? [res] : []);
-      console.log(`[generateCourseContent] Custom fetcher returned ${fetchedVideos.length} videos.`);
-      logs.push(`Custom fetcher returned ${fetchedVideos.length} videos.`);
       return { videos: fetchedVideos, logs };
     } catch (error) {
       const msg = `Custom YouTube fetcher failed: ${error?.message || error}`;
@@ -964,61 +966,101 @@ async function fetchVideoResource(queries) {
     }
   }
 
-  const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    const msg = 'No YouTube/Google API key found in environment variables. Video generation skipped.';
-    console.warn(`[generateCourseContent] ${msg}`);
-    logs.push(msg);
-    return { videos, logs };
-  }
+  let searchResults = [];
 
-  for (const query of queries) {
-    try {
-      console.log(`[generateCourseContent] Searching YouTube for query: "${query}"`);
-      logs.push(`Searching YouTube for query: "${query}"`);
-      const url = new URL('https://www.googleapis.com/youtube/v3/search');
-      url.searchParams.set('part', 'snippet');
-      url.searchParams.set('q', query);
-      url.searchParams.set('maxResults', '1');
-      url.searchParams.set('type', 'video');
-      url.searchParams.set('key', apiKey);
-
-      const response = await fetch(url.toString(), {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        const msg = `YouTube API error: ${response.status} ${response.statusText} - ${errorBody}`;
-        console.error(`[generateCourseContent] ${msg}`);
-        logs.push(msg);
-        continue;
+  const searchTool = {
+    name: 'search_youtube',
+    description: 'Search YouTube for videos matching the query. Returns a list of videos with indices.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query.' },
+      },
+      required: ['query'],
+    },
+    handler: async ({ query }) => {
+      try {
+        console.log(`[generateVideoSelection] Running yt-search for: "${query}"`);
+        const res = await yts(query);
+        // Store top 5 results
+        searchResults = res.videos.slice(0, 5).map((v, i) => ({
+          index: i,
+          title: v.title,
+          timestamp: v.timestamp,
+          author: v.author?.name,
+          videoId: v.videoId,
+          thumbnail: v.thumbnail,
+          url: v.url
+        }));
+        
+        // Return a simplified string for the LLM to read
+        return JSON.stringify(searchResults.map(v => ({
+          index: v.index,
+          title: v.title,
+          duration: v.timestamp,
+          channel: v.author
+        })), null, 2);
+      } catch (err) {
+        console.error('[generateVideoSelection] yt-search failed:', err);
+        return 'Search failed.';
       }
+    }
+  };
 
-      const data = await response.json();
-      const first = Array.isArray(data?.items) ? data.items[0] : null;
-      if (!first?.id?.videoId) {
-        const msg = `No video found for query: "${query}"`;
-        console.log(`[generateCourseContent] ${msg}`);
-        logs.push(msg);
-        continue;
-      }
+  const messages = [
+    {
+      role: 'system',
+      content: `You are a helpful video curator. Your goal is to select the BEST video for the user's learning objective.
+      
+      1. Use the 'search_youtube' tool to find videos for the given query.
+      2. Review the results.
+      3. Select the single best video based on relevance and quality.
+      4. Return JSON: { "selected_index": <number> }
+      
+      If no videos are good, return { "selected_index": -1 }.`
+    },
+    {
+      role: 'user',
+      content: `Find the best video for this query: "${query}"`
+    }
+  ];
 
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast', // Or appropriate model
+      temperature: 0.2,
+      maxTokens: 500,
+      messages,
+      tools: [searchTool],
+      toolChoice: 'auto',
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 60000,
+    });
+
+    const result = parseJsonObject(content, 'video_selection');
+    const selectedIndex = result?.selected_index;
+
+    if (typeof selectedIndex === 'number' && selectedIndex >= 0 && searchResults[selectedIndex]) {
+      const selected = searchResults[selectedIndex];
       videos.push({
-        videoId: first.id.videoId,
-        title: first.snippet?.title || 'Unknown title',
-        thumbnail: first.snippet?.thumbnails?.high?.url || first.snippet?.thumbnails?.default?.url || null,
+        videoId: selected.videoId,
+        title: selected.title,
+        thumbnail: selected.thumbnail,
       });
-      const successMsg = `Found video for query "${query}": ${first.id.videoId}`;
-      console.log(`[generateCourseContent] ${successMsg}`);
-      logs.push(successMsg);
-
-    } catch (error) {
-      const msg = `YouTube search exception for query "${query}": ${error?.message || error}`;
-      console.warn('[generateCourseContent]', msg);
+      const msg = `LLM selected video index ${selectedIndex}: "${selected.title}"`;
+      console.log(`[generateVideoSelection] ${msg}`);
+      logs.push(msg);
+    } else {
+      const msg = 'LLM did not select a valid video index.';
+      console.warn(`[generateVideoSelection] ${msg}`);
       logs.push(msg);
     }
+
+  } catch (error) {
+    const msg = `Video selection LLM failed: ${error?.message || error}`;
+    console.error('[generateVideoSelection]', msg);
+    logs.push(msg);
   }
+
   return { videos, logs };
 }
