@@ -274,24 +274,24 @@ async function processNode(node, supabase, courseTitle) {
     }
   };
 
-  const readingPromise = plans.reading 
+  const readingPromise = plans.reading
     ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName), 'Reading')
     : Promise.resolve(null);
-    
-  const quizPromise = plans.quiz 
+
+  const quizPromise = plans.quiz
     ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName), 'Quiz')
     : Promise.resolve(null);
-    
-  const flashcardsPromise = plans.flashcards 
+
+  const flashcardsPromise = plans.flashcards
     ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName), 'Flashcards')
     : Promise.resolve(null);
-    
+
   const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
   const practiceExamPromise = practiceExamPlan
     ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName), 'Practice Exam')
     : Promise.resolve(null);
-    
-  const videoPromise = plans.video 
+
+  const videoPromise = plans.video
     ? safeGenerate(generateVideoSelection(plans.video), 'Video')
     : Promise.resolve({ videos: [], logs: [] });
 
@@ -659,7 +659,7 @@ function splitContentIntoChunks(markdown) {
 
     // Check for split points (headers) only if not in a block
     const isHeader = /^#{1,3}\s/.test(line);
-    
+
     if (isHeader && !inCodeBlock && !inLatexBlock && currentChunk.length > 0) {
       // Push current chunk if it has substantive content
       const chunkText = currentChunk.join('\n').trim();
@@ -688,7 +688,7 @@ function splitContentIntoChunks(markdown) {
     // If chunk is very short (e.g. just a header or < 100 chars), append to buffer
     // But if it starts with a header, we generally want to keep it unless it's empty content
     const isJustHeader = /^#{1,3}\s+[^\n]*$/.test(chunk.trim());
-    
+
     if (chunk.length < 100 && !isJustHeader && buffer) {
       buffer += '\n\n' + chunk;
     } else {
@@ -717,16 +717,18 @@ async function fetchImageForChunk(chunkText, courseTitle) {
     const headingMatch = chunkText.match(/^#{1,6}\s+(.+)$/m);
     const firstLine = chunkText.split('\n')[0].replace(/^#+\s+/, '');
     const queryTerm = headingMatch ? headingMatch[1] : firstLine;
-    
+
     // Construct concise query
     const query = `${courseTitle} ${queryTerm} educational illustration`;
-    
+
+    console.log(`[fetchImageForChunk] Searching for: "${query}"`);
     const results = await image_search({ query, moderate: true, iterations: 1 });
     if (results && results.length > 0) {
       return results[0].image;
     }
   } catch (error) {
     console.warn('[fetchImageForChunk] Image search failed:', error.message);
+    console.error('[fetchImageForChunk] Full error details:', error);
   }
   return null;
 }
@@ -771,16 +773,16 @@ Ensure answerIndex is valid.`,
 
     const answerIndex = Number.isInteger(parsed.answerIndex) ? parsed.answerIndex : 0;
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
-    
+
     // Format as Markdown
     let md = `\n\n**Question:** ${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
       md += `- ${letter}. ${opt}\n`;
     });
-    
+
     md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
-    
+
     return md;
   } catch (error) {
     console.warn('[generateInlineQuestion] Failed to generate question:', error.message);
@@ -832,7 +834,13 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       requestTimeoutMs: 120000,
     });
     const raw = coerceModelText(content);
-    const parsed = parseJsonObject(raw, 'reading');
+    let parsed;
+    try {
+      parsed = parseJsonObject(raw, 'reading');
+    } catch (err) {
+      console.error('[generateReading] Failed to parse reading JSON. Raw content:', content);
+      throw err;
+    }
     // Prefer markdown; fall back to latex extraction when markdown is not supplied
     let body = typeof parsed?.final_content?.markdown === 'string'
       ? parsed.final_content.markdown
@@ -876,7 +884,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
     for (let i = 0; i < chunks.length; i++) {
       let chunk = chunks[i];
-      
+
       // Only enrich the first N chunks
       if (i < MAX_ENRICHED) {
         // 1. Fetch Image
@@ -891,10 +899,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
           chunk += questionMd;
         }
       }
-      
+
       enrichedChunks.push(chunk);
     }
-    
+
     resultText = enrichedChunks.join('\n\n---\n\n');
   } catch (enrichError) {
     console.error('[generateReading] Enrichment failed, returning plain text:', enrichError);
@@ -912,7 +920,7 @@ function cleanupMarkdown(md) {
   // Normalize line endings and excessive blank lines
   out = out.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
   // Trim trailing spaces on each line
-  out = out.split('\n').map((l) => l.replace(/\s+$/,'' )).join('\n');
+  out = out.split('\n').map((l) => l.replace(/\s+$/, '')).join('\n');
   return out.trim();
 }
 
@@ -962,21 +970,27 @@ Each question: 4 options, single correct_index, validation_check before finalizi
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
-  let questions = parseJsonArray(text, 'quiz');
-  if (!questions.length) {
-    questions = parseJsonArray(text, 'questions');
-  }
-  if (!questions.length) {
-    throw new Error('Quiz generator returned no questions');
-  }
-  const cleaned = questions.map((item) => {
-    if (item && typeof item === 'object') {
-      const { validation_check, step_by_step_thinking, ...rest } = item;
-      return rest;
+  let questions;
+  try {
+    questions = parseJsonArray(text, 'quiz');
+    if (!questions.length) {
+      questions = parseJsonArray(text, 'questions');
     }
-    return item;
-  });
-  return cleaned.map((item, index) => normalizeQuizItem(item, index));
+    if (!questions.length) {
+      throw new Error('Quiz generator returned no questions');
+    }
+    const cleaned = questions.map((item) => {
+      if (item && typeof item === 'object') {
+        const { validation_check, step_by_step_thinking, ...rest } = item;
+        return rest;
+      }
+      return item;
+    });
+    return cleaned.map((item, index) => normalizeQuizItem(item, index));
+  } catch (err) {
+    console.error('[generateQuiz] Failed to parse or normalize quiz JSON. Raw content:', content);
+    throw err;
+  }
 }
 
 function normalizeQuizItem(item, index) {
@@ -1040,20 +1054,24 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
   });
 
   const text = coerceModelText(content);
-  const rawItems = parseJsonArray(text, 'practice_exam');
-  if (!rawItems.length) {
-    throw new Error('Practice exam generator returned no problems');
-  }
-
-  const cleaned = rawItems.map((item) => {
-    if (item && typeof item === 'object') {
-      const { validation_check, step_by_step_thinking, ...rest } = item;
-      return rest;
+  let rawItems;
+  try {
+    rawItems = parseJsonArray(text, 'practice_exam');
+    if (!rawItems.length) {
+      throw new Error('Practice exam generator returned no problems');
     }
-    return item;
-  });
-
-  return cleaned.map((item, index) => normalizePracticeExamItem(item, index));
+    const cleaned = rawItems.map((item) => {
+      if (item && typeof item === 'object') {
+        const { validation_check, step_by_step_thinking, ...rest } = item;
+        return rest;
+      }
+      return item;
+    });
+    return cleaned.map((item, index) => normalizePracticeExamItem(item, index));
+  } catch (err) {
+    console.error('[generatePracticeExam] Failed to parse or normalize practice exam JSON. Raw content:', content);
+    throw err;
+  }
 }
 
 function normalizePracticeExamItem(item, index) {
@@ -1115,18 +1133,24 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
-  const flashcards = parseJsonArray(text, 'flashcards');
-  if (!flashcards.length) {
-    throw new Error('Flashcard generator returned no cards');
-  }
-  const cleaned = flashcards.map((card) => {
-    if (card && typeof card === 'object') {
-      const { step_by_step_thinking, internal_audit, ...rest } = card;
-      return rest;
+  let flashcards;
+  try {
+    flashcards = parseJsonArray(text, 'flashcards');
+    if (!flashcards.length) {
+      throw new Error('Flashcard generator returned no cards');
     }
-    return card;
-  });
-  return cleaned.map((card, index) => normalizeFlashcard(card, index));
+    const cleaned = flashcards.map((card) => {
+      if (card && typeof card === 'object') {
+        const { step_by_step_thinking, internal_audit, ...rest } = card;
+        return rest;
+      }
+      return card;
+    });
+    return cleaned.map((card, index) => normalizeFlashcard(card, index));
+  } catch (err) {
+    console.error('[generateFlashcards] Failed to parse or normalize flashcards JSON. Raw content:', content);
+    throw err;
+  }
 }
 
 function normalizeFlashcard(card, index) {
@@ -1194,7 +1218,7 @@ async function generateVideoSelection(queries) {
           thumbnail: v.thumbnail,
           url: v.url
         }));
-        
+
         // Return a simplified string for the LLM to read
         return JSON.stringify(searchResults.map(v => ({
           index: v.index,
@@ -1255,7 +1279,10 @@ async function generateVideoSelection(queries) {
     } else {
       const msg = 'LLM did not select a valid video index.';
       console.warn(`[generateVideoSelection] ${msg}`);
+      console.warn(`[generateVideoSelection] Search Results:`, JSON.stringify(searchResults, null, 2));
+      console.warn(`[generateVideoSelection] LLM Response:`, content);
       logs.push(msg);
+      logs.push(`LLM Response: ${content}`);
     }
 
   } catch (error) {
