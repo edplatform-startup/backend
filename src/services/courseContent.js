@@ -1162,7 +1162,7 @@ function normalizeFlashcard(card, index) {
   return { front, back };
 }
 
-async function generateVideoSelection(queries) {
+export async function generateVideoSelection(queries) {
   const logs = [];
   const videos = [];
 
@@ -1240,10 +1240,12 @@ async function generateVideoSelection(queries) {
       
       1. Use the 'search_youtube' tool to find videos for the given query.
       2. Review the results.
-      3. Select the single best video based on relevance and quality.
-      4. Return JSON: { "selected_index": <number> }
+      3. If the results are empty or irrelevant, you MUST try again with a broader, more general query.
+      4. You can retry up to 3 times.
+      5. Select the single best video based on relevance and quality.
+      6. Return JSON: { "selected_index": <number> } (index from the LAST search results).
       
-      If no videos are good, return { "selected_index": -1 }.`
+      If after retries no videos are good, return { "selected_index": -1 }.`
     },
     {
       role: 'user',
@@ -1251,17 +1253,20 @@ async function generateVideoSelection(queries) {
     }
   ];
 
+  let content;
   try {
-    const { content } = await grokExecutor({
+    const response = await grokExecutor({
       model: 'x-ai/grok-4-fast', // Or appropriate model
       temperature: 0.2,
       maxTokens: 500,
       messages,
       tools: [searchTool],
       toolChoice: 'auto',
+      maxToolIterations: 4, // Allow up to 3 retries (1 initial + 3 retries = 4 total calls)
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 60000,
     });
+    content = response.content;
 
     const result = parseJsonObject(content, 'video_selection');
     const selectedIndex = result?.selected_index;
@@ -1288,6 +1293,10 @@ async function generateVideoSelection(queries) {
   } catch (error) {
     const msg = `Video selection LLM failed: ${error?.message || error}`;
     console.error('[generateVideoSelection]', msg);
+    if (content) {
+      console.error('[generateVideoSelection] Raw content causing failure:', content);
+      logs.push(`Raw content: ${content}`);
+    }
     logs.push(msg);
   }
 
