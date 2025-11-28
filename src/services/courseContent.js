@@ -238,9 +238,45 @@ async function runContentWorker(courseId, options = {}) {
   });
 
   const failures = results.filter((result) => result.status === 'rejected');
+
+  // Aggregate stats from successful results
+  const aggregateStats = {
+    reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
+    quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
+    flashcards: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
+    practice_exam: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
+    video: { total: 0, successful: 0, failed: 0 }
+  };
+
+  results.forEach((result) => {
+    if (result.status === 'fulfilled' && result.value?.stats) {
+      const nodeStats = result.value.stats;
+      Object.keys(nodeStats).forEach((type) => {
+        if (aggregateStats[type]) {
+          aggregateStats[type].total += nodeStats[type].total || 0;
+          aggregateStats[type].immediate += nodeStats[type].immediate || 0;
+          aggregateStats[type].repaired_llm += nodeStats[type].repaired_llm || 0;
+          aggregateStats[type].failed += nodeStats[type].failed || 0;
+          aggregateStats[type].retries += nodeStats[type].retries || 0;
+        }
+      });
+    }
+  });
+
+  console.log('\n=== Content Generation Stats ===');
+  Object.entries(aggregateStats).forEach(([type, stats]) => {
+    if (type === 'video') {
+      console.log(`[${type}] Total: ${stats.total}, Success: ${stats.successful}, Failed: ${stats.failed}`);
+    } else {
+      console.log(`[${type}] processed: ${stats.total} items | valid_immediate: ${stats.immediate} | repaired_llm: ${stats.repaired_llm} | failed: ${stats.failed} | llm_retries: ${stats.retries}`);
+    }
+  });
+  console.log('================================\n');
+
   const summary = {
     processed: pendingNodes.length,
     failed: failures.length,
+    stats: aggregateStats
   };
   const courseStatus = failures.length ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
   await updateCourseStatus(supabase, courseId, courseStatus);
@@ -295,7 +331,7 @@ async function processNode(node, supabase, courseTitle) {
     ? safeGenerate(generateVideoSelection(plans.video), 'Video')
     : Promise.resolve({ videos: [], logs: [] });
 
-  const [reading, quiz, flashcards, videoResult, practiceExam] = await Promise.all([
+  const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
@@ -308,10 +344,10 @@ async function processNode(node, supabase, courseTitle) {
   const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
 
   const finalPayload = {
-    reading,
-    quiz,
-    flashcards,
-    practice_exam: practiceExam,
+    reading: readingRes?.data || null,
+    quiz: quizRes?.data || null,
+    flashcards: flashcardsRes?.data || null,
+    practice_exam: practiceExamRes?.data || null,
     video: videos, // Keep original array structure
     video_urls: videoUrls, // New CSV field
     video_logs: videoLogs, // Detailed logs
@@ -331,6 +367,17 @@ async function processNode(node, supabase, courseTitle) {
   if (updateError) {
     throw new Error(`[generateCourseContent] Failed to update node ${node.id}: ${updateError.message || updateError}`);
   }
+
+  // Collect stats
+  const nodeStats = {
+    reading: readingRes?.stats || {},
+    quiz: quizRes?.stats || {},
+    flashcards: flashcardsRes?.stats || {},
+    practice_exam: practiceExamRes?.stats || {},
+    video: { total: 1, successful: videos.length > 0 ? 1 : 0, failed: videos.length === 0 ? 1 : 0 }
+  };
+
+  return { nodeId: node.id, stats: nodeStats };
 }
 
 async function markNodeError(node, supabase, error) {
@@ -436,6 +483,112 @@ function parseJsonObject(raw, label) {
   } catch (error) {
     throw new Error(`Failed to parse JSON for ${label}: ${error.message}`);
   }
+}
+
+async function repairContentArray(items, validator, repairPromptBuilder, label) {
+  let currentItems = [...items];
+  const maxRetries = 2;
+
+  let validItems = new Array(items.length).fill(null);
+  let brokenIndices = [];
+
+  const stats = {
+    total: items.length,
+    immediate: 0,
+    repaired_llm: 0,
+    failed: 0,
+    retries: 0
+  };
+
+  // Initial Pass
+  for (let i = 0; i < currentItems.length; i++) {
+    const result = validator(currentItems[i], i);
+    if (result.valid) {
+      validItems[i] = result.data;
+      stats.immediate++;
+    } else {
+      brokenIndices.push({ index: i, item: currentItems[i], error: result.error });
+    }
+  }
+
+  if (brokenIndices.length === 0) {
+    console.log(`[${label}] Success: All ${items.length} items valid immediately.`);
+    return { items: validItems.filter(Boolean), stats };
+  }
+
+  console.warn(`[${label}] Initial validation: ${stats.immediate} valid, ${brokenIndices.length} broken.`);
+
+  // Retry Loop
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (brokenIndices.length === 0) break;
+    stats.retries++;
+
+    console.log(`[${label}] Attempt ${attempt}: Repairing ${brokenIndices.length} broken items...`);
+
+    const brokenItems = brokenIndices.map(b => b.item);
+    const errors = brokenIndices.map(b => b.error);
+    const prompt = repairPromptBuilder(brokenItems, errors);
+
+    try {
+      const { content } = await grokExecutor({
+        model: 'x-ai/grok-4-fast',
+        temperature: 0.2,
+        maxTokens: 1500,
+        messages: [
+          { role: 'system', content: 'You are a JSON repair assistant. Fix the provided broken JSON objects based on the error messages. Return a JSON object with a key "repaired_items" containing the array of fixed objects.' },
+          { role: 'user', content: prompt }
+        ],
+        responseFormat: { type: 'json_object' },
+        requestTimeoutMs: 60000,
+      });
+
+      const raw = coerceModelText(content);
+      const repairedArray = parseJsonArray(raw, 'repaired_items');
+
+      const nextBrokenIndices = [];
+      let repairedInThisBatch = 0;
+
+      // Try to match repaired items to broken indices
+      for (let k = 0; k < brokenIndices.length; k++) {
+        const originalIndexInfo = brokenIndices[k];
+        const repairedItem = repairedArray[k];
+
+        if (!repairedItem) {
+          nextBrokenIndices.push(originalIndexInfo);
+          continue;
+        }
+
+        const result = validator(repairedItem, originalIndexInfo.index);
+        if (result.valid) {
+          validItems[originalIndexInfo.index] = result.data;
+          repairedInThisBatch++;
+        } else {
+          nextBrokenIndices.push({
+            index: originalIndexInfo.index,
+            item: repairedItem,
+            error: result.error
+          });
+        }
+      }
+
+      stats.repaired_llm += repairedInThisBatch;
+      console.log(`[${label}] Attempt ${attempt} result: ${repairedInThisBatch} repaired, ${nextBrokenIndices.length} still broken.`);
+      brokenIndices = nextBrokenIndices;
+
+    } catch (err) {
+      console.error(`[${label}] Repair attempt ${attempt} failed:`, err);
+    }
+  }
+
+  stats.failed = brokenIndices.length;
+  if (stats.failed > 0) {
+    console.error(`[${label}] Final result: ${stats.failed} items failed after repairs.`);
+  } else {
+    console.log(`[${label}] Final result: All items repaired successfully.`);
+  }
+
+  // Return valid items, filtering out any that are still null
+  return { items: validItems.filter(item => item !== null), stats };
 }
 
 // ============================================================================
@@ -862,9 +1015,12 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     return cleanupMarkdown(body);
   };
   let resultText = await renderResponse([systemPrompt, userPrompt]);
+  let retries = 0;
 
   if (!resultText || !resultText.trim()) {
     // Retry once with a clear instruction
+    console.warn(`[generateReading] Initial generation empty for "${title}". Retrying...`);
+    retries++;
     const retryAsk = {
       role: 'user',
       content: `The previous response was empty or invalid. Re-run and produce final_content.markdown containing clean Markdown (use LaTeX only for math). Do not include internal_audit in final content. Plan: ${plan}`,
@@ -909,7 +1065,16 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     // Fallback to original text if enrichment blows up
   }
 
-  return resultText;
+  return {
+    data: resultText,
+    stats: {
+      total: 1,
+      immediate: retries === 0 ? 1 : 0,
+      repaired_llm: retries > 0 ? 1 : 0,
+      failed: 0,
+      retries
+    }
+  };
 }
 
 function cleanupMarkdown(md) {
@@ -970,23 +1135,38 @@ Each question: 4 options, single correct_index, validation_check before finalizi
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
+
   let questions;
   try {
     questions = parseJsonArray(text, 'quiz');
     if (!questions.length) {
       questions = parseJsonArray(text, 'questions');
     }
-    if (!questions.length) {
-      throw new Error('Quiz generator returned no questions');
-    }
-    const cleaned = questions.map((item) => {
-      if (item && typeof item === 'object') {
-        const { validation_check, step_by_step_thinking, ...rest } = item;
-        return rest;
+
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { validation_check, step_by_step_thinking, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizeQuizItem(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
       }
-      return item;
-    });
-    return cleaned.map((item, index) => normalizeQuizItem(item, index));
+    };
+
+    const repairPrompt = (brokenItems, errors) => {
+      return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has a 'question', 'options' (array of 4 strings), 'correct_index' (0-3), and 'explanation'.`;
+    };
+
+    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz');
+
+    if (!repairedQuestions.length) {
+      throw new Error('Quiz generator returned no valid questions after repair');
+    }
+
+    return { data: repairedQuestions, stats };
   } catch (err) {
     console.error('[generateQuiz] Failed to parse or normalize quiz JSON. Raw content:', content);
     throw err;
@@ -1054,20 +1234,34 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
   });
 
   const text = coerceModelText(content);
+
   let rawItems;
   try {
     rawItems = parseJsonArray(text, 'practice_exam');
-    if (!rawItems.length) {
-      throw new Error('Practice exam generator returned no problems');
-    }
-    const cleaned = rawItems.map((item) => {
-      if (item && typeof item === 'object') {
-        const { validation_check, step_by_step_thinking, ...rest } = item;
-        return rest;
+
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { validation_check, step_by_step_thinking, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizePracticeExamItem(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
       }
-      return item;
-    });
-    return cleaned.map((item, index) => normalizePracticeExamItem(item, index));
+    };
+
+    const repairPrompt = (brokenItems, errors) => {
+      return `The following practice exam items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has 'question', 'answer_key', 'rubric', and 'estimated_minutes'.`;
+    };
+
+    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'generatePracticeExam');
+
+    if (!repairedItems.length) {
+      throw new Error('Practice exam generator returned no valid problems after repair');
+    }
+    return { data: repairedItems, stats };
   } catch (err) {
     console.error('[generatePracticeExam] Failed to parse or normalize practice exam JSON. Raw content:', content);
     throw err;
@@ -1133,20 +1327,34 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     requestTimeoutMs: 120000,
   });
   const text = coerceModelText(content);
+
   let flashcards;
   try {
     flashcards = parseJsonArray(text, 'flashcards');
-    if (!flashcards.length) {
-      throw new Error('Flashcard generator returned no cards');
-    }
-    const cleaned = flashcards.map((card) => {
-      if (card && typeof card === 'object') {
-        const { step_by_step_thinking, internal_audit, ...rest } = card;
-        return rest;
+
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { step_by_step_thinking, internal_audit, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizeFlashcard(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
       }
-      return card;
-    });
-    return cleaned.map((card, index) => normalizeFlashcard(card, index));
+    };
+
+    const repairPrompt = (brokenItems, errors) => {
+      return `The following flashcards are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has 'front' and 'back'.`;
+    };
+
+    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'generateFlashcards');
+
+    if (!repairedCards.length) {
+      throw new Error('Flashcard generator returned no valid cards after repair');
+    }
+    return { data: repairedCards, stats };
   } catch (err) {
     console.error('[generateFlashcards] Failed to parse or normalize flashcards JSON. Raw content:', content);
     throw err;
