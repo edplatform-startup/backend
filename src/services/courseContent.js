@@ -2,7 +2,6 @@ import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import yts from 'yt-search';
-import { image_search } from 'duckduckgo-images-api';
 
 const STATUS_PENDING = 'pending';
 const STATUS_READY = 'ready';
@@ -15,15 +14,6 @@ let customSaveCourseStructure = null;
 let customGenerateContent = null;
 let grokExecutor = executeOpenRouterChat;
 let customYouTubeFetcher = null;
-let customImageSearch = null;
-
-export function __setImageSearch(fn) {
-  customImageSearch = typeof fn === 'function' ? fn : null;
-}
-
-export function __resetImageSearch() {
-  customImageSearch = null;
-}
 
 export function __setSaveCourseStructureOverride(fn) {
   customSaveCourseStructure = typeof fn === 'function' ? fn : null;
@@ -858,33 +848,7 @@ function splitContentIntoChunks(markdown) {
   return mergedChunks;
 }
 
-/**
- * Fetch an image for a chunk using DuckDuckGo.
- */
-async function fetchImageForChunk(chunkText, courseTitle) {
-  if (customImageSearch) {
-    return customImageSearch(chunkText, courseTitle);
-  }
-  try {
-    // Extract heading or first sentence for query
-    const headingMatch = chunkText.match(/^#{1,6}\s+(.+)$/m);
-    const firstLine = chunkText.split('\n')[0].replace(/^#+\s+/, '');
-    const queryTerm = headingMatch ? headingMatch[1] : firstLine;
 
-    // Construct concise query
-    const query = `${courseTitle} ${queryTerm} educational illustration`;
-
-    console.log(`[fetchImageForChunk] Searching for: "${query}"`);
-    const results = await image_search({ query, moderate: true, iterations: 1 });
-    if (results && results.length > 0) {
-      return results[0].image;
-    }
-  } catch (error) {
-    console.warn('[fetchImageForChunk] Image search failed:', error.message);
-    console.error('[fetchImageForChunk] Full error details:', error);
-  }
-  return null;
-}
 
 /**
  * Generate a single multiple-choice question for a chunk.
@@ -1043,13 +1007,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
       // Only enrich the first N chunks
       if (i < MAX_ENRICHED) {
-        // 1. Fetch Image
-        const imageUrl = await fetchImageForChunk(chunk, courseName);
-        if (imageUrl) {
-          chunk += `\n\n![Illustration](${imageUrl})\n\n`;
-        }
-
-        // 2. Generate Question
+        // Generate inline question
         const questionMd = await generateInlineQuestion(chunk);
         if (questionMd) {
           chunk += questionMd;
