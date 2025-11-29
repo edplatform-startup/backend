@@ -82,7 +82,7 @@ describe('generateLessonGraph', () => {
 
     const { finalNodes, finalEdges } = await generateLessonGraph(grokDraft, userConfidenceMap);
 
-    assert.strictEqual(finalNodes.length, 3);
+    // assert.strictEqual(finalNodes.length, 3); // Removed, we now expect 5
     
     // 1. Good Lesson (Source: st1_1 -> 0.9)
     const goodNode = finalNodes.find(n => n.title === "Good Lesson");
@@ -101,6 +101,41 @@ describe('generateLessonGraph', () => {
     assert.strictEqual(newNode.confidence_score, 0.1);
     assert.deepStrictEqual(newNode.metadata.original_source_ids, []);
     assert.strictEqual(newNode.metadata.architectural_reasoning, "Reasoning for new lesson");
+
+    // --- Verify Practice Exams ---
+    // Expect 3 original + 2 exams = 5 nodes
+    assert.strictEqual(finalNodes.length, 5);
+
+    const midTerm = finalNodes.find(n => n.title === 'Mid-Term Practice Exam');
+    const finalExam = finalNodes.find(n => n.title === 'Final Practice Exam');
+
+    assert.ok(midTerm, 'Mid-Term Exam should exist');
+    assert.ok(finalExam, 'Final Exam should exist');
+
+    // Verify Mid-Term placement
+    // In a 3-node chain (Good->Merged->New), midIndex is 1.
+    // Preceding: [Good] (index 0)
+    // Edge: Good -> MidTerm
+    // Edge: MidTerm -> Merged
+    assert.strictEqual(midTerm.metadata.preceding_lessons.length, 1);
+    assert.strictEqual(midTerm.metadata.preceding_lessons[0].title, 'Good Lesson');
+    
+    // Verify Final Exam placement
+    // Preceding: All 3 original nodes
+    assert.strictEqual(finalExam.metadata.preceding_lessons.length, 3);
+    
+    // Verify Edges
+    // Good -> MidTerm
+    const goodToMid = finalEdges.find(e => e.parent_id === goodNode.id && e.child_id === midTerm.id);
+    assert.ok(goodToMid, 'Edge from Good Lesson to Mid-Term should exist');
+
+    // MidTerm -> Merged
+    const midToMerged = finalEdges.find(e => e.parent_id === midTerm.id && e.child_id === mergedNode.id);
+    assert.ok(midToMerged, 'Edge from Mid-Term to Merged Lesson should exist');
+
+    // New -> Final
+    const newToFinal = finalEdges.find(e => e.parent_id === newNode.id && e.child_id === finalExam.id);
+    assert.ok(newToFinal, 'Edge from New Lesson to Final Exam should exist');
   });
 });
 
