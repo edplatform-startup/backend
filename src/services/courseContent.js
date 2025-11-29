@@ -853,10 +853,23 @@ function splitContentIntoChunks(markdown) {
 /**
  * Generate a single multiple-choice question for a chunk.
  */
+import { pickModel, STAGES } from './modelRouter.js';
+
+/**
+ * Generate a single multiple-choice question for a chunk.
+ */
 async function generateInlineQuestion(chunkText) {
+  const architectConfig = pickModel(STAGES.LESSON_ARCHITECT);
+  
   const systemPrompt = {
     role: 'system',
-    content: `You are a tutor creating a single multiple-choice question to test understanding of the provided text.
+    content: `You are an expert instructional designer and subject matter expert. 
+Your goal is to create a single, high-quality multiple-choice question that tests DEEP UNDERSTANDING of the provided text.
+Avoid simple recall questions. Focus on:
+- Synthesis of concepts
+- Application of knowledge
+- Identifying key implications or causes
+
 Return JSON ONLY:
 {
   "question": "string",
@@ -869,14 +882,14 @@ Ensure answerIndex is valid.`,
 
   const userPrompt = {
     role: 'user',
-    content: `Create one multiple-choice question for this content:\n\n${chunkText.slice(0, 1000)}...`,
+    content: `Create one deep-understanding multiple-choice question for this content:\n\n${chunkText.slice(0, 1500)}...`,
   };
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
-      temperature: 0.2,
-      maxTokens: 500,
+      model: architectConfig.model,
+      temperature: 0.3, // Slightly higher for creativity in question design
+      maxTokens: 600,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
     });
@@ -892,7 +905,7 @@ Ensure answerIndex is valid.`,
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
 
     // Format as Markdown
-    let md = `\n\n**Question:** ${parsed.question}\n\n`;
+    let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
       md += `- ${letter}. ${opt}\n`;
