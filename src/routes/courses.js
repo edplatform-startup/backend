@@ -511,6 +511,9 @@ router.post('/topics', async (req, res) => {
 
 import { generateLessonGraph } from '../services/courseGenerator.js';
 
+import { convertFilesToPdf } from '../services/examConverter.js';
+import { uploadExamFile } from '../services/storage.js';
+
 router.post('/', async (req, res) => {
   try {
     const {
@@ -568,6 +571,22 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: parsedInputs.error });
     }
 
+    // Handle Exam File Conversion and Upload
+    let examFileUrl = null;
+    if (parsedInputs.examFiles && parsedInputs.examFiles.length > 0) {
+      try {
+        console.log(`[courses] Converting ${parsedInputs.examFiles.length} exam files to PDF...`);
+        const pdfBuffer = await convertFilesToPdf(parsedInputs.examFiles);
+        
+        console.log(`[courses] Uploading converted PDF for course ${courseId}...`);
+        examFileUrl = await uploadExamFile(courseId, userId, pdfBuffer, 'exam_bundle.pdf');
+        console.log(`[courses] Exam file uploaded: ${examFileUrl}`);
+      } catch (err) {
+        console.error('[courses] Failed to convert/upload exam files:', err);
+        // We continue without the file, but log the error
+      }
+    }
+
     const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
 
     const supabase = getSupabase();
@@ -582,10 +601,16 @@ router.post('/', async (req, res) => {
       normalizedMetadata.syllabusText ||
       null;
 
-    const combinedExamDetails = parsedInputs.examFormatDetails ||
+    let combinedExamDetails = parsedInputs.examFormatDetails ||
       normalizedMetadata.exam_details ||
       normalizedMetadata.examDetails ||
       null;
+
+    // Append the uploaded file URL to the exam details
+    if (examFileUrl) {
+      const attachmentText = `\n\n**Attached Exam File**: [View PDF](${examFileUrl})`;
+      combinedExamDetails = combinedExamDetails ? combinedExamDetails + attachmentText : attachmentText;
+    }
 
     const rowPayload = {
       id: courseId,
@@ -638,6 +663,7 @@ router.post('/', async (req, res) => {
         nodes: finalNodes,
         edges: finalEdges,
       },
+      examFileUrl, // Return this for client confirmation if needed
     });
   } catch (error) {
     console.error('[courses] POST / error:', error);

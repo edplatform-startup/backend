@@ -36,6 +36,7 @@
     "morgan": "^1.10.0",
     "node-fetch": "^3.3.2",
     "openai": "^6.9.1",
+    "pdf-lib": "^1.17.1",
     "string-similarity": "^4.0.4",
     "string-similarity-js": "^2.1.4",
     "uuid": "^13.0.0",
