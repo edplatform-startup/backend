@@ -571,31 +571,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: parsedInputs.error });
     }
 
-    // Handle Exam File Conversion and Upload
-    let examFileUrl = null;
-    if (parsedInputs.examFiles && parsedInputs.examFiles.length > 0) {
-      try {
-        console.log(`[courses] Converting ${parsedInputs.examFiles.length} exam files to PDF...`);
-        const pdfBuffer = await convertFilesToPdf(parsedInputs.examFiles);
-        
-        console.log(`[courses] Uploading converted PDF for course ${courseId}...`);
-        examFileUrl = await uploadExamFile(courseId, userId, pdfBuffer, 'exam_bundle.pdf');
-        console.log(`[courses] Exam file uploaded: ${examFileUrl}`);
-      } catch (err) {
-        console.error('[courses] Failed to convert/upload exam files:', err);
-        // We continue without the file, but log the error
-      }
-    }
-
-    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
-
+    // --- IMMEDIATE PERSISTENCE START ---
     const supabase = getSupabase();
     const normalizedMetadata = isPlainObject(courseMetadata) ? courseMetadata : {};
     const title = deriveCourseTitle(grok_draft, normalizedMetadata);
 
-
-    // Combine text from courseMetadata (old format) with parsed inputs (new format)
-    // Parsed inputs take priority if both are provided
     const combinedSyllabusText = parsedInputs.syllabusText ||
       normalizedMetadata.syllabus_text ||
       normalizedMetadata.syllabusText ||
@@ -606,23 +586,17 @@ router.post('/', async (req, res) => {
       normalizedMetadata.examDetails ||
       null;
 
-    // Append the uploaded file URL to the exam details
-    if (examFileUrl) {
-      const attachmentText = `\n\n**Attached Exam File**: [View PDF](${examFileUrl})`;
-      combinedExamDetails = combinedExamDetails ? combinedExamDetails + attachmentText : attachmentText;
-    }
-
     const rowPayload = {
       id: courseId,
       user_id: userId,
       title,
       syllabus_text: combinedSyllabusText,
       exam_details: combinedExamDetails,
-
       status: 'pending',
       seconds_to_complete: typeof finalSecondsToComplete === 'number' ? finalSecondsToComplete : null,
     };
 
+    // Insert the course row immediately so it exists in "pending" state
     const { error: insertError } = await supabase
       .schema('api')
       .from('courses')
@@ -632,6 +606,7 @@ router.post('/', async (req, res) => {
 
     if (insertError) {
       if (insertError.code === '23505') {
+        // Handle UPSERT if ID exists
         const { error: updateError } = await supabase
           .schema('api')
           .from('courses')
@@ -649,6 +624,38 @@ router.post('/', async (req, res) => {
         return res.status(500).json({ error: 'Failed to persist course metadata', details: insertError.message });
       }
     }
+    // --- IMMEDIATE PERSISTENCE END ---
+
+    // Handle Exam File Conversion and Upload
+    let examFileUrl = null;
+    if (parsedInputs.examFiles && parsedInputs.examFiles.length > 0) {
+      try {
+        console.log(`[courses] Converting ${parsedInputs.examFiles.length} exam files to PDF...`);
+        const pdfBuffer = await convertFilesToPdf(parsedInputs.examFiles);
+        
+        console.log(`[courses] Uploading converted PDF for course ${courseId}...`);
+        examFileUrl = await uploadExamFile(courseId, userId, pdfBuffer, 'exam_bundle.pdf');
+        console.log(`[courses] Exam file uploaded: ${examFileUrl}`);
+
+        // Update the course row with the new exam file URL
+        if (examFileUrl) {
+          const attachmentText = `\n\n**Attached Exam File**: [View PDF](${examFileUrl})`;
+          combinedExamDetails = combinedExamDetails ? combinedExamDetails + attachmentText : attachmentText;
+          
+          await supabase
+            .schema('api')
+            .from('courses')
+            .update({ exam_details: combinedExamDetails })
+            .eq('id', courseId)
+            .eq('user_id', userId);
+        }
+      } catch (err) {
+        console.error('[courses] Failed to convert/upload exam files:', err);
+        // We continue without the file, but log the error
+      }
+    }
+
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
 
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);

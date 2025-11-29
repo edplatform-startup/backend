@@ -42,7 +42,59 @@ export async function generateStudyPlan(courseId, userId) {
     }
 
     // 4. Output Formatting
-    return formatOutput(mode, sortedNodes, graph);
+    const nodesWithExams = insertPracticeExams(sortedNodes);
+    return formatOutput(mode, nodesWithExams, graph);
+}
+
+function insertPracticeExams(nodes) {
+    if (!nodes || nodes.length === 0) return [];
+
+    const totalDuration = nodes.reduce((sum, n) => sum + (n.effective_cost || 0), 0);
+    const midPoint = totalDuration / 2;
+    
+    let currentDuration = 0;
+    let midExamInserted = false;
+    const result = [];
+    const precedingIds = [];
+
+    for (const node of nodes) {
+        result.push(node);
+        precedingIds.push(node.id);
+        
+        // Only count duration of non-mastered nodes for placement logic
+        if (node.userState?.mastery_status !== 'mastered') {
+            currentDuration += (node.effective_cost || 0);
+        }
+
+        // console.log(`Node ${node.id}: current=${currentDuration}, mid=${midPoint}`);
+
+        if (!midExamInserted && currentDuration >= midPoint) {
+            result.push({
+                id: 'practice-exam-mid',
+                title: 'Mid-Course Practice Exam',
+                type: 'practice_exam',
+                effective_cost: 45, 
+                module_ref: node.module_ref,
+                userState: { mastery_status: 'pending' },
+                preceding_lessons: [...precedingIds]
+            });
+            midExamInserted = true;
+        }
+    }
+
+    // Always add final exam
+    const lastNode = nodes[nodes.length - 1];
+    result.push({
+        id: 'practice-exam-final',
+        title: 'Final Practice Exam',
+        type: 'practice_exam',
+        effective_cost: 60,
+        module_ref: lastNode?.module_ref || 'Final',
+        userState: { mastery_status: 'pending' },
+        preceding_lessons: [...precedingIds]
+    });
+
+    return result;
 }
 
 async function fetchData(courseId, userId) {
@@ -290,7 +342,9 @@ function formatOutput(mode, sortedNodes, nodeMap) {
 
         // Determine type from content_payload
         let type = 'reading';
-        if (node.content_payload) {
+        if (node.type === 'practice_exam') {
+            type = 'practice_exam';
+        } else if (node.content_payload) {
             if (node.content_payload.reading) type = 'reading';
             else if (node.content_payload.video) type = 'video';
             else if (node.content_payload.quiz) type = 'quiz';
@@ -298,7 +352,7 @@ function formatOutput(mode, sortedNodes, nodeMap) {
 
         // Check if locked (only locked if any parent is in "pending" state)
         let isLocked = false;
-        if (nodeMap) {
+        if (nodeMap && node.type !== 'practice_exam') {
             const fullNode = nodeMap.get(node.id);
             if (fullNode && fullNode.parents) {
                 for (const parentId of fullNode.parents) {
@@ -322,14 +376,20 @@ function formatOutput(mode, sortedNodes, nodeMap) {
             totalMinutes += node.effective_cost;
         }
 
-        modulesMap.get(moduleTitle).lessons.push({
+        const lessonObj = {
             id: node.id,
             title: node.title,
             type,
             duration,
             is_locked: isLocked,
             status: node.userState.mastery_status || 'pending'
-        });
+        };
+
+        if (node.preceding_lessons) {
+            lessonObj.preceding_lessons = node.preceding_lessons;
+        }
+
+        modulesMap.get(moduleTitle).lessons.push(lessonObj);
     });
 
     return {
