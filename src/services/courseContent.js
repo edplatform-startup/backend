@@ -845,7 +845,7 @@ import { pickModel, STAGES } from './modelRouter.js';
 /**
  * Generate a single multiple-choice question for a chunk.
  */
-async function generateInlineQuestion(chunkText) {
+export async function generateInlineQuestion(chunkText) {
 
   
   const systemPrompt = {
@@ -895,13 +895,18 @@ Ensure answerIndex is valid.`,
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
 
     // Format as Markdown
-    let md = `\n\nCheck Your Understanding\n\n${parsed.question}\n\n`;
+    let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
-      md += `- ${letter}. ${letter}. ${opt}\n`;
+      // Clean up option text: remove "A.", "A)", "A " at the start if present
+      let cleanOpt = opt.trim();
+      // Remove leading letter+punctuation (e.g. "A.", "A)", "A ") up to 2 times to handle "A. A) content"
+      cleanOpt = cleanOpt.replace(/^[A-D][.)]?\s*/i, '').replace(/^[A-D][.)]?\s*/i, '').trim();
+      
+      md += `- ${letter}. ${cleanOpt}\n`;
     });
 
-    md += `\n<details><summary>Show Answer</summary>\n\nAnswer: ${correctOption}. Explanation: ${parsed.explanation}\n</details>\n`;
+    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
 
     return md;
   } catch (error) {
@@ -1356,125 +1361,110 @@ export async function generateVideoSelection(queries) {
   }
 
   let searchResults = [];
-  let lastSearchQuery = null;
+  const maxRetries = 2;
 
-  const searchTool = {
-    name: 'search_youtube',
-    description: 'Search YouTube for videos matching the query. Returns a list of videos with indices.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'The search query.' },
-      },
-      required: ['query'],
-    },
-    handler: async ({ query }) => {
-      try {
-        lastSearchQuery = query;
-        console.log('[VIDEO GENERATION] Querying yt-search with:', query);
-        const res = await yts(query);
-        // Store top 5 results
-        searchResults = res.videos.slice(0, 5).map((v, i) => ({
-          index: i,
-          title: v.title,
-          timestamp: v.timestamp,
-          author: v.author?.name,
-          videoId: v.videoId,
-          thumbnail: v.thumbnail,
-          url: v.url
-        }));
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // 1. EXECUTE SEARCH MANUALLY
+      console.log(`[VIDEO GENERATION] Querying yt-search with: "${query}" (Attempt ${attempt + 1})`);
+      logs.push(`Searching YouTube for: "${query}"`);
+      
+      const res = await yts(query);
+      searchResults = res.videos.slice(0, 5).map((v, i) => ({
+        index: i,
+        title: v.title,
+        timestamp: v.timestamp,
+        author: v.author?.name,
+        videoId: v.videoId,
+        thumbnail: v.thumbnail,
+        url: v.url
+      }));
 
-        console.log('[VIDEO GENERATION] yt-search returned', searchResults.length, 'videos:');
-        searchResults.forEach((v, idx) => {
-          console.log(`  [${idx}] "${v.title}" (${v.timestamp}) by ${v.author}`);
-        });
-
-        // Return a simplified string for the LLM to read
-        return JSON.stringify(searchResults.map(v => ({
-          index: v.index,
-          title: v.title,
-          duration: v.timestamp,
-          channel: v.author
-        })), null, 2);
-      } catch (err) {
-        console.log('[VIDEO GENERATION] yt-search failed:', err.message);
-        return 'Search failed.';
+      console.log('[VIDEO GENERATION] yt-search returned', searchResults.length, 'videos.');
+      if (searchResults.length === 0) {
+        logs.push('No videos found for this query.');
+        if (attempt < maxRetries) {
+           break; 
+        }
+        continue;
       }
-    }
-  };
 
-  const messages = [
-    {
-      role: 'system',
-      content: `You are a helpful video curator. Your goal is to select the BEST video for the user's learning objective.
-      
-      1. Use the 'search_youtube' tool to find videos for the given query.
-      2. Review the results.
-      3. If the results are empty or irrelevant, you MUST try again with a broader, more general query.
-      4. You can retry up to 3 times.
-      5. Select the single best video based on relevance and quality.
-      6. Return JSON: { "selected_index": <number> } (index from the LAST search results).
-      
-      If after retries no videos are good, return { "selected_index": -1 }.`
-    },
-    {
-      role: 'user',
-      content: `Find the best video for this query: "${query}"`
-    }
-  ];
+      // 2. ASK LLM TO SELECT
+      const videoListString = searchResults.map(v => 
+        `[${v.index}] Title: "${v.title}" | Channel: ${v.author} | Duration: ${v.timestamp}`
+      ).join('\n');
 
-  let content;
-  try {
-    const response = await grokExecutor({
-      model: 'x-ai/grok-4-fast', // Or appropriate model
-      temperature: 0.2,
-      maxTokens: 500,
-      messages,
-      tools: [searchTool],
-      toolChoice: 'auto',
-      maxToolIterations: 4, // Allow up to 3 retries (1 initial + 3 retries = 4 total calls)
-      responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 60000,
-    });
-    content = response.content;
+      const messages = [
+        {
+          role: 'system',
+          content: `You are a helpful video curator. 
+Your goal is to select the BEST video for the user's learning objective from the provided list.
 
-    const result = parseJsonObject(content, 'video_selection');
-    const selectedIndex = result?.selected_index;
+Rules:
+1. Analyze the provided video list.
+2. Select the single best video based on relevance to the query: "${query}".
+3. Return JSON: { "selected_index": <number> }
+4. If NO videos are relevant, return { "selected_index": -1 }`
+        },
+        {
+          role: 'user',
+          content: `Search Query: "${query}"
 
-    if (typeof selectedIndex === 'number' && selectedIndex >= 0 && searchResults[selectedIndex]) {
-      const selected = searchResults[selectedIndex];
-      videos.push({
-        videoId: selected.videoId,
-        title: selected.title,
-        thumbnail: selected.thumbnail,
+Video Results:
+${videoListString}
+
+Select the best video index.`
+        }
+      ];
+
+      const response = await grokExecutor({
+        model: 'x-ai/grok-4-fast',
+        temperature: 0.1,
+        maxTokens: 200,
+        messages,
+        responseFormat: { type: 'json_object' },
+        requestTimeoutMs: 30000,
       });
-      console.log('[VIDEO GENERATION] ✓ Selected Video:');
-      console.log('  Index:', selectedIndex);
-      console.log('  Title:', selected.title);
-      console.log('  Video ID:', selected.videoId);
-      console.log('  Duration:', selected.timestamp);
-      console.log('  Channel:', selected.author);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      const msg = `LLM selected video index ${selectedIndex}: "${selected.title}"`;
-      logs.push(msg);
-    } else {
-      console.log('[VIDEO GENERATION] ✗ No valid video selected');
-      console.log('  Selected Index:', selectedIndex);
-      console.log('  LLM Response:', content);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-      const msg = 'LLM did not select a valid video index.';
-      logs.push(msg);
-      logs.push(`LLM Response: ${content}`);
-    }
 
-  } catch (error) {
-    console.log('[VIDEO GENERATION] ✗ Error:', error.message);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    const msg = `Video selection LLM failed: ${error?.message || error}`;
-    if (content) {
-      logs.push(`Raw content: ${content}`);
+      const content = response.content;
+      logs.push(`LLM Response: ${content}`);
+
+      const result = parseJsonObject(content, 'video_selection');
+      const selectedIndex = result?.selected_index;
+
+      if (typeof selectedIndex === 'number' && selectedIndex >= 0 && searchResults[selectedIndex]) {
+        const selected = searchResults[selectedIndex];
+        videos.push({
+          videoId: selected.videoId,
+          title: selected.title,
+          thumbnail: selected.thumbnail,
+        });
+        
+        console.log('[VIDEO GENERATION] ✓ Selected Video:');
+        console.log('  Index:', selectedIndex);
+        console.log('  Title:', selected.title);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        logs.push(`Selected video index ${selectedIndex}: "${selected.title}"`);
+        
+        return { videos, logs }; // Success!
+      } else if (selectedIndex === -1) {
+        console.log('[VIDEO GENERATION] LLM rejected all videos.');
+        logs.push('LLM indicated no valid videos in this batch.');
+        break; 
+      } else {
+        console.log('[VIDEO GENERATION] Invalid selection index:', selectedIndex);
+        logs.push(`Invalid selection index: ${selectedIndex}`);
+      }
+
+    } catch (err) {
+      console.log('[VIDEO GENERATION] Error during attempt:', err.message);
+      logs.push(`Error: ${err.message}`);
     }
-    logs.push(msg);
+  }
+
+  if (videos.length === 0) {
+    console.log('[VIDEO GENERATION] ✗ No valid video selected');
+    logs.push('Failed to select a video after retries.');
   }
 
   return { videos, logs };
