@@ -927,10 +927,11 @@ Ensure answerIndex is valid.`,
     let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
-      // Clean up option text: remove "A.", "A)", "A " at the start if present
+      // Clean up option text: remove "A.", "A)", etc. ONLY if followed by punctuation (not just space)
       let cleanOpt = opt.trim();
-      // Remove leading letter+punctuation (e.g. "A.", "A)", "A ") up to 2 times to handle "A. A) content"
-      cleanOpt = cleanOpt.replace(/^[A-D][.)]?\s*/i, '').replace(/^[A-D][.)]?\s*/i, '').trim();
+      // Only strip prefix if it's a letter followed by . or ) (not just a space)
+      // e.g., "A. content" -> "content", but "By doing..." stays intact
+      cleanOpt = cleanOpt.replace(/^[A-D][.)]\s*/i, '').trim();
       
       md += `- ${letter}. ${cleanOpt}\n`;
     });
