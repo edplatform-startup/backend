@@ -911,13 +911,13 @@ Ensure answerIndex is valid.`,
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
 
     // Format as Markdown
-    let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
+    let md = `\n\nCheck Your Understanding\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
-      md += `- ${letter}. ${opt}\n`;
+      md += `- ${letter}. ${letter}. ${opt}\n`;
     });
 
-    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
+    md += `\n<details><summary>Show Answer</summary>\n\nAnswer: ${correctOption}. Explanation: ${parsed.explanation}\n</details>\n`;
 
     return md;
   } catch (error) {
