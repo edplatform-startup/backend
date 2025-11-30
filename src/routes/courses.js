@@ -264,7 +264,7 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
     }
 
     // Return the full node data
-    return res.json({
+    const response = {
       success: true,
       lesson: {
         id: node.id,
@@ -280,7 +280,54 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
         is_locked: lockStatus.isLocked,
         prerequisites: lockStatus.prerequisites,
       },
-    });
+    };
+
+    // Filter content based on format if requested
+    const { format } = req.query;
+    if (format && response.lesson.content_payload) {
+      const payload = response.lesson.content_payload;
+      let filteredData = {};
+
+      switch (format.toLowerCase()) {
+        case 'video':
+          // For video, return only the videos array
+          filteredData = { 
+            videos: payload.video || [],
+            // optionally include logs if needed for debugging, but user asked for "only the videos key"
+            // keeping it strictly to what was asked:
+            // "only thing given should be the videos key"
+          };
+          break;
+        case 'reading':
+          filteredData = { body: payload.reading };
+          break;
+        case 'quiz':
+          filteredData = { questions: payload.quiz };
+          break;
+        case 'flashcards':
+          filteredData = { cards: payload.flashcards };
+          break;
+        case 'practice_exam':
+          filteredData = { practice_exam: payload.practice_exam };
+          break;
+        default:
+          // If format is unknown, return everything (or handle as error? defaulting to everything is safer)
+          filteredData = payload;
+      }
+      
+      // Replace the full payload with the filtered one
+      // The user request said: "in the attached info the only thing given should be the videos key"
+      // This implies the structure should be cleaner. 
+      // Let's replace content_payload with the filtered data directly or keep it under content_payload?
+      // "returned info when the content endpoint is called" -> likely referring to the JSON response.
+      // The user example showed:
+      // { "format": "video", "data": { ... } } 
+      // But the current endpoint returns { success: true, lesson: { ... } }
+      // I will modify content_payload in place to contain only the filtered keys.
+      response.lesson.content_payload = filteredData;
+    }
+
+    return res.json(response);
   } catch (error) {
     console.error('Error fetching lesson content:', error);
     return res.status(500).json({ error: 'Internal server error', details: error.message });

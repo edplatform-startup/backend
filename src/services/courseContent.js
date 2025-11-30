@@ -1438,6 +1438,7 @@ Select the best video index.`
           videoId: selected.videoId,
           title: selected.title,
           thumbnail: selected.thumbnail,
+          url: selected.url,
         });
         
         console.log('[VIDEO GENERATION] ✓ Selected Video:');

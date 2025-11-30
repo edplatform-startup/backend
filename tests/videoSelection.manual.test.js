@@ -45,6 +45,7 @@ test('generateVideoSelection integration test', async (t) => {
                 assert.equal(result.videos.length, 1);
                 assert.ok(result.videos[0].videoId, 'Video should have an ID');
                 assert.ok(result.videos[0].title, 'Video should have a title');
+                assert.ok(result.videos[0].url, 'Video should have a URL');
             } else {
                 // If search succeeded but no video selected, it might be the mock or logic
                 console.warn('⚠️ Search seemed to succeed but no video in output.');
