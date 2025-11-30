@@ -506,7 +506,7 @@ Base URL (production): https://api.kognolearn.com
       "url": "https://..."
     }
     ```
-  - `404 Not Found` → Exam not found
+  - `404 Not Found` → Exam not generated. Please call the generate endpoint first.
   - `500 Internal Server Error` → Storage error
 
 ## Errors (generic)

@@ -621,11 +621,11 @@ router.get('/:courseId/exams/:type', async (req, res) => {
 
   try {
     const files = await getCourseExamFiles(courseId, userId);
-    const expectedName = `${type}_exam.tex`;
+    const expectedName = `${type}_exam.pdf`;
     const examFile = files.find(f => f.name === expectedName);
 
     if (!examFile) {
-      return res.status(404).json({ error: 'Exam not found' });
+      return res.status(404).json({ error: 'Exam not generated. Please call the generate endpoint first.' });
     }
 
     return res.json({ success: true, url: examFile.url });
