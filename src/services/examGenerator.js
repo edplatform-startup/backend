@@ -1,4 +1,5 @@
 import latex from 'node-latex';
+import { Readable } from 'stream';
 import { createReadStream, createWriteStream } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -6,6 +7,34 @@ import { unlink, writeFile } from 'fs/promises';
 import { getCourseExamFiles, uploadExamFile } from './storage.js';
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
+
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+const LATEX_ENV_SPEC = `
+LATEX ENVIRONMENT SPECIFICATION:
+- Engine: pdfLaTeX only.
+- Classes: article, exam.
+- Packages available: amsmath, amssymb, amsthm, mathtools, geometry, hyperref, xcolor, graphicx, enumitem, array, tabularx, multirow, multicol, booktabs, float, caption, tikz, circuitikz, exam.
+- Constraints: NO minted, NO shell-escape, NO external files (e.g., \\includegraphics, \\input) unless explicitly provided, NO XeLaTeX/LuaLaTeX features.
+`;
+
+/**
+ * Checks if pdflatex is available in the environment.
+ */
+async function checkPdfLatexAvailability() {
+  try {
+    await execAsync('pdflatex --version');
+    console.log('[examGenerator] pdflatex is available.');
+  } catch (error) {
+    console.warn('[examGenerator] WARNING: pdflatex NOT found. LaTeX compilation will likely fail.', error.message);
+  }
+}
+
+// Run sanity check on module load (or could be on first request)
+checkPdfLatexAvailability();
 
 /**
  * Sanitizes LaTeX code by removing markdown blocks and common syntax errors.
@@ -56,7 +85,7 @@ function checkSemanticIssues(code) {
  */
 async function compileLatexToPdf(latexCode) {
   return new Promise((resolve, reject) => {
-    const input = createReadStream(Buffer.from(latexCode));
+    const input = Readable.from([Buffer.from(latexCode)]);
     const outputPath = join(tmpdir(), `exam_${Date.now()}.pdf`);
     const output = createWriteStream(outputPath);
     const pdf = latex(input);
@@ -106,9 +135,10 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
     name: exam.name,
     mimeType: 'application/pdf'
   }));
-
   // 2. Construct the prompt
   const systemPrompt = `You are an expert academic exam creator. Your task is to create a high-quality ${examType} exam in LaTeX format.
+  
+  ${LATEX_ENV_SPEC}
   
   INPUTS:
   1. A list of lessons to cover.
@@ -116,11 +146,6 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
   
   INSTRUCTIONS:
   - Create a complete ${examType} exam covering the specified lessons.
-  - STRICTLY ADHERE to the formatting and style of the attached existing exams.
-  - Output ONLY the raw LaTeX code.
-  - Ensure the LaTeX is compilable (include preamble, document class, etc.).
-  - Do NOT use placeholders like [INSERT IMAGE] or TODOs.
-  `;
 
   const userPrompt = `Lessons to cover:
   ${lessons.map(l => `- ${l}`).join('\n')}
