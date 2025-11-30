@@ -859,7 +859,7 @@ import { pickModel, STAGES } from './modelRouter.js';
  * Generate a single multiple-choice question for a chunk.
  */
 async function generateInlineQuestion(chunkText) {
-  const architectConfig = pickModel(STAGES.LESSON_ARCHITECT);
+
   
   const systemPrompt = {
     role: 'system',
@@ -886,16 +886,20 @@ Ensure answerIndex is valid.`,
   };
 
   try {
-    const { content } = await grokExecutor({
-      model: architectConfig.model,
+    const response = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
       temperature: 0.3, // Slightly higher for creativity in question design
       maxTokens: 600,
       messages: [systemPrompt, userPrompt],
-      // responseFormat: { type: 'json_object' }, // Removed for Gemini compatibility
+      responseFormat: { type: 'json_object' },
     });
 
+    const content = response.content;
+    console.log('[generateInlineQuestion] Raw content from LLM:', JSON.stringify(content));
+
     const raw = coerceModelText(content);
-    // console.log('[generateInlineQuestion] Raw model response:', raw);
+    console.log('[generateInlineQuestion] Coerced raw text:', raw);
+
     const parsed = parseJsonObject(raw, 'inline_question');
 
     if (!parsed || !parsed.question || !Array.isArray(parsed.options) || parsed.options.length < 2) {
