@@ -3,6 +3,9 @@ import { createReadStream, createWriteStream } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { unlink, writeFile } from 'fs/promises';
+import { getCourseExamFiles, uploadExamFile } from './storage.js';
+import { callStageLLM } from './llmCall.js';
+import { STAGES } from './modelRouter.js';
 
 /**
  * Sanitizes LaTeX code by removing markdown blocks and common syntax errors.
