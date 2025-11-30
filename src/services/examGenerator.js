@@ -146,6 +146,11 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
   
   INSTRUCTIONS:
   - Create a complete ${examType} exam covering the specified lessons.
+  - STRICTLY ADHERE to the formatting and style of the attached existing exams.
+  - Output ONLY the raw LaTeX code.
+  - Ensure the LaTeX is compilable (include preamble, document class, etc.).
+  - Do NOT use placeholders like [INSERT IMAGE] or TODOs.
+  `;
 
   const userPrompt = `Lessons to cover:
   ${lessons.map(l => `- ${l}`).join('\n')}
