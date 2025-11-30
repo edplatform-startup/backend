@@ -253,15 +253,11 @@ async function runContentWorker(courseId, options = {}) {
     }
   });
 
-  console.log('\n=== Content Generation Stats ===');
   Object.entries(aggregateStats).forEach(([type, stats]) => {
     if (type === 'video') {
-      console.log(`[${type}] Total: ${stats.total}, Success: ${stats.successful}, Failed: ${stats.failed}`);
     } else {
-      console.log(`[${type}] processed: ${stats.total} items | valid_immediate: ${stats.immediate} | repaired_llm: ${stats.repaired_llm} | failed: ${stats.failed} | llm_retries: ${stats.retries}`);
     }
   });
-  console.log('================================\n');
 
   const summary = {
     processed: pendingNodes.length,
@@ -295,7 +291,6 @@ async function processNode(node, supabase, courseTitle) {
     try {
       return await promise;
     } catch (error) {
-      console.error(`[generateCourseContent] ${label} generation failed for node ${node.id}:`, error);
       return null; // Return null to indicate failure but allow other content to proceed
     }
   };
@@ -398,7 +393,6 @@ async function updateCourseStatus(supabase, courseId, status) {
       throw error;
     }
   } catch (error) {
-    console.warn('[generateCourseContent] Failed to update course status:', error?.message || error);
   }
 }
 
@@ -502,18 +496,15 @@ async function repairContentArray(items, validator, repairPromptBuilder, label) 
   }
 
   if (brokenIndices.length === 0) {
-    console.log(`[${label}] Success: All ${items.length} items valid immediately.`);
     return { items: validItems.filter(Boolean), stats };
   }
 
-  console.warn(`[${label}] Initial validation: ${stats.immediate} valid, ${brokenIndices.length} broken.`);
 
   // Retry Loop
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     if (brokenIndices.length === 0) break;
     stats.retries++;
 
-    console.log(`[${label}] Attempt ${attempt}: Repairing ${brokenIndices.length} broken items...`);
 
     const brokenItems = brokenIndices.map(b => b.item);
     const errors = brokenIndices.map(b => b.error);
@@ -562,19 +553,15 @@ async function repairContentArray(items, validator, repairPromptBuilder, label) 
       }
 
       stats.repaired_llm += repairedInThisBatch;
-      console.log(`[${label}] Attempt ${attempt} result: ${repairedInThisBatch} repaired, ${nextBrokenIndices.length} still broken.`);
       brokenIndices = nextBrokenIndices;
 
     } catch (err) {
-      console.error(`[${label}] Repair attempt ${attempt} failed:`, err);
     }
   }
 
   stats.failed = brokenIndices.length;
   if (stats.failed > 0) {
-    console.error(`[${label}] Final result: ${stats.failed} items failed after repairs.`);
   } else {
-    console.log(`[${label}] Final result: All items repaired successfully.`);
   }
 
   // Return valid items, filtering out any that are still null
@@ -895,15 +882,12 @@ Ensure answerIndex is valid.`,
     });
 
     const content = response.content;
-    console.log('[generateInlineQuestion] Raw content from LLM:', JSON.stringify(content));
 
     const raw = coerceModelText(content);
-    console.log('[generateInlineQuestion] Coerced raw text:', raw);
 
     const parsed = parseJsonObject(raw, 'inline_question');
 
     if (!parsed || !parsed.question || !Array.isArray(parsed.options) || parsed.options.length < 2) {
-      console.warn('[generateInlineQuestion] Invalid parsed question object:', JSON.stringify(parsed));
       return null;
     }
 
@@ -921,8 +905,6 @@ Ensure answerIndex is valid.`,
 
     return md;
   } catch (error) {
-    console.warn('[generateInlineQuestion] Failed to generate question:', error.message);
-    if (error.response) console.warn('[generateInlineQuestion] API Response:', JSON.stringify(error.response));
     return null;
   }
 }
@@ -975,7 +957,6 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     try {
       parsed = parseJsonObject(raw, 'reading');
     } catch (err) {
-      console.error('[generateReading] Failed to parse reading JSON. Raw content:', content);
       throw err;
     }
     // Prefer markdown; fall back to latex extraction when markdown is not supplied
@@ -1003,7 +984,6 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
   if (!resultText || !resultText.trim()) {
     // Retry once with a clear instruction
-    console.warn(`[generateReading] Initial generation empty for "${title}". Retrying...`);
     retries++;
     const retryAsk = {
       role: 'user',
@@ -1019,7 +999,6 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
   // --- ENRICHMENT STEP ---
   try {
     const chunks = splitContentIntoChunks(resultText);
-    console.log(`[generateReading] Split content into ${chunks.length} chunks for enrichment.`);
     const enrichedChunks = [];
     const MAX_ENRICHED = 5;
 
@@ -1040,7 +1019,6 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
     resultText = enrichedChunks.join('\n\n---\n\n');
   } catch (enrichError) {
-    console.error('[generateReading] Enrichment failed, returning plain text:', enrichError);
     // Fallback to original text if enrichment blows up
   }
 
@@ -1147,7 +1125,6 @@ Each question: 4 options, single correct_index, validation_check before finalizi
 
     return { data: repairedQuestions, stats };
   } catch (err) {
-    console.error('[generateQuiz] Failed to parse or normalize quiz JSON. Raw content:', content);
     throw err;
   }
 }
@@ -1242,7 +1219,6 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
     }
     return { data: repairedItems, stats };
   } catch (err) {
-    console.error('[generatePracticeExam] Failed to parse or normalize practice exam JSON. Raw content:', content);
     throw err;
   }
 }
@@ -1335,7 +1311,6 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     }
     return { data: repairedCards, stats };
   } catch (err) {
-    console.error('[generateFlashcards] Failed to parse or normalize flashcards JSON. Raw content:', content);
     throw err;
   }
 }
@@ -1355,7 +1330,6 @@ export async function generateVideoSelection(queries) {
 
   if (!Array.isArray(queries) || queries.length === 0) {
     const msg = 'No queries provided for video search.';
-    console.log(`[generateCourseContent] ${msg}`);
     logs.push(msg);
     return { videos, logs };
   }
@@ -1366,14 +1340,12 @@ export async function generateVideoSelection(queries) {
 
   if (customYouTubeFetcher) {
     try {
-      console.log('[generateCourseContent] Using custom YouTube fetcher.');
       logs.push('Using custom YouTube fetcher.');
       const res = await customYouTubeFetcher([query]);
       const fetchedVideos = Array.isArray(res) ? res : (res ? [res] : []);
       return { videos: fetchedVideos, logs };
     } catch (error) {
       const msg = `Custom YouTube fetcher failed: ${error?.message || error}`;
-      console.warn('[generateCourseContent]', msg);
       logs.push(msg);
       return { videos: [], logs };
     }
@@ -1393,7 +1365,6 @@ export async function generateVideoSelection(queries) {
     },
     handler: async ({ query }) => {
       try {
-        console.log(`[generateVideoSelection] Running yt-search for: "${query}"`);
         const res = await yts(query);
         // Store top 5 results
         searchResults = res.videos.slice(0, 5).map((v, i) => ({
@@ -1414,7 +1385,6 @@ export async function generateVideoSelection(queries) {
           channel: v.author
         })), null, 2);
       } catch (err) {
-        console.error('[generateVideoSelection] yt-search failed:', err);
         return 'Search failed.';
       }
     }
@@ -1466,22 +1436,16 @@ export async function generateVideoSelection(queries) {
         thumbnail: selected.thumbnail,
       });
       const msg = `LLM selected video index ${selectedIndex}: "${selected.title}"`;
-      console.log(`[generateVideoSelection] ${msg}`);
       logs.push(msg);
     } else {
       const msg = 'LLM did not select a valid video index.';
-      console.warn(`[generateVideoSelection] ${msg}`);
-      console.warn(`[generateVideoSelection] Search Results:`, JSON.stringify(searchResults, null, 2));
-      console.warn(`[generateVideoSelection] LLM Response:`, content);
       logs.push(msg);
       logs.push(`LLM Response: ${content}`);
     }
 
   } catch (error) {
     const msg = `Video selection LLM failed: ${error?.message || error}`;
-    console.error('[generateVideoSelection]', msg);
     if (content) {
-      console.error('[generateVideoSelection] Raw content causing failure:', content);
       logs.push(`Raw content: ${content}`);
     }
     logs.push(msg);

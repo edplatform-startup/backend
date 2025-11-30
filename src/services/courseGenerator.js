@@ -49,7 +49,6 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
 export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}) {
-  console.log('[LessonArchitect] Starting generation...');
 
   // Step 1: The Architect Call
   const systemPrompt = `You are the Lesson Architect. Your goal is to transform a rough course outline into a high-quality Directed Acyclic Graph (DAG) of Atomic Lessons.
@@ -104,7 +103,6 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   const userPrompt = `Rough Draft: ${JSON.stringify(grokDraftJson)}`;
 
-  console.log('[LessonArchitect] Calling Gemini 3 Pro...');
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
     maxTokens: 20000,
@@ -128,9 +126,6 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
     lessonGraph = tryParseJson(cleanJson, 'LessonArchitect');
   } catch (e) {
-    console.error('[LessonArchitect] Failed to parse JSON from Gemini:', e);
-    console.error('[LessonArchitect] Raw Content Length:', result?.content ? result.content.length : 'N/A');
-    console.error('[LessonArchitect] FULL RESULT OBJECT:', JSON.stringify(result, null, 2));
     throw new Error('Invalid JSON response from Lesson Architect');
   }
 
@@ -138,7 +133,6 @@ Output STRICT VALID JSON format (no markdown, no comments):
     throw new Error('Invalid response structure: missing lessons array');
   }
 
-  console.log(`[LessonArchitect] Received ${lessonGraph.lessons.length} lessons.`);
 
   // Step 2: Self-Healing Validation Logic
   const validSlugs = new Set(lessonGraph.lessons.map((l) => l.slug_id));
@@ -153,10 +147,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
       if (validSlugs.has(dep)) {
         newDependencies.push(dep);
       } else {
-        console.warn(`[LessonArchitect] Invalid dependency '${dep}' in lesson '${lesson.slug_id}'. Attempting fuzzy repair...`);
         const matches = stringSimilarity.findBestMatch(dep, Array.from(validSlugs));
         if (matches.bestMatch.rating > 0.9) {
-          console.log(`[LessonArchitect] Fuzzy repaired '${dep}' -> '${matches.bestMatch.target}'`);
           newDependencies.push(matches.bestMatch.target);
         } else {
           // Keep it for Stage 2, but track it as broken
@@ -173,7 +165,6 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   // Stage 2: Targeted Regeneration
   if (brokenDependenciesMap.size > 0) {
-    console.log(`[LessonArchitect] Found ${brokenDependenciesMap.size} lessons with broken dependencies. Attempting LLM repair...`);
 
     const allBadSlugs = new Set();
     for (const deps of brokenDependenciesMap.values()) {
@@ -195,7 +186,6 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       });
 
       const corrections = tryParseJson(repairResult.content, 'LessonArchitect Repair');
-      console.log('[LessonArchitect] Received corrections:', corrections);
 
       // Apply corrections
       for (const [slug, badDeps] of brokenDependenciesMap.entries()) {
@@ -207,11 +197,9 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
           if (badDeps.includes(dep)) {
             const correction = corrections[dep];
             if (correction && validSlugs.has(correction)) {
-              console.log(`[LessonArchitect] LLM repaired '${dep}' -> '${correction}'`);
               finalDeps.push(correction);
             } else {
               // Stage 3: Orphan Fallback
-              console.warn(`[LessonArchitect] Dropping invalid dependency '${dep}' for lesson '${slug}' to preserve content.`);
             }
           } else {
             finalDeps.push(dep);
@@ -221,7 +209,6 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       }
 
     } catch (e) {
-      console.error('[LessonArchitect] LLM repair failed:', e);
       // Fallback to dropping all bad deps (Stage 3) implicitly since we didn't add them back
     }
   }
@@ -298,6 +285,5 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     });
   });
 
-  console.log(`[LessonArchitect] Finished. Nodes: ${finalNodes.length}, Edges: ${finalEdges.length}`);
   return { finalNodes, finalEdges };
 }
