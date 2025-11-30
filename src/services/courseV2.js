@@ -420,6 +420,8 @@ export async function generateHierarchicalTopics(input = {}) {
       throw new Error('Course skeleton did not produce any structural units.');
     }
 
+    const trimmedSyllabus = coerceTopicString(syllabusText, 'Not provided').slice(0, 4000);
+
     const systemPrompt = `You are an expert exam prep strategist. You are creating a master study plan for a student.
 
 INPUTS:
@@ -429,6 +431,49 @@ INPUTS:
 
 YOUR TASK:
 Expand the Skeleton into a detailed Topic Map. For every major topic, generate specific "Atomic Concepts" that act as study milestones.
+
+CRITICAL RULES:
+1. Granularity: Avoid generic titles like "Derivatives". Use actionable concepts like "Calculating derivatives using the Chain Rule".
+2. Bloom's Taxonomy: Ensure subtopics vary in cognitive depth (Definitions -> Application -> Analysis).
+3. Yield Scoring: Estimate how likely this topic is to appear on the exam (High/Medium/Low) based on the exam format provided.
+4. Metadata powers Deep vs. Cram study modes, so fill every field carefully.
+5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
+
+OUTPUT JSON STRUCTURE:
+{
+  "overviewTopics": [
+    {
+      "id": "uuid",
+      "title": "Limits & Continuity",
+      "original_skeleton_ref": "Week 1",
+      "subtopics": [
+        {
+          "id": "uuid",
+          "overviewId": "uuid",
+          "title": "The Epsilon-Delta Definition of a Limit",
+          "focus": "Conceptual",
+          "bloom_level": "Understand",
+          "estimated_study_time_minutes": 45,
+          "importance_score": 9,
+          "exam_relevance_reasoning": "Syllabus explicitly mentions proofs for limits.",
+          "yield": "High"
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- JSON must be valid (double quotes, no trailing commas, no comments).
+- IDs must be unique across overview topics and subtopics.
+- overviewId on each subtopic must match its parent overview topic id.
+- Provide at least 8 overview topics when possible, each with 4-8 atomic concepts.
+- Do not include extra keys or wrapper text.`;
+
+    const userPrompt = `Course Details:
+Institution: ${coerceTopicString(university, 'Unknown institution')}
+Course / exam: ${coerceTopicString(courseTitle, 'Untitled course')}
+Structure type: ${coerceTopicString(syllabus?.course_structure_type, 'Not specified')}
 Exam / target date: ${finishByDate ? new Date(finishByDate).toISOString() : 'Not specified'}
 Exam format: ${coerceTopicString(examFormatDetails, 'Not specified')}
 
