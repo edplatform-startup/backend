@@ -557,9 +557,83 @@ router.post('/topics', async (req, res) => {
 });
 
 import { generateLessonGraph } from '../services/courseGenerator.js';
+import { generatePracticeExam } from '../services/examGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
-import { uploadExamFile, deleteCourseFiles } from '../services/storage.js';
+import { uploadExamFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
+
+router.post('/:courseId/exams/generate', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, lessons, type } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  if (!lessons || !Array.isArray(lessons) || lessons.length === 0) {
+    return res.status(400).json({ error: 'lessons array is required and cannot be empty' });
+  }
+
+  if (!type || !['midterm', 'final'].includes(type)) {
+    return res.status(400).json({ error: 'type must be either "midterm" or "final"' });
+  }
+
+  try {
+    const result = await generatePracticeExam(courseId, userId, lessons, type);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error generating practice exam:', error);
+    return res.status(500).json({ error: 'Failed to generate practice exam', details: error.message });
+  }
+});
+
+router.get('/:courseId/exams/:type', async (req, res) => {
+  const { courseId, type } = req.params;
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  if (!['midterm', 'final'].includes(type)) {
+    return res.status(400).json({ error: 'type must be either "midterm" or "final"' });
+  }
+
+  try {
+    const files = await getCourseExamFiles(courseId, userId);
+    const expectedName = `${type}_exam.tex`;
+    const examFile = files.find(f => f.name === expectedName);
+
+    if (!examFile) {
+      return res.status(404).json({ error: 'Exam not found' });
+    }
+
+    return res.json({ success: true, url: examFile.url });
+  } catch (error) {
+    console.error('Error fetching practice exam:', error);
+    return res.status(500).json({ error: 'Failed to fetch practice exam', details: error.message });
+  }
+});
 
 router.post('/', async (req, res) => {
   try {

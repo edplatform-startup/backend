@@ -4,6 +4,7 @@ export const STAGES = Object.freeze({
   PLANNER: 'PLANNER',
   TOPICS: 'TOPICS',
   LESSON_ARCHITECT: 'LESSON_ARCHITECT',
+  EXAM_GENERATOR: 'EXAM_GENERATOR',
 });
 
 const { courseV2Models = {} } = runtimeConfig;
@@ -28,6 +29,11 @@ const DEFAULTS = {
   [STAGES.LESSON_ARCHITECT]: {
     model: lessonArchitectModel,
     temp: 0.3,
+    top_p: 0.8,
+  },
+  [STAGES.EXAM_GENERATOR]: {
+    model: 'google/gemini-3-pro-preview',
+    temp: 0.4,
     top_p: 0.8,
   },
 };

@@ -465,6 +465,50 @@ Base URL (production): https://api.kognolearn.com
   GET /courses/1cb57cda-a88d/nodes/0503d602-85ef?userId=e6e04dbb
   ```
 
+### POST /courses/:courseId/exams/generate
+- **Purpose**: Generate a new practice exam (midterm or final) in LaTeX format based on specific lessons and existing exam examples.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `lessons` (string[], required) – List of lesson titles or descriptions to cover in the exam
+  - `type` (string, required) – Type of exam: `"midterm"` or `"final"`
+- **Behavior**:
+  1. Fetches existing practice exams from storage to use as style/format references.
+  2. Calls Gemini 1.5 Pro to generate a LaTeX exam covering the specified lessons.
+  3. Sanitizes and checks the LaTeX for semantic issues (repairing via LLM if needed).
+  4. Compiles the LaTeX to PDF (retrying via LLM if compilation fails).
+  5. Saves the generated PDF file to storage.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "url": "https://...",
+      "name": "midterm_exam.pdf"
+    }
+    ```
+  - `400 Bad Request` → Missing parameters or invalid values
+  - `500 Internal Server Error` → Generation or storage failure
+
+### GET /courses/:courseId/exams/:type
+- **Purpose**: Fetch the URL of a generated practice exam.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+  - `type` (string, required) – Type of exam: `"midterm"` or `"final"`
+- **Query parameters**:
+  - `userId` (string, required) – UUID of the user
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "url": "https://..."
+    }
+    ```
+  - `404 Not Found` → Exam not found
+  - `500 Internal Server Error` → Storage error
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

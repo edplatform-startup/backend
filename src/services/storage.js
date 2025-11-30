@@ -11,7 +11,7 @@ const BUCKET_NAME = 'practice_exams';
  * @param {string} fileName - The name of the file
  * @returns {Promise<string>} The public URL of the uploaded file
  */
-export async function uploadExamFile(courseId, userId, fileBuffer, fileName) {
+export async function uploadExamFile(courseId, userId, fileBuffer, fileName, contentType = 'application/pdf') {
   const supabase = getSupabase();
   
   // Sanitize filename
@@ -22,7 +22,7 @@ export async function uploadExamFile(courseId, userId, fileBuffer, fileName) {
     .storage
     .from(BUCKET_NAME)
     .upload(filePath, fileBuffer, {
-      contentType: 'application/pdf',
+      contentType,
       upsert: true
     });
 
@@ -80,4 +80,43 @@ export async function deleteCourseFiles(courseId, userId) {
   }
 
   return { deleted: data?.length || filePaths.length, errors: [] };
+}
+
+/**
+ * Lists all exam files for a course.
+ * 
+ * @param {string} courseId - The course ID
+ * @param {string} userId - The user ID
+ * @returns {Promise<Array<{name: string, url: string}>>} List of files
+ */
+export async function getCourseExamFiles(courseId, userId) {
+  const supabase = getSupabase();
+  const folderPath = `${userId}/${courseId}`;
+
+  const { data: files, error } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .list(folderPath);
+
+  if (error) {
+    console.error('[storage] Failed to list files:', error);
+    return [];
+  }
+
+  if (!files || files.length === 0) {
+    return [];
+  }
+
+  // Generate public URLs for each file
+  return files.map(f => {
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(`${folderPath}/${f.name}`);
+    
+    return {
+      name: f.name,
+      url: publicUrl
+    };
+  });
 }
