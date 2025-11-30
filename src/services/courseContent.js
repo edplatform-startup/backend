@@ -1336,6 +1336,10 @@ export async function generateVideoSelection(queries) {
 
   // Use the first query as requested
   const query = queries[0];
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('[VIDEO GENERATION] Starting video search');
+  console.log('[VIDEO GENERATION] Lesson Architect Query:', query);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logs.push(`Selected query for processing: "${query}"`);
 
   if (customYouTubeFetcher) {
@@ -1352,6 +1356,7 @@ export async function generateVideoSelection(queries) {
   }
 
   let searchResults = [];
+  let lastSearchQuery = null;
 
   const searchTool = {
     name: 'search_youtube',
@@ -1365,6 +1370,8 @@ export async function generateVideoSelection(queries) {
     },
     handler: async ({ query }) => {
       try {
+        lastSearchQuery = query;
+        console.log('[VIDEO GENERATION] Querying yt-search with:', query);
         const res = await yts(query);
         // Store top 5 results
         searchResults = res.videos.slice(0, 5).map((v, i) => ({
@@ -1377,6 +1384,11 @@ export async function generateVideoSelection(queries) {
           url: v.url
         }));
 
+        console.log('[VIDEO GENERATION] yt-search returned', searchResults.length, 'videos:');
+        searchResults.forEach((v, idx) => {
+          console.log(`  [${idx}] "${v.title}" (${v.timestamp}) by ${v.author}`);
+        });
+
         // Return a simplified string for the LLM to read
         return JSON.stringify(searchResults.map(v => ({
           index: v.index,
@@ -1385,6 +1397,7 @@ export async function generateVideoSelection(queries) {
           channel: v.author
         })), null, 2);
       } catch (err) {
+        console.log('[VIDEO GENERATION] yt-search failed:', err.message);
         return 'Search failed.';
       }
     }
@@ -1435,15 +1448,28 @@ export async function generateVideoSelection(queries) {
         title: selected.title,
         thumbnail: selected.thumbnail,
       });
+      console.log('[VIDEO GENERATION] ✓ Selected Video:');
+      console.log('  Index:', selectedIndex);
+      console.log('  Title:', selected.title);
+      console.log('  Video ID:', selected.videoId);
+      console.log('  Duration:', selected.timestamp);
+      console.log('  Channel:', selected.author);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       const msg = `LLM selected video index ${selectedIndex}: "${selected.title}"`;
       logs.push(msg);
     } else {
+      console.log('[VIDEO GENERATION] ✗ No valid video selected');
+      console.log('  Selected Index:', selectedIndex);
+      console.log('  LLM Response:', content);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       const msg = 'LLM did not select a valid video index.';
       logs.push(msg);
       logs.push(`LLM Response: ${content}`);
     }
 
   } catch (error) {
+    console.log('[VIDEO GENERATION] ✗ Error:', error.message);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     const msg = `Video selection LLM failed: ${error?.message || error}`;
     if (content) {
       logs.push(`Raw content: ${content}`);
