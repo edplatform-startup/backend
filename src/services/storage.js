@@ -31,13 +31,18 @@ export async function uploadExamFile(courseId, userId, fileBuffer, fileName, con
     throw new Error(`Failed to upload exam file: ${error.message}`);
   }
 
-  // Get public URL
-  const { data: { publicUrl } } = supabase
+  // Get signed URL (valid for 1 year to support persistent links)
+  const { data: urlData, error: urlError } = await supabase
     .storage
     .from(BUCKET_NAME)
-    .getPublicUrl(filePath);
+    .createSignedUrl(filePath, 31536000);
 
-  return publicUrl;
+  if (urlError) {
+    console.error('[storage] Failed to create signed URL:', urlError);
+    throw new Error(`Failed to create signed URL: ${urlError.message}`);
+  }
+
+  return urlData.signedUrl;
 }
 
 /**
@@ -107,16 +112,24 @@ export async function getCourseExamFiles(courseId, userId) {
     return [];
   }
 
-  // Generate public URLs for each file
-  return files.map(f => {
-    const { data: { publicUrl } } = supabase
+  // Generate signed URLs for each file
+  const filePromises = files.map(async f => {
+    const { data, error } = await supabase
       .storage
       .from(BUCKET_NAME)
-      .getPublicUrl(`${folderPath}/${f.name}`);
+      .createSignedUrl(`${folderPath}/${f.name}`, 60 * 60 * 24); // 24 hours
+
+    if (error) {
+      console.error(`[storage] Failed to create signed URL for ${f.name}:`, error);
+      return null;
+    }
     
     return {
       name: f.name,
-      url: publicUrl
+      url: data.signedUrl
     };
   });
+
+  const results = await Promise.all(filePromises);
+  return results.filter(r => r !== null);
 }

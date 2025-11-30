@@ -42,8 +42,9 @@ describe('Exam File Processing', () => {
               assert.ok(path.includes('user123/course456/'));
               return { data: { path }, error: null };
             },
-            getPublicUrl: (path) => ({
-              data: { publicUrl: `https://example.com/${path}` }
+            createSignedUrl: async (path, expiresIn) => ({
+              data: { signedUrl: `https://example.com/${path}?token=mock` },
+              error: null
             })
           })
         }
