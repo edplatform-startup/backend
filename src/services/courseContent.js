@@ -217,9 +217,38 @@ async function runContentWorker(courseId, options = {}) {
   const { data: courseData } = await supabase.schema('api').from('courses').select('title').eq('id', courseId).single();
   const courseTitle = courseData?.title || 'Unknown Course';
 
+  // Fetch all nodes and edges to build dependency map for context injection
+  const { data: allNodes } = await supabase
+    .schema('api')
+    .from('course_nodes')
+    .select('id, title')
+    .eq('course_id', courseId);
+
+  const { data: allEdges } = await supabase
+    .schema('api')
+    .from('node_dependencies')
+    .select('parent_id, child_id')
+    .eq('course_id', courseId);
+
+  const nodeTitleMap = new Map((allNodes || []).map(n => [n.id, n.title]));
+  const prereqMap = new Map();
+
+  if (allEdges) {
+    allEdges.forEach(edge => {
+      if (!prereqMap.has(edge.child_id)) {
+        prereqMap.set(edge.child_id, []);
+      }
+      const pTitle = nodeTitleMap.get(edge.parent_id);
+      if (pTitle) {
+        prereqMap.get(edge.child_id).push(pTitle);
+      }
+    });
+  }
+
   const results = await runWithConcurrency(pendingNodes, limit, async (node) => {
     try {
-      await processNode(node, supabase, courseTitle);
+      const prereqs = prereqMap.get(node.id) || [];
+      await processNode(node, supabase, courseTitle, prereqs);
       return { nodeId: node.id };
     } catch (error) {
       await markNodeError(node, supabase, error);
@@ -270,7 +299,7 @@ async function runContentWorker(courseId, options = {}) {
   return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
 }
 
-async function processNode(node, supabase, courseTitle) {
+async function processNode(node, supabase, courseTitle, prereqs = []) {
   const payload = isPlainObject(node.content_payload) ? { ...node.content_payload } : {};
   const plans = isPlainObject(payload.generation_plans) ? payload.generation_plans : null;
   if (!plans || Object.keys(plans).length === 0) {
@@ -296,11 +325,11 @@ async function processNode(node, supabase, courseTitle) {
   };
 
   const readingPromise = plans.reading
-    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName), 'Reading')
+    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs), 'Reading')
     : Promise.resolve(null);
 
   const quizPromise = plans.quiz
-    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName), 'Quiz')
+    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs), 'Quiz')
     : Promise.resolve(null);
 
   const flashcardsPromise = plans.flashcards
@@ -914,11 +943,16 @@ Ensure answerIndex is valid.`,
   }
 }
 
-async function generateReading(title, plan, courseName, moduleName) {
+async function generateReading(title, plan, courseName, moduleName, prereqs = []) {
+  const contextNote = prereqs.length
+    ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites. They are now in the lesson [${title}] (this lesson). They have not yet learned topics from later lessons. Generate content accordingly.`
+    : `Context: This is an introductory lesson with no prerequisites.`;
+
   const systemPrompt = {
     role: 'system',
     content: `You are an elite instructional designer producing concise, well-structured, easy-to-read learning content in Markdown.
 You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
+${contextNote}
 
 Always respond with JSON shaped exactly as:
 {
@@ -1051,11 +1085,16 @@ function cleanupMarkdown(md) {
   return out.trim();
 }
 
-async function generateQuiz(title, plan, courseName, moduleName) {
+async function generateQuiz(title, plan, courseName, moduleName, prereqs = []) {
+  const contextNote = prereqs.length
+    ? `Context: The student has completed lessons on [${prereqs.join(', ')}]. Do not test concepts from future lessons.`
+    : `Context: This is an introductory lesson.`;
+
   const messages = [
     {
       role: 'system',
       content: `You are building a graduate-level quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+${contextNote}
 
 Always respond with JSON:
 {
@@ -1426,10 +1465,10 @@ Select the best video index.`
         requestTimeoutMs: 30000,
       });
 
-      const content = response.content;
-      logs.push(`LLM Response: ${content}`);
+      const raw = coerceModelText(response.content);
+      logs.push(`LLM Response: ${raw}`);
 
-      const result = parseJsonObject(content, 'video_selection');
+      const result = parseJsonObject(raw, 'video_selection');
       const selectedIndex = result?.selected_index;
 
       if (typeof selectedIndex === 'number' && selectedIndex >= 0 && searchResults[selectedIndex]) {

@@ -41,6 +41,8 @@ test('DELETE /courses', async (t) => {
       createSupabaseStub({
         singleResponses: [{ data: { id: '11111111-1111-1111-1111-111111111111' }, error: null }],
         deleteResponses: [{ data: null, error: null }],
+        storageListResponses: [{ data: [{ name: 'file1.pdf' }], error: null }],
+        storageRemoveResponses: [{ data: [{}], error: null }],
       })
     );
 
@@ -51,5 +53,6 @@ test('DELETE /courses', async (t) => {
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
     assert.equal(res.body.courseId, '11111111-1111-1111-1111-111111111111');
+    assert.equal(res.body.storageFilesDeleted, 1);
   });
 });

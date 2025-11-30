@@ -39,3 +39,45 @@ export async function uploadExamFile(courseId, userId, fileBuffer, fileName) {
 
   return publicUrl;
 }
+
+/**
+ * Deletes all files for a course from Supabase Storage.
+ * 
+ * @param {string} courseId - The course ID
+ * @param {string} userId - The user ID
+ * @returns {Promise<{deleted: number, errors: string[]}>} Deletion result
+ */
+export async function deleteCourseFiles(courseId, userId) {
+  const supabase = getSupabase();
+  const folderPath = `${userId}/${courseId}`;
+
+  // List all files in the course folder
+  const { data: files, error: listError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .list(folderPath);
+
+  if (listError) {
+    console.error('[storage] Failed to list files for deletion:', listError);
+    return { deleted: 0, errors: [listError.message] };
+  }
+
+  if (!files || files.length === 0) {
+    return { deleted: 0, errors: [] };
+  }
+
+  // Build full paths for deletion
+  const filePaths = files.map(f => `${folderPath}/${f.name}`);
+
+  const { data, error: deleteError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .remove(filePaths);
+
+  if (deleteError) {
+    console.error('[storage] Failed to delete files:', deleteError);
+    return { deleted: 0, errors: [deleteError.message] };
+  }
+
+  return { deleted: data?.length || filePaths.length, errors: [] };
+}

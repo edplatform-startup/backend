@@ -1,14 +1,30 @@
-export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [], updateResponses = [], deleteResponses = [] } = {}) {
+export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [], updateResponses = [], deleteResponses = [], storageListResponses = [], storageRemoveResponses = [] } = {}) {
   const listQueue = [...listResponses];
   const singleQueue = [...singleResponses];
   const insertQueue = [...insertResponses];
   const updateQueue = [...updateResponses];
   const deleteQueue = [...deleteResponses];
+  const storageListQueue = [...storageListResponses];
+  const storageRemoveQueue = [...storageRemoveResponses];
   const defaultResponse = { data: null, error: null };
 
   const supabase = {
     schema() {
       return supabase;
+    },
+    storage: {
+      from() {
+        return {
+          list() {
+            const resp = storageListQueue.length ? storageListQueue.shift() : { data: [], error: null };
+            return Promise.resolve(resp);
+          },
+          remove() {
+            const resp = storageRemoveQueue.length ? storageRemoveQueue.shift() : { data: [], error: null };
+            return Promise.resolve(resp);
+          },
+        };
+      },
     },
     from() {
       const listResp = listQueue.length ? listQueue.shift() : defaultResponse;

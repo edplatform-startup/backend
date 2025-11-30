@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateCourseContent, __setGrokExecutor, __resetGrokExecutor, __setImageSearch, __resetImageSearch } from '../src/services/courseContent.js';
+import { generateCourseContent, __setGrokExecutor, __resetGrokExecutor } from '../src/services/courseContent.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
 
@@ -50,8 +50,8 @@ test('Course Content Enrichment Tests', async (t) => {
         };
       }
 
-      // 2. Question Generation
-      if (lastMessage.includes('Create one multiple-choice question')) {
+      // 2. Question Generation (inline questions)
+      if (lastMessage.includes('Create one deep-understanding multiple-choice question')) {
         return {
           content: JSON.stringify({
             question: 'What drives evaporation?',
@@ -65,12 +65,7 @@ test('Course Content Enrichment Tests', async (t) => {
       return { content: '{}' };
     });
 
-    // Mock Image Search
-    __setImageSearch(async (query) => {
-      if (query.includes('Evaporation')) return 'http://img.com/evap.jpg';
-      if (query.includes('Condensation')) return 'http://img.com/cond.jpg';
-      return null;
-    });
+    // Note: Image search is no longer used in reading generation
 
     try {
       const result = await generateCourseContent('course-1', { concurrency: 1 });
@@ -80,12 +75,8 @@ test('Course Content Enrichment Tests', async (t) => {
       
       const reading = nodeUpdates[0].content_payload.reading;
       
-      // Check for images
-      assert.ok(reading.includes('![Illustration](http://img.com/evap.jpg)'), 'Should contain evaporation image');
-      assert.ok(reading.includes('![Illustration](http://img.com/cond.jpg)'), 'Should contain condensation image');
-      
-      // Check for questions
-      assert.ok(reading.includes('**Question:** What drives evaporation?'), 'Should contain question');
+      // Check for questions (inline questions are still generated)
+      assert.ok(reading.includes('**Check Your Understanding**'), 'Should contain inline question');
       assert.ok(reading.includes('<details><summary>Show Answer</summary>'), 'Should contain answer reveal');
       
       // Check structure (chunks joined by separator)
@@ -93,7 +84,6 @@ test('Course Content Enrichment Tests', async (t) => {
 
     } finally {
       __resetGrokExecutor();
-      __resetImageSearch();
       clearSupabaseClient();
     }
   });
@@ -140,10 +130,7 @@ test('Course Content Enrichment Tests', async (t) => {
       throw new Error('Grok failed');
     });
 
-    // Mock Image Search to fail
-    __setImageSearch(async () => {
-      throw new Error('Image search failed');
-    });
+    // Note: Image search is no longer used
 
     try {
       await generateCourseContent('course-1', { concurrency: 1 });
@@ -160,7 +147,6 @@ test('Course Content Enrichment Tests', async (t) => {
 
     } finally {
       __resetGrokExecutor();
-      __resetImageSearch();
       clearSupabaseClient();
     }
   });

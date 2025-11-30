@@ -66,15 +66,14 @@ function insertPracticeExams(nodes) {
             currentDuration += (node.effective_cost || 0);
         }
 
-        // console.log(`Node ${node.id}: current=${currentDuration}, mid=${midPoint}`);
-
         if (!midExamInserted && currentDuration >= midPoint) {
             result.push({
                 id: 'practice-exam-mid',
                 title: 'Mid-Course Practice Exam',
                 type: 'practice_exam',
+                is_standalone_module: true,
+                module_ref: '__practice_exam_mid__',
                 effective_cost: 45, 
-                module_ref: node.module_ref,
                 userState: { mastery_status: 'pending' },
                 preceding_lessons: [...precedingIds]
             });
@@ -83,13 +82,13 @@ function insertPracticeExams(nodes) {
     }
 
     // Always add final exam
-    const lastNode = nodes[nodes.length - 1];
     result.push({
         id: 'practice-exam-final',
         title: 'Final Practice Exam',
         type: 'practice_exam',
+        is_standalone_module: true,
+        module_ref: '__practice_exam_final__',
         effective_cost: 60,
-        module_ref: lastNode?.module_ref || 'Final',
         userState: { mastery_status: 'pending' },
         preceding_lessons: [...precedingIds]
     });
@@ -332,14 +331,10 @@ function getAllAncestors(nodeMap, nodeId, visited = new Set()) {
 
 function formatOutput(mode, sortedNodes, nodeMap) {
     const modulesMap = new Map();
+    const moduleOrder = []; // Track insertion order
     let totalMinutes = 0;
 
     sortedNodes.forEach((node) => {
-        const moduleTitle = node.module_ref || 'General';
-        if (!modulesMap.has(moduleTitle)) {
-            modulesMap.set(moduleTitle, { title: moduleTitle, lessons: [] });
-        }
-
         // Determine type from content_payload
         let type = 'reading';
         if (node.type === 'practice_exam') {
@@ -357,8 +352,6 @@ function formatOutput(mode, sortedNodes, nodeMap) {
             if (fullNode && fullNode.parents) {
                 for (const parentId of fullNode.parents) {
                     const parent = nodeMap.get(parentId);
-                    // Node is locked only if any parent is in "pending" state
-                    // If parent is "mastered" or "needs_review", the node is unlocked
                     const parentStatus = parent?.userState?.mastery_status || 'pending';
                     if (parentStatus === 'pending') {
                         isLocked = true;
@@ -369,11 +362,38 @@ function formatOutput(mode, sortedNodes, nodeMap) {
         }
 
         // Mastered nodes have 0 duration and don't count toward total time
-        const isMastered = node.userState.mastery_status === 'mastered';
+        const isMastered = node.userState?.mastery_status === 'mastered';
         const duration = isMastered ? 0 : Math.round(node.effective_cost);
 
         if (!isMastered) {
             totalMinutes += node.effective_cost;
+        }
+
+        // Handle practice exams as standalone modules
+        if (node.is_standalone_module && node.type === 'practice_exam') {
+            const examModule = {
+                title: node.title,
+                type: 'practice_exam',
+                is_practice_exam_module: true,
+                exam: {
+                    id: node.id,
+                    title: node.title,
+                    duration,
+                    is_locked: isLocked,
+                    status: node.userState?.mastery_status || 'pending',
+                    preceding_lessons: node.preceding_lessons || []
+                }
+            };
+            modulesMap.set(node.module_ref, examModule);
+            moduleOrder.push(node.module_ref);
+            return;
+        }
+
+        // Regular lesson handling
+        const moduleTitle = node.module_ref || 'General';
+        if (!modulesMap.has(moduleTitle)) {
+            modulesMap.set(moduleTitle, { title: moduleTitle, lessons: [] });
+            moduleOrder.push(moduleTitle);
         }
 
         const lessonObj = {
@@ -382,7 +402,7 @@ function formatOutput(mode, sortedNodes, nodeMap) {
             type,
             duration,
             is_locked: isLocked,
-            status: node.userState.mastery_status || 'pending'
+            status: node.userState?.mastery_status || 'pending'
         };
 
         if (node.preceding_lessons) {
@@ -392,9 +412,10 @@ function formatOutput(mode, sortedNodes, nodeMap) {
         modulesMap.get(moduleTitle).lessons.push(lessonObj);
     });
 
+    // Return modules in insertion order
     return {
         mode,
         total_minutes: Math.round(totalMinutes),
-        modules: Array.from(modulesMap.values())
+        modules: moduleOrder.map(key => modulesMap.get(key))
     };
 }

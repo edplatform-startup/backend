@@ -64,10 +64,16 @@ describe('Study Plan Generator', () => {
         assert.equal(plan.mode, 'Deep Study');
         assert.ok(plan.modules.length > 0);
 
-        const lessons = plan.modules.flatMap(m => m.lessons);
+        // Filter out practice exam modules (they have is_practice_exam_module: true)
+        const contentModules = plan.modules.filter(m => !m.is_practice_exam_module);
+        const examModules = plan.modules.filter(m => m.is_practice_exam_module);
+        
+        const lessons = contentModules.flatMap(m => m.lessons);
         assert.equal(lessons[0].id, 'A'); // A must be first
         assert.equal(lessons[1].id, 'B'); // B must be second
-        assert.equal(lessons.length, 4);
+        assert.equal(lessons.length, 4); // 4 content nodes
+        // Plan includes 2 practice exam modules (mid + final)
+        assert.equal(examModules.length, 2);
     });
 
     it('Cram Mode: Returns empty when no chains fit', async () => {
@@ -81,8 +87,15 @@ describe('Study Plan Generator', () => {
         mockData.courses = { data: { seconds_to_complete: 1.84 * 3600 }, error: null };
         const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
-        const lessons = plan.modules.flatMap(m => m.lessons);
+        
+        // Filter out practice exam modules
+        const contentModules = plan.modules.filter(m => !m.is_practice_exam_module);
+        const examModules = plan.modules.filter(m => m.is_practice_exam_module);
+        
+        const lessons = contentModules.flatMap(m => m.lessons);
         assert.equal(lessons.length, 4); // A, B, C, D
+        // Plan includes 2 practice exam modules (mid + final)
+        assert.equal(examModules.length, 2);
     });
 
     it('Cram Mode: Zero Target Fallback', async () => {

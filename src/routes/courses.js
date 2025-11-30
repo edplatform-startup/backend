@@ -559,7 +559,7 @@ router.post('/topics', async (req, res) => {
 import { generateLessonGraph } from '../services/courseGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
-import { uploadExamFile } from '../services/storage.js';
+import { uploadExamFile, deleteCourseFiles } from '../services/storage.js';
 
 router.post('/', async (req, res) => {
   try {
@@ -781,6 +781,12 @@ router.delete('/', async (req, res) => {
       return res.status(404).json({ error: 'Course not found' });
     }
 
+    // Clear object storage for this course (best-effort, don't block deletion)
+    const storageResult = await deleteCourseFiles(courseId, userId);
+    if (storageResult.errors.length > 0) {
+      console.warn('Storage cleanup warnings:', storageResult.errors);
+    }
+
     const { error: deleteError } = await supabase
       .schema('api')
       .from('courses')
@@ -795,7 +801,7 @@ router.delete('/', async (req, res) => {
       return res.status(500).json({ error: 'Failed to delete course', details: deleteError.message || deleteError });
     }
 
-    return res.json({ success: true, courseId });
+    return res.json({ success: true, courseId, storageFilesDeleted: storageResult.deleted });
   } catch (error) {
     console.error('Unhandled error deleting course:', error);
     return res.status(500).json({ error: 'Internal server error', details: error.message });

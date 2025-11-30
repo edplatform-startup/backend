@@ -132,12 +132,12 @@ Base URL (production): https://api.kognolearn.com
   ```
 
 ### DELETE /courses
-- Purpose: Delete a stored course row (and its linked assets) for a user.
+- Purpose: Delete a stored course row and its linked assets (including object storage files) for a user.
 - Query parameters:
   - `userId` (string, required)
   - `courseId` (string, required)
 - Responses:
-  - 200 OK → `{ "success": true, "courseId": "..." }`
+  - 200 OK → `{ "success": true, "courseId": "...", "storageFilesDeleted": 0 }`
   - 400 Bad Request → Missing parameters or invalid UUID formats.
   - 404 Not Found → Course absent or belongs to another user.
   - 500 Internal Server Error → Supabase delete failure.
@@ -322,10 +322,17 @@ Base URL (production): https://api.kognolearn.com
 - **Response Fields**:
   - `mode` (string) – "Deep Study" or "Cram"
   - `total_minutes` (number) – Sum of all lesson durations
-  - `modules` (array) – Lessons grouped by module_ref
-    - `title` (string) – Module name
-    - `lessons` (array) – Ordered lessons in dependency order
-      - `id`, `title`, `type`, `duration`, `is_locked`, `status`
+  - `modules` (array) – Mixed array containing lesson modules and practice exam modules
+    - **Lesson Module**:
+      - `title` (string) – Module name
+      - `lessons` (array) – Ordered lessons in dependency order
+        - `id`, `title`, `type`, `duration`, `is_locked`, `status`
+    - **Practice Exam Module** (standalone):
+      - `title` (string) – Exam title (e.g., "Mid-Course Practice Exam")
+      - `type` (string) – Always `"practice_exam"`
+      - `is_practice_exam_module` (boolean) – Always `true`
+      - `exam` (object) – Exam details
+        - `id`, `title`, `duration`, `is_locked`, `status`, `preceding_lessons`
 - **Example**:
   ```bash
   GET /courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/plan?userId=e6e04dbb
@@ -348,6 +355,36 @@ Base URL (production): https://api.kognolearn.com
             "status": "pending"
           }
         ]
+      },
+      {
+        "title": "Mid-Course Practice Exam",
+        "type": "practice_exam",
+        "is_practice_exam_module": true,
+        "exam": {
+          "id": "practice-exam-mid",
+          "title": "Mid-Course Practice Exam",
+          "duration": 45,
+          "is_locked": false,
+          "status": "pending",
+          "preceding_lessons": ["0503d602-85ef", "..."]
+        }
+      },
+      {
+        "title": "Module 2: Proofs",
+        "lessons": [...]
+      },
+      {
+        "title": "Final Practice Exam",
+        "type": "practice_exam",
+        "is_practice_exam_module": true,
+        "exam": {
+          "id": "practice-exam-final",
+          "title": "Final Practice Exam",
+          "duration": 60,
+          "is_locked": false,
+          "status": "pending",
+          "preceding_lessons": ["...", "all-lesson-ids"]
+        }
       }
     ]
   }

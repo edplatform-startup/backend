@@ -33,20 +33,23 @@ describe('Study Plan Practice Exams', () => {
 
     const plan = await generateStudyPlan('course1', 'user1');
     
-    // Flatten lessons from modules
-    const allLessons = plan.modules.flatMap(m => m.lessons);
-    
-    const midExam = allLessons.find(l => l.id === 'practice-exam-mid');
-    const finalExam = allLessons.find(l => l.id === 'practice-exam-final');
+    // Practice exams are now standalone modules
+    const examModules = plan.modules.filter(m => m.is_practice_exam_module);
+    const midExamModule = examModules.find(m => m.exam?.id === 'practice-exam-mid');
+    const finalExamModule = examModules.find(m => m.exam?.id === 'practice-exam-final');
 
-    assert.ok(midExam, 'Mid-course exam should exist');
-    assert.ok(finalExam, 'Final exam should exist');
+    assert.ok(midExamModule, 'Mid-course exam module should exist');
+    assert.ok(finalExamModule, 'Final exam module should exist');
+    assert.equal(midExamModule.type, 'practice_exam', 'Mid exam module should have type practice_exam');
+    assert.equal(finalExamModule.type, 'practice_exam', 'Final exam module should have type practice_exam');
     
-    // Check placement (roughly)
-    const midIndex = allLessons.indexOf(midExam);
-    assert.ok(midIndex > 0 && midIndex < allLessons.length - 1, 'Mid exam should be in the middle');
+    // Check module position (mid exam should be between content modules)
+    const midIndex = plan.modules.indexOf(midExamModule);
+    assert.ok(midIndex > 0 && midIndex < plan.modules.length - 1, 'Mid exam module should be in the middle');
     
     // Check preceding lessons
+    const midExam = midExamModule.exam;
+    const finalExam = finalExamModule.exam;
     assert.ok(midExam.preceding_lessons.length > 0, 'Mid exam should have preceding lessons');
     assert.ok(midExam.preceding_lessons.includes('1'), 'Mid exam should include Lesson 1');
     
