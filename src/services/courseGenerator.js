@@ -76,7 +76,7 @@ CRITICAL RULES:
   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
 7. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 8. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
-9. **Naming:** NEVER number modules or lessons in the title (e.g., 'Introduction', not '1. Introduction').
+9. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -84,7 +84,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
     {
       "slug_id": "chain-rule-application",
       "title": "Mastering the Chain Rule",
-      "module_group": "Week 1: Limits",
+      "module_group": "Limits",
       "estimated_minutes": 30,
       "bloom_level": "Apply",
       "intrinsic_exam_value": 8,

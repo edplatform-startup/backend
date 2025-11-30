@@ -152,6 +152,17 @@ test('generateCourseContent fills node payloads and marks course ready', async (
       };
     }
 
+    if (/Create one .*multiple-choice question/i.test(lastContent)) {
+      return {
+        content: JSON.stringify({
+          question: 'What is the main implication?',
+          options: ['Option A', 'Option B', 'Option C', 'Option D'],
+          answerIndex: 1,
+          explanation: 'Option B is correct because...',
+        }),
+      };
+    }
+
     if (/multiple-choice|quiz/i.test(lastContent)) {
       return {
         content: JSON.stringify({
@@ -201,7 +212,8 @@ test('generateCourseContent fills node payloads and marks course ready', async (
 
     assert.equal(result.status, 'ready');
     assert.equal(nodeUpdates.length, 2);
-    assert.equal(nodeUpdates[0].content_payload.reading, "# Lesson Body\nIt's great.");
+    assert.ok(nodeUpdates[0].content_payload.reading.includes("# Lesson Body\nIt's great."));
+    assert.ok(nodeUpdates[0].content_payload.reading.includes("**Check Your Understanding**"));
     assert.equal(nodeUpdates[0].content_payload.status, 'ready');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.quiz));
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.flashcards));

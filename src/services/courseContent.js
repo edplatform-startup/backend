@@ -891,13 +891,15 @@ Ensure answerIndex is valid.`,
       temperature: 0.3, // Slightly higher for creativity in question design
       maxTokens: 600,
       messages: [systemPrompt, userPrompt],
-      responseFormat: { type: 'json_object' },
+      // responseFormat: { type: 'json_object' }, // Removed for Gemini compatibility
     });
 
     const raw = coerceModelText(content);
+    // console.log('[generateInlineQuestion] Raw model response:', raw);
     const parsed = parseJsonObject(raw, 'inline_question');
 
     if (!parsed || !parsed.question || !Array.isArray(parsed.options) || parsed.options.length < 2) {
+      console.warn('[generateInlineQuestion] Invalid parsed question object:', JSON.stringify(parsed));
       return null;
     }
 
@@ -916,6 +918,7 @@ Ensure answerIndex is valid.`,
     return md;
   } catch (error) {
     console.warn('[generateInlineQuestion] Failed to generate question:', error.message);
+    if (error.response) console.warn('[generateInlineQuestion] API Response:', JSON.stringify(error.response));
     return null;
   }
 }
@@ -1012,6 +1015,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
   // --- ENRICHMENT STEP ---
   try {
     const chunks = splitContentIntoChunks(resultText);
+    console.log(`[generateReading] Split content into ${chunks.length} chunks for enrichment.`);
     const enrichedChunks = [];
     const MAX_ENRICHED = 5;
 
