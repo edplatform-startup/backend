@@ -1,11 +1,9 @@
 services:
   - type: web
     name: edtech-backend-api
-    env: node
+    env: docker
     plan: free
     region: oregon
-    buildCommand: npm run render-build
-    startCommand: npm run render-start
     autoDeploy: true
     healthCheckPath: /healthz
     envVars:

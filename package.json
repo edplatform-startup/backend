@@ -12,7 +12,7 @@
     "dev": "node src/server.js",
     "smoke": "node -e \"import('./src/app.js').then(()=>console.log('OK')).catch(e=>{console.error(e?.message||e);process.exit(1)})\"",
     "test": "node --test",
-    "render-build": "./render-build.sh",
+    "render-build": "npm ci --include=dev --prefer-online --no-audit --no-fund --progress=false --foreground-scripts=false && npm run build",
     "render-start": "npm run start",
     "postdeploy": "node scripts/postdeploy.js || node -e \"console.log('no postdeploy')\""
   },
