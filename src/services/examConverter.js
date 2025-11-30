@@ -214,10 +214,10 @@ export async function convertSingleFileToPdf(file) {
       await addTextToPdf(pdfDoc, file, font);
     }
   } catch (error) {
-    console.error(Failed to process file :, error);
+    console.error('Failed to process file :', error);
     // Add an error page for this file
     const page = pdfDoc.addPage();
-    page.drawText(Error processing file: \n, {
+    page.drawText(`Error processing file: \n${error.message}`, {
       x: 50,
       y: page.getHeight() - 50,
       size: 12,
