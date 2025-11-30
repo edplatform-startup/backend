@@ -186,3 +186,45 @@ async function addTextToPdf(pdfDoc, file, font) {
     }
   }
 }
+/**
+ * Converts a single file to an individual PDF buffer.
+ * 
+ * @param {{name: string, type: string, content: Buffer|string}} file 
+ * @returns {Promise<Uint8Array>} The generated PDF buffer for this single file
+ */
+export async function convertSingleFileToPdf(file) {
+  if (!file) {
+    throw new Error('No file provided for conversion');
+  }
+
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+  try {
+    if (isImage(file)) {
+      await addImageToPdf(pdfDoc, file);
+    } else if (isPdf(file)) {
+      // If it's already a PDF, just return the content
+      const content = typeof file.content === 'string' 
+        ? Buffer.from(file.content, 'base64') 
+        : file.content;
+      return content;
+    } else {
+      // Treat as text by default
+      await addTextToPdf(pdfDoc, file, font);
+    }
+  } catch (error) {
+    console.error(Failed to process file :, error);
+    // Add an error page for this file
+    const page = pdfDoc.addPage();
+    page.drawText(Error processing file: \n, {
+      x: 50,
+      y: page.getHeight() - 50,
+      size: 12,
+      font,
+      color: rgb(1, 0, 0),
+    });
+  }
+
+  return await pdfDoc.save();
+}

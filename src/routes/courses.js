@@ -627,19 +627,35 @@ router.post('/', async (req, res) => {
     // --- IMMEDIATE PERSISTENCE END ---
 
     // Handle Exam File Conversion and Upload
-    let examFileUrl = null;
+    const examFileUrls = [];
     if (parsedInputs.examFiles && parsedInputs.examFiles.length > 0) {
       try {
-        console.log(`[courses] Converting ${parsedInputs.examFiles.length} exam files to PDF...`);
-        const pdfBuffer = await convertFilesToPdf(parsedInputs.examFiles);
+        console.log(`[courses] Converting and uploading ${parsedInputs.examFiles.length} exam files individually...`);
         
-        console.log(`[courses] Uploading converted PDF for course ${courseId}...`);
-        examFileUrl = await uploadExamFile(courseId, userId, pdfBuffer, 'exam_bundle.pdf');
-        console.log(`[courses] Exam file uploaded: ${examFileUrl}`);
+        // Import the new single file converter
+        const { convertSingleFileToPdf } = await import('../services/examConverter.js');
+        
+        for (let i = 0; i < parsedInputs.examFiles.length; i++) {
+          const file = parsedInputs.examFiles[i];
+          const examNumber = i + 1;
+          const fileName = `exam${examNumber}.pdf`;
+          
+          try {
+            const pdfBuffer = await convertSingleFileToPdf(file);
+            const examUrl = await uploadExamFile(courseId, userId, pdfBuffer, fileName);
+            
+            examFileUrls.push({ name: fileName, url: examUrl });
+            console.log(`[courses] Uploaded ${fileName}: ${examUrl}`);
+          } catch (fileError) {
+            console.error(`[courses] Failed to convert/upload ${fileName}:`, fileError);
+            // Continue with other files even if one fails
+          }
+        }
 
-        // Update the course row with the new exam file URL
-        if (examFileUrl) {
-          const attachmentText = `\n\n**Attached Exam File**: [View PDF](${examFileUrl})`;
+        // Update the course row with all exam file URLs
+        if (examFileUrls.length > 0) {
+          const attachmentText = '\n\n**Attached Exam Files**:\n' + 
+            examFileUrls.map(({ name, url }) => `- [${name}](${url})`).join('\n');
           combinedExamDetails = combinedExamDetails ? combinedExamDetails + attachmentText : attachmentText;
           
           await supabase
@@ -650,8 +666,8 @@ router.post('/', async (req, res) => {
             .eq('user_id', userId);
         }
       } catch (err) {
-        console.error('[courses] Failed to convert/upload exam files:', err);
-        // We continue without the file, but log the error
+        console.error('[courses] Failed to process exam files:', err);
+        // We continue without the files, but log the error
       }
     }
 
@@ -670,7 +686,7 @@ router.post('/', async (req, res) => {
         nodes: finalNodes,
         edges: finalEdges,
       },
-      examFileUrl, // Return this for client confirmation if needed
+      examFileUrls, // Return array of uploaded exam files
     });
   } catch (error) {
     console.error('[courses] POST / error:', error);
