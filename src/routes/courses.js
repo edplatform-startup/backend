@@ -10,6 +10,13 @@ import {
 import { saveCourseStructure, generateCourseContent } from '../services/courseContent.js';
 import { generateStudyPlan } from '../services/studyPlan.js';
 import { parseSharedCourseInputs, buildAttachmentList, toTrimmedString } from '../utils/courseInputParser.js';
+import { gradeExam } from '../services/examGrader.js';
+import multer from 'multer';
+
+const upload = multer({
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  storage: multer.memoryStorage()
+});
 
 const router = Router();
 
@@ -633,6 +640,43 @@ router.get('/:courseId/exams/:type', async (req, res) => {
   } catch (error) {
     console.error('Error fetching practice exam:', error);
     return res.status(500).json({ error: 'Failed to fetch practice exam', details: error.message });
+  }
+});
+
+// POST /:courseId/grade-exam - Grade an answered exam
+router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, exam_tag } = req.body;
+  const inputPdf = req.file;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing required fields: userId' });
+  }
+
+  if (!exam_tag) {
+    return res.status(400).json({ error: 'Missing required fields: exam_tag' });
+  }
+
+  if (!inputPdf) {
+    return res.status(400).json({ error: 'Missing input_pdf file' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  try {
+    const gradingResult = await gradeExam(courseId, userId, exam_tag, inputPdf.buffer);
+    res.json({ success: true, ...gradingResult });
+  } catch (error) {
+    console.error('Error grading exam:', error);
+    res.status(500).json({ error: 'Failed to grade exam: ' + error.message });
   }
 });
 
