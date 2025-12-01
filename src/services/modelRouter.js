@@ -17,15 +17,15 @@ const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemin
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
 const topicTopPRaw = process.env.TOPIC_MODEL_TOP_P;
-const topicTemp = topicTempRaw == null || topicTempRaw === '' ? 0.4 : Number(topicTempRaw);
-const topicTopP = topicTopPRaw == null || topicTopPRaw === '' ? 0.75 : Number(topicTopPRaw);
+const topicTemp = topicTempRaw == null || topicTempRaw === '' ? 0.2 : Number(topicTempRaw);
+const topicTopP = topicTopPRaw == null || topicTopPRaw === '' ? 0.6 : Number(topicTopPRaw);
 
 const DEFAULTS = {
   [STAGES.PLANNER]: { model: plannerModel, temp: 0.28, top_p: 0.6 },
   [STAGES.TOPICS]: {
     model: topicsModel,
-    temp: Number.isFinite(topicTemp) ? topicTemp : 0.4,
-    top_p: Number.isFinite(topicTopP) ? topicTopP : 0.75,
+    temp: Number.isFinite(topicTemp) ? topicTemp : 0.2,
+    top_p: Number.isFinite(topicTopP) ? topicTopP : 0.6,
   },
   [STAGES.LESSON_ARCHITECT]: {
     model: lessonArchitectModel,
@@ -38,7 +38,7 @@ const DEFAULTS = {
     top_p: 0.8,
   },
   [STAGES.EXAM_GRADER]: {
-    model: 'google/gemini-1.5-pro',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.2,
     top_p: 0.8,
   },
