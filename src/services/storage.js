@@ -133,3 +133,27 @@ export async function getCourseExamFiles(courseId, userId) {
   const results = await Promise.all(filePromises);
   return results.filter(r => r !== null);
 }
+
+/**
+ * Fetches the signed URL for a blank exam template.
+ * 
+ * @param {string} examTag - The tag of the exam (e.g., 'midterm', 'final')
+ * @returns {Promise<string|null>} The signed URL or null if not found
+ */
+export async function getBlankExam(examTag) {
+  const supabase = getSupabase();
+  // Assuming templates are stored in a 'templates' folder
+  const filePath = `templates/${examTag}.pdf`;
+
+  const { data, error } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .createSignedUrl(filePath, 60 * 60); // 1 hour
+
+  if (error) {
+    console.error(`[storage] Failed to get blank exam for tag ${examTag}:`, error);
+    return null;
+  }
+
+  return data.signedUrl;
+}

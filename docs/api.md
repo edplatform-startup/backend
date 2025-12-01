@@ -509,6 +509,37 @@ Base URL (production): https://api.kognolearn.com
   - `404 Not Found` → Exam not generated. Please call the generate endpoint first.
   - `500 Internal Server Error` → Storage error
 
+### POST /courses/:courseId/grade-exam
+- **Purpose**: Grade an answered exam PDF against a blank exam template using Gemini.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (Multipart/Form-Data)**:
+  - `userId` (string, required) – UUID of the user
+  - `exam_tag` (string, required) – Tag of the exam (e.g., `"midterm"`, `"final"`)
+  - `input_pdf` (file, required) – The answered exam PDF file
+- **Behavior**:
+  1. Fetches the blank exam template from storage based on `exam_tag`.
+  2. Sends both the answered exam and the blank template to Gemini 1.5 Pro.
+  3. Returns a standardized grading report with topic-level scores and feedback.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "topic_list": [
+        {
+          "topic": "Calculus",
+          "grade": 3,
+          "explanation": "Correctly applied the chain rule..."
+        }
+      ],
+      "overall_score": 88,
+      "overall_feedback": "Great job on the core concepts..."
+    }
+    ```
+  - `400 Bad Request` → Missing parameters or file
+  - `500 Internal Server Error` → Grading failure
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
