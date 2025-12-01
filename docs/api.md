@@ -519,7 +519,7 @@ Base URL (production): https://api.kognolearn.com
   - `input_pdf` (file, required) – The answered exam PDF file
 - **Behavior**:
   1. Fetches the blank exam template from storage based on `exam_tag`.
-  2. Sends both the answered exam and the blank template to Gemini 1.5 Pro.
+  2. Sends both the answered exam and the blank template to Gemini 3 Pro.
   3. Returns a standardized grading report with topic-level scores and feedback.
 - **Responses**:
   - `200 OK` →

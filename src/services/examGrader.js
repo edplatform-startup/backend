@@ -17,22 +17,24 @@ export const deps = {
  * @returns {Promise<object>} The grading result
  */
 export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
+  console.log(`[examGrader] Starting exam grading process`, {
+    courseId,
+    userId,
+    examTag,
+    inputPdfSize: inputPdfBuffer.length
+  });
+
   // 1. Fetch blank exam URL
+  console.log(`[examGrader] Fetching blank exam template for tag: ${examTag}`);
   const blankExamUrl = await getBlankExam(examTag);
   if (!blankExamUrl) {
+    console.error(`[examGrader] Blank exam template not found for tag: ${examTag}`);
     throw new Error(`Blank exam template not found for tag: ${examTag}`);
   }
+  console.log(`[examGrader] Successfully fetched blank exam URL:`, blankExamUrl);
 
   // 2. Prepare attachments (Answered Exam + Blank Exam)
-  // Note: callStageLLM supports attachments with 'url' or 'data' (base64)
-  // We'll send the input PDF as base64 and the blank exam as a URL (if supported by the model/wrapper)
-  // Or better, since we have the buffer, let's send both as base64 if needed, 
-  // but `callStageLLM` usually handles URLs for some providers. 
-  // However, for Gemini via OpenRouter/Vertex, passing the file content is often safer if we want to be sure.
-  // Let's assume `callStageLLM` handles `url` correctly for the model, or we can fetch the blank exam content.
-  // To be safe and consistent with `inputPdfBuffer`, let's try to pass the blank exam URL directly if the underlying `grokClient` supports it.
-  // Looking at `grokClient.js` (which I haven't fully read but `llmCall.js` uses it), it supports attachments.
-  
+  console.log(`[examGrader] Preparing attachments for LLM call`);
   const attachments = [
     {
       type: 'application/pdf',
@@ -47,8 +49,10 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
       name: 'blank_exam_template.pdf'
     }
   ];
+  console.log(`[examGrader] Prepared ${attachments.length} attachments`);
 
   // 3. Construct Prompt
+  console.log(`[examGrader] Constructing grading prompt`);
   const systemPrompt = `You are an expert academic grader. Your task is to grade a student's answered exam against the provided blank exam template.
   
   Inputs:
@@ -85,14 +89,17 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
   ];
 
   // 4. Call LLM
+  console.log(`[examGrader] Calling LLM with EXAM_GRADER stage`);
   const { result } = await deps.callStageLLM({
     stage: STAGES.EXAM_GRADER,
     messages,
     attachments,
     responseFormat: 'json' // Hint to the LLM wrapper to expect JSON
   });
+  console.log(`[examGrader] Received LLM response, content length: ${result.content?.length || 0}`);
 
   // 5. Parse Response
+  console.log(`[examGrader] Parsing LLM response`);
   let parsedResult;
   try {
     // The result.content might be a string containing JSON code block
@@ -100,10 +107,16 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
     const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/\{[\s\S]*\}/);
     const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
     parsedResult = JSON.parse(jsonStr);
+    console.log(`[examGrader] Successfully parsed grading result`, {
+      topicCount: parsedResult.topic_list?.length || 0,
+      overallScore: parsedResult.overall_score
+    });
   } catch (e) {
     console.error('[examGrader] Failed to parse LLM response:', e);
+    console.error('[examGrader] Raw content:', result.content);
     throw new Error('Failed to parse grading result from LLM.');
   }
 
+  console.log(`[examGrader] Grading process completed successfully`);
   return parsedResult;
 }
