@@ -137,13 +137,45 @@ export async function getCourseExamFiles(courseId, userId) {
 /**
  * Fetches the signed URL for a blank exam template.
  * 
+ * @param {string} courseId - The course ID
+ * @param {string} userId - The user ID
  * @param {string} examTag - The tag of the exam (e.g., 'midterm', 'final')
  * @returns {Promise<string|null>} The signed URL or null if not found
  */
-export async function getBlankExam(examTag) {
+export async function getBlankExam(courseId, userId, examTag) {
   const supabase = getSupabase();
-  // Assuming templates are stored in a 'templates' folder
-  const filePath = `templates/${examTag}.pdf`;
+  const folderPath = `${userId}/${courseId}`;
+
+  // List all files in the course folder
+  const { data: files, error: listError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .list(folderPath);
+
+  if (listError) {
+    console.error(`[storage] Failed to list files for blank exam search (tag: ${examTag}):`, listError);
+    return null;
+  }
+
+  if (!files || files.length === 0) {
+    console.warn(`[storage] No files found in folder ${folderPath}`);
+    return null;
+  }
+
+  // Find a file that contains the examTag (case-insensitive)
+  // Expected format: [timestamp]_[tag]_exam.pdf or similar
+  const matchingFile = files.find(f => 
+    f.name.toLowerCase().includes(examTag.toLowerCase()) && 
+    f.name.toLowerCase().endsWith('.pdf')
+  );
+
+  if (!matchingFile) {
+    console.warn(`[storage] No matching blank exam found for tag '${examTag}' in ${folderPath}`);
+    return null;
+  }
+
+  const filePath = `${folderPath}/${matchingFile.name}`;
+  console.log(`[storage] Found matching blank exam: ${filePath}`);
 
   const { data, error } = await supabase
     .storage
@@ -151,7 +183,7 @@ export async function getBlankExam(examTag) {
     .createSignedUrl(filePath, 60 * 60); // 1 hour
 
   if (error) {
-    console.error(`[storage] Failed to get blank exam for tag ${examTag}:`, error);
+    console.error(`[storage] Failed to get signed URL for blank exam ${filePath}:`, error);
     return null;
   }
 

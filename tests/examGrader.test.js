@@ -10,9 +10,21 @@ describe('Exam Grading Service', () => {
     mockSupabase = {
       storage: {
         from: (bucket) => ({
+          list: async (path) => {
+            if (path === 'user123/course123') {
+              return { 
+                data: [
+                  { name: '123456_midterm_exam.pdf' },
+                  { name: 'other_file.txt' }
+                ], 
+                error: null 
+              };
+            }
+            return { data: [], error: null };
+          },
           createSignedUrl: async (path) => {
             // console.log('Mock createSignedUrl called with path:', path);
-            if (path.includes('midterm.pdf')) {
+            if (path.includes('midterm_exam.pdf')) {
               return { data: { signedUrl: 'https://example.com/templates/midterm.pdf' }, error: null };
             }
             return { data: null, error: { message: 'Not found' } };

@@ -26,7 +26,7 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
 
   // 1. Fetch blank exam URL
   console.log(`[examGrader] Fetching blank exam template for tag: ${examTag}`);
-  const blankExamUrl = await getBlankExam(examTag);
+  const blankExamUrl = await getBlankExam(courseId, userId, examTag);
   if (!blankExamUrl) {
     console.error(`[examGrader] Blank exam template not found for tag: ${examTag}`);
     throw new Error(`Blank exam template not found for tag: ${examTag}`);
