@@ -741,6 +741,53 @@ Base URL (production): https://api.kognolearn.com
   - `403 Forbidden` → Access denied
   - `500 Internal Server Error` → Database error
 
+### GET /analytics/usage
+- Purpose: Retrieve raw AI model usage logs (token counts, costs, models used).
+- Query parameters:
+  - `userId` (string, optional) – Filter by user UUID.
+  - `limit` (number, optional) – Number of records to return (default: 100).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "data": [
+        {
+          "id": "...",
+          "user_id": "...",
+          "model": "x-ai/grok-4-fast",
+          "prompt_tokens": 150,
+          "completion_tokens": 50,
+          "total_tokens": 200,
+          "cost_usd": 0.0004,
+          "source": "chat",
+          "created_at": "..."
+        }
+      ]
+    }
+    ```
+  - 500 Internal Server Error → Database error.
+
+### GET /analytics/usage/summary
+- Purpose: Retrieve aggregated AI usage statistics (total spend, total tokens, etc.).
+- Query parameters:
+  - `userId` (string, optional) – Filter by user UUID.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "summary": {
+        "total_spend": 1.25,
+        "total_calls": 50,
+        "total_tokens": 15000,
+        "average_spend_per_user": 0.025,
+        "unique_users": 5
+      }
+    }
+    ```
+  - 500 Internal Server Error → Database error.
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

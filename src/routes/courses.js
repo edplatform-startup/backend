@@ -11,6 +11,7 @@ import { saveCourseStructure, generateCourseContent } from '../services/courseCo
 import { generateStudyPlan } from '../services/studyPlan.js';
 import { parseSharedCourseInputs, buildAttachmentList, toTrimmedString } from '../utils/courseInputParser.js';
 import { gradeExam } from '../services/examGrader.js';
+import { logUsageEvent } from '../utils/analytics.js';
 import multer from 'multer';
 
 const upload = multer({
@@ -30,6 +31,12 @@ router.get('/:id/plan', async (req, res) => {
 
   try {
     const plan = await generateStudyPlan(id, userId);
+    // Log study plan generation
+    await logUsageEvent(userId, 'study_plan_generated', { 
+      courseId: id, 
+      mode: plan.mode || 'standard',
+      totalModules: plan.modules?.length || 0 
+    });
     return res.json(plan);
   } catch (error) {
     console.error('Error generating study plan:', error);
@@ -174,6 +181,17 @@ router.patch('/:courseId/nodes/:nodeId/progress', async (req, res) => {
       }
       result = data;
     }
+
+      }
+    });
+
+    // Log progress update
+    await logUsageEvent(userId, 'lesson_progress_updated', { 
+      courseId, 
+      lessonId: nodeId, 
+      mastery: result.mastery_status, 
+      familiarity: result.familiarity_score 
+    });
 
     return res.json({
       success: true,
@@ -333,6 +351,14 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       // I will modify content_payload in place to contain only the filtered keys.
       response.lesson.content_payload = filteredData;
     }
+
+    // Log lesson opened
+    await logUsageEvent(userId, 'lesson_opened', { 
+      courseId, 
+      lessonId: nodeId, 
+      title: node.title, 
+      reviewType: node.metadata?.review_type || null 
+    });
 
     return res.json(response);
   } catch (error) {
@@ -556,6 +582,16 @@ router.post('/topics', async (req, res) => {
       finishByDate: shared.finishByDateIso,
     }, shared.userId);
 
+      model: result.model,
+    });
+
+    // Log topics generation
+    // Note: userId is extracted from body above
+    await logUsageEvent(userId, 'topics_generated', { 
+      university, 
+      courseTitle 
+    });
+
     return res.status(200).json({
       success: true,
       overviewTopics: result.overviewTopics,
@@ -598,6 +634,15 @@ router.post('/:courseId/review-modules', async (req, res) => {
     // 3. Generate Content
     const contentResult = await generateCourseContent(courseId);
 
+    const contentResult = await generateCourseContent(courseId);
+
+    // Log review module creation
+    await logUsageEvent(userId, 'review_module_created', { 
+      courseId, 
+      examType, 
+      newLessons: lessonGraph.finalNodes.length 
+    });
+
     return res.json({ success: true, nodeCount: lessonGraph.finalNodes.length, contentStatus: contentResult.status });
   } catch (error) {
     console.error('Error creating review module:', error);
@@ -615,6 +660,14 @@ router.post('/:courseId/restructure', async (req, res) => {
 
   try {
     const result = await restructureCourse(courseId, userId, prompt, lessonIds);
+    
+    // Log course restructure
+    await logUsageEvent(userId, 'course_restructured', { 
+      courseId, 
+      prompt, 
+      affectedLessonsCount: result.affected_lessons?.length || 0 
+    });
+
     return res.json(result);
   } catch (error) {
     console.error('Error restructuring course:', error);
@@ -649,6 +702,14 @@ router.get('/:courseId/review-modules', async (req, res) => {
     const { data, error } = await query;
 
     if (error) throw error;
+
+    if (error) throw error;
+
+    // Log review modules access
+    await logUsageEvent(userId, 'review_module_accessed', { 
+      courseId, 
+      filterType: type || 'all' 
+    });
 
     return res.json({ success: true, modules: data });
   } catch (error) {
@@ -685,6 +746,14 @@ router.post('/:courseId/exams/generate', async (req, res) => {
 
   try {
     const result = await generatePracticeExam(courseId, userId, lessons, type);
+    
+    // Log practice exam generation
+    await logUsageEvent(userId, 'practice_exam_generated', { 
+      courseId, 
+      examType: type, 
+      coveredLessons: lessons.length 
+    });
+
     return res.json({ success: true, ...result });
   } catch (error) {
     console.error('Error generating practice exam:', error);
@@ -760,6 +829,14 @@ router.get('/:courseId/exams/:type', async (req, res) => {
       })
       .sort((a, b) => a.number - b.number);
 
+      .sort((a, b) => a.number - b.number);
+
+    // Log practice exam list view
+    await logUsageEvent(userId, 'practice_exam_list_viewed', { 
+      courseId, 
+      examType: type 
+    });
+
     return res.json({ success: true, exams });
   } catch (error) {
     console.error('Error fetching practice exams:', error);
@@ -823,6 +900,16 @@ router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res
       // We don't fail the request if saving fails, but we log it. 
       // Alternatively, we could include a warning in the response.
     }
+
+    });
+
+    // Log exam graded
+    await logUsageEvent(userId, 'practice_exam_graded', { 
+      courseId, 
+      examType: exam_type, 
+      examNumber: number, 
+      score: gradingResult.overall_score 
+    });
 
     res.json({
       success: true,
@@ -997,6 +1084,13 @@ router.post('/', async (req, res) => {
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);
 
+    // Log course creation
+    await logUsageEvent(userId, 'course_created', { 
+      courseId, 
+      title, 
+      nodeCount: persistResult.nodeCount 
+    });
+
     return res.status(201).json({
       success: true,
       courseId,
@@ -1074,6 +1168,9 @@ router.delete('/', async (req, res) => {
       console.error('Supabase error deleting course:', deleteError);
       return res.status(500).json({ error: 'Failed to delete course', details: deleteError.message || deleteError });
     }
+
+    // Log course deletion
+    await logUsageEvent(userId, 'course_deleted', { courseId });
 
     return res.json({ success: true, courseId, storageFilesDeleted: storageResult.deleted });
   } catch (error) {

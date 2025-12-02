@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { executeOpenRouterChat, createWebSearchTool } from '../services/grokClient.js';
 import { validateUuid } from '../utils/validation.js';
+import { logUsageEvent } from '../utils/analytics.js';
 
 const router = Router();
 
@@ -53,6 +54,12 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'context must be serializable to JSON or a string' });
     }
   }
+
+  // Log chat usage
+  await logUsageEvent(userId, 'chat_used', { 
+    promptChars: user?.length || 0, 
+    useWebSearch 
+  });
 
   try {
     const messages = [
