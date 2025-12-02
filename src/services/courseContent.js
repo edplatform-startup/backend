@@ -894,7 +894,8 @@ Return JSON ONLY:
   "answerIndex": number (0-3),
   "explanation": "string"
 }
-Ensure answerIndex is valid.`,
+Ensure answerIndex is valid.
+Use \\(...\\) for inline math and \\[...\\] for display math. Do not use $ or $$.`,
   };
 
   const userPrompt = {
@@ -960,7 +961,7 @@ Always respond with JSON shaped exactly as:
 {
   "internal_audit": "scratchpad reasoning about structure and coverage",
   "final_content": {
-    "markdown": "FULL markdown content - use LaTeX inline only for math (e.g., $...$) or blocks that strictly need LaTeX"
+    "markdown": "FULL markdown content - use LaTeX inline only for math (e.g., \\(...\\)) or blocks that strictly need LaTeX"
   }
 }
 
@@ -968,7 +969,7 @@ The internal_audit is a throwaway scratchpad — never include it inside the fin
 
 CRITICAL REQUIREMENTS:
 1. Prefer Markdown for all text, headings, lists and examples.
-2. Use inline LaTeX ($...$) or display math ($$...$$) only when required.
+2. Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 3. Keep content clear for students — short paragraphs, helpful examples, and explicit definitions.
 4. Do not include editor scratchpad text inside the markdown.
 5. When examples require equations or formal notation, include LaTeX within math fences only.
@@ -1118,6 +1119,7 @@ Rules:
 - Exactly one option may be correct, enforce via validation_check.
 - Ensure questions vary in difficulty (Easy, Medium, Hard).
 - You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).
+- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
 `,
     },
     {
@@ -1214,7 +1216,8 @@ Always respond with JSON:
 Rules:
 - validation_check is required for every item and must audit completeness before final answers
 - answer_key must stay solution-focused, no meta-commentary
-- rubric should reference the same subparts mentioned in the question.`,
+- rubric should reference the same subparts mentioned in the question.
+- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
@@ -1309,7 +1312,8 @@ Always respond with JSON:
   ]
 }
 
-Never include scratchpad text inside front/back.`,
+Never include scratchpad text inside front/back.
+Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
@@ -1395,7 +1399,7 @@ Always respond with JSON shaped exactly as:
 CRITICAL REQUIREMENTS:
 1. Output the ENTIRE lesson content, not just the diff.
 2. Prefer Markdown for all text, headings, lists and examples.
-3. Use inline LaTeX ($...$) or display math ($$...$$) only when required.
+3. Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 4. Do NOT include inline questions or "Check Your Understanding" blocks; these will be generated automatically.
 5. Do not include editor scratchpad text inside the markdown.
 `,
@@ -1506,6 +1510,7 @@ Rules:
 - Replace or modify questions as requested.
 - Keep the total number of questions similar unless instructed otherwise.
 - Ensure one "Challenge Question" remains.
+- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
 `,
     },
     {
@@ -1574,6 +1579,7 @@ Always respond with JSON:
     { "step_by_step_thinking": "...", "front": "...", "back": "..." }
   ]
 }
+Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
 `,
     },
     {
