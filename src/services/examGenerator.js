@@ -425,9 +425,16 @@ async function compileLatexToPdf(latexCode) {
   const logPath = join(tmpdir(), `exam_${timestamp}.log`);
 
   try {
-    // First pass: writes .aux, page counts, point totals, etc.
+    // Pass 1: Generate .aux and initial layout
+    console.log('[examGenerator] Starting LaTeX compilation pass 1/3...');
     await runLatexOnce(latexCode, outputPath, logPath);
-    // Second pass: uses .aux to render grade table and page totals.
+
+    // Pass 2: Resolve references, page numbers, and basic tables
+    console.log('[examGenerator] Starting LaTeX compilation pass 2/3...');
+    await runLatexOnce(latexCode, outputPath, logPath);
+
+    // Pass 3: Finalize layout, grade tables, and complex references
+    console.log('[examGenerator] Starting LaTeX compilation pass 3/3...');
     await runLatexOnce(latexCode, outputPath, logPath);
 
     const fs = await import('fs/promises');
