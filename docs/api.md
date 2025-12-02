@@ -594,6 +594,34 @@ Base URL (production): https://api.kognolearn.com
   - `400 Bad Request` → Missing userId
   - `500 Internal Server Error` → Database error
 
+### POST /courses/:courseId/restructure
+- **Purpose**: Restructure or modify specific lessons in a course based on a user prompt.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `prompt` (string, required) – The instruction for what to change (e.g., "Change the analogy in the limits lesson to use speedometers").
+  - `lessonIds` (string[], optional) – Specific lesson IDs to target if known. If omitted, the system identifies affected lessons automatically.
+- **Behavior**:
+  1. Uses an LLM (Lesson Architect) to identify which lessons need modification based on the prompt and course structure.
+  2. Generates specific change instructions for each content type (reading, quiz, etc.) in the affected lessons.
+  3. Regenerates the content using the new instructions while preserving the overall structure.
+  4. Updates the database with the new content.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "affected_lessons": ["lesson-uuid-1", "lesson-uuid-2"],
+      "results": [
+        { "id": "lesson-uuid-1", "status": "updated" },
+        { "id": "lesson-uuid-2", "status": "skipped" }
+      ]
+    }
+    ```
+  - `400 Bad Request` → Missing parameters
+  - `500 Internal Server Error` → Restructuring failure
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

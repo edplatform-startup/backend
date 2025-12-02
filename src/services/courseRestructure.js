@@ -119,7 +119,7 @@ Your task is to generate specific "Change Instructions" for EACH content type th
 If a content type does not need changing, omit it.
 For videos, provide a NEW search query if the video needs to change.
 
-Return JSON:
+Return JSON ONLY (no markdown, no conversational text):
 {
   "reading": "instruction string...",
   "quiz": "instruction string...",
@@ -138,7 +138,12 @@ Return JSON:
 
     let changePlans = {};
     try {
-      changePlans = JSON.parse(instructionResult.content);
+      const cleanJson = instructionResult.content
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+      changePlans = JSON.parse(cleanJson);
     } catch (e) {
       console.error(`Failed to parse change instructions for lesson ${lessonId}`, e);
       continue;
