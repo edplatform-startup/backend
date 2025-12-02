@@ -12,7 +12,7 @@ const { courseV2Models = {} } = runtimeConfig;
 
 const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4-fast';
 const topicsModel =
-  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || plannerModel;
+  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'google/gemini-3-pro-preview';
 const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;

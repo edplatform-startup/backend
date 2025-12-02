@@ -491,7 +491,7 @@ Using this information, produce competency-based overviewTopics with fully popul
         { role: 'system', content: systemPrompt.trim() },
         { role: 'user', content: userPrompt.trim() },
       ],
-      maxTokens: 2200,
+      maxTokens: 4400,
       allowWeb: true,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for TOPICS with web search
