@@ -391,66 +391,85 @@ function extractLatexError(error) {
 /*  Compilation via node-latex                                                */
 /* -------------------------------------------------------------------------- */
 
-async function compileLatexToPdf(latexCode) {
+/**
+ * Run one pdflatex pass using node-latex.
+ * Keeps the .aux and .log files so that a second pass can use them.
+ */
+function runLatexOnce(latexCode, outputPath, logPath) {
   return new Promise((resolve, reject) => {
     const input = Readable.from([Buffer.from(latexCode)]);
-    const timestamp = Date.now();
-    const outputPath = join(tmpdir(), `exam_${timestamp}.pdf`);
-    const logPath = join(tmpdir(), `exam_${timestamp}.log`);
-
     const output = createWriteStream(outputPath);
-    const pdf = latex(input, { errorLogs: logPath }); // node-latex will run pdflatex
 
+    const pdf = latex(input, { errorLogs: logPath });
     pdf.pipe(output);
 
-    pdf.on('error', async (err) => {
-      try {
-        const fs = await import('fs/promises');
-        let detailedError = err.message;
-
-        try {
-          const logContent = await fs.readFile(logPath, 'utf8');
-          const lines = logContent.split('\n');
-          const errorLines = [];
-
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.startsWith('!')) {
-              errorLines.push(line);
-              if (lines[i + 1]) errorLines.push(lines[i + 1]);
-              if (lines[i + 2]) errorLines.push(lines[i + 2]);
-            }
-          }
-
-          if (errorLines.length > 0) {
-            detailedError = `LaTeX Syntax Error\n${errorLines.join('\n')}`;
-          } else {
-            detailedError = `LaTeX Compilation Failed\n${logContent.slice(-1000)}`;
-          }
-
-          await fs.unlink(logPath).catch(() => {});
-        } catch (readErr) {
-          console.warn('[examGenerator] Could not read LaTeX log file:', readErr.message);
-        }
-
-        reject(new Error(detailedError));
-      } catch (e) {
-        reject(e);
-      }
+    pdf.on('error', (err) => {
+      reject(err);
     });
 
-    pdf.on('finish', async () => {
-      try {
-        const fs = await import('fs/promises');
-        const buffer = await fs.readFile(outputPath);
-        await fs.unlink(outputPath).catch(() => {});
-        await fs.unlink(logPath).catch(() => {});
-        resolve(buffer);
-      } catch (e) {
-        reject(e);
-      }
+    pdf.on('finish', () => {
+      resolve();
     });
   });
+}
+
+/**
+ * Compiles LaTeX to PDF using two pdflatex passes so that exam.cls
+ * can resolve \gradetable, \numpages, etc.
+ * @param {string} latexCode
+ * @returns {Promise<Buffer>} PDF buffer
+ */
+async function compileLatexToPdf(latexCode) {
+  const timestamp = Date.now();
+  const outputPath = join(tmpdir(), `exam_${timestamp}.pdf`);
+  const logPath = join(tmpdir(), `exam_${timestamp}.log`);
+
+  try {
+    // First pass: writes .aux, page counts, point totals, etc.
+    await runLatexOnce(latexCode, outputPath, logPath);
+    // Second pass: uses .aux to render grade table and page totals.
+    await runLatexOnce(latexCode, outputPath, logPath);
+
+    const fs = await import('fs/promises');
+    const buffer = await fs.readFile(outputPath);
+
+    // Cleanup
+    await fs.unlink(outputPath).catch(() => { });
+    await fs.unlink(logPath).catch(() => { });
+
+    return buffer;
+  } catch (err) {
+    // On error, try to extract a useful message from the log file
+    let detailedError = err.message;
+    try {
+      const fs = await import('fs/promises');
+      const logContent = await fs.readFile(logPath, 'utf8');
+      const lines = logContent.split('\n');
+      const errorLines = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith('!')) {
+          errorLines.push(line);
+          if (lines[i + 1]) errorLines.push(lines[i + 1]);
+          if (lines[i + 2]) errorLines.push(lines[i + 2]);
+        }
+      }
+
+      if (errorLines.length > 0) {
+        detailedError = `LaTeX Syntax Error\n${errorLines.join('\n')}`;
+      } else {
+        detailedError = `LaTeX Compilation Failed\n${logContent.slice(-1000)}`;
+      }
+
+      await fs.unlink(outputPath).catch(() => { });
+      await fs.unlink(logPath).catch(() => { });
+    } catch (readErr) {
+      console.warn('[examGenerator] Could not read LaTeX log file:', readErr.message);
+    }
+
+    throw new Error(detailedError);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
