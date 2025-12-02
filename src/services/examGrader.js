@@ -94,6 +94,7 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
     stage: STAGES.EXAM_GRADER,
     messages,
     attachments,
+    maxTokens: 10000,
     responseFormat: 'json' // Hint to the LLM wrapper to expect JSON
   });
   console.log(`[examGrader] Received LLM response, content length: ${result.content?.length || 0}`);
