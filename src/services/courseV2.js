@@ -497,9 +497,9 @@ Using this information, produce competency-based overviewTopics with fully popul
         { role: 'user', content: userPrompt.trim() },
       ],
       maxTokens: 8192,
-      allowWeb: true,
+      allowWeb: false, // Disabled web search to avoid compatibility issues with Grok
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 120000, // 2 minutes for TOPICS with web search
+      requestTimeoutMs: 120000, // 2 minutes for TOPICS
       userId,
     });
 

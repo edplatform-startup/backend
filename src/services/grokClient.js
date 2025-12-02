@@ -610,6 +610,13 @@ export async function executeOpenRouterChat(options = {}) {
     const message = payload?.choices?.[0]?.message;
 
     if (!message) {
+      console.error('[openrouter] Response missing message. Full payload:', JSON.stringify(payload, null, 2));
+      console.error('[openrouter] Model:', effectiveModel);
+      console.error('[openrouter] Stage:', options?.stage);
+      console.error('[openrouter] Has choices?', !!payload?.choices);
+      console.error('[openrouter] Choices length:', payload?.choices?.length);
+      console.error('[openrouter] First choice:', JSON.stringify(payload?.choices?.[0], null, 2));
+      
       throw new Error('OpenRouter response missing message');
     }
 
