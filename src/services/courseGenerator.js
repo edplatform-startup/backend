@@ -48,7 +48,7 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * @param {Object} userConfidenceMap - Map of slug_id -> confidence_score (0-1).
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}) {
+export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId) {
 
   // Step 1: The Architect Call
   const systemPrompt = `You are the Lesson Architect. Your goal is to transform a rough course outline into a high-quality Directed Acyclic Graph (DAG) of Atomic Lessons.
@@ -115,6 +115,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
     requestTimeoutMs: 1800000, // 30 minutes for long-running course generation
     allowWeb: true,
     maxToolIterations: 16,
+    userId,
   });
 
   let lessonGraph;
@@ -184,6 +185,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
         messages: [{ role: 'user', content: repairPrompt }],
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 1800000, // 30 minutes for repair call as well
+        userId,
       });
 
       const corrections = tryParseJson(repairResult.content, 'LessonArchitect Repair');
@@ -295,7 +297,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
  * @param {string} type - 'midterm' or 'final'.
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateReviewModule(topics, type) {
+export async function generateReviewModule(topics, type, userId) {
   const systemPrompt = `You are the Lesson Architect. Your goal is to create a Review Module for a ${type} exam based on the provided graded topics.
 
 INPUT: A list of topics with student grades (1-5 scale) and explanations of their performance.
@@ -343,6 +345,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
     ],
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 600000,
+    userId,
   });
 
   let lessonGraph;

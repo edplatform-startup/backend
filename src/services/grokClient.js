@@ -493,6 +493,8 @@ export async function executeOpenRouterChat(options = {}) {
     requestTimeoutMs = 55000,
     enableWebSearch = false,
     plugins,
+    userId,
+    source,
   } = options;
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -603,7 +605,7 @@ export async function executeOpenRouterChat(options = {}) {
       if (timer) clearTimeout(timer);
     }
     try {
-      accumulateUsage(effectiveModel, payload?.usage || payload?.meta?.usage || {});
+      accumulateUsage(effectiveModel, payload?.usage || payload?.meta?.usage || {}, userId, source || options?.stage);
     } catch { }
     const message = payload?.choices?.[0]?.message;
 
@@ -820,7 +822,8 @@ function getPriceForModel(model) {
   const envMap = runtimeConfig.openrouterPriceMap;
   const defaultMap = {
     'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
-    'x-ai/grok-4-fast': { in: 0.001, out: 0.002 },
+    'x-ai/grok-4-fast': { in: 0.0002, out: 0.0005 },
+    'google/gemini-3-pro-preview': { in: 0.002, out: 0.012 },
     'google/gemini-2.5-flash': { in: 0.0006, out: 0.0018 },
     'nousresearch/hermes-4-70b': { in: 0.0005, out: 0.001 },
     'anthropic/claude-haiku-3.5': { in: 0.0008, out: 0.004 },
@@ -837,13 +840,17 @@ export function getCostTotals() {
   return JSON.parse(JSON.stringify(__usageTotals));
 }
 
-function accumulateUsage(model, usage) {
+import { getSupabase } from '../supabaseClient.js';
+
+async function accumulateUsage(model, usage, userId, source) {
   if (!usage) return;
   const prompt = Number(usage.prompt_tokens || usage.input_tokens || 0) || 0;
   const completion = Number(usage.completion_tokens || usage.output_tokens || 0) || 0;
   const total = Number(usage.total_tokens || prompt + completion || 0) || (prompt + completion);
   const price = getPriceForModel(model);
   const usd = (prompt * price.in + completion * price.out) / 1000;
+  
+  // Update in-memory totals
   __usageTotals.prompt += prompt;
   __usageTotals.completion += completion;
   __usageTotals.total += total;
@@ -857,9 +864,35 @@ function accumulateUsage(model, usage) {
   __usageTotals.perModel[model].total += total;
   __usageTotals.perModel[model].usd += usd;
   __usageTotals.perModel[model].calls += 1;
+
+  // Log to database if userId is provided
+  if (userId) {
+    try {
+      const supabase = getSupabase();
+      // Fire and forget - don't await to avoid blocking response
+      supabase
+        .schema('api')
+        .from('usage_stats')
+        .insert([{
+          user_id: userId,
+          model,
+          prompt_tokens: prompt,
+          completion_tokens: completion,
+          total_tokens: total,
+          cost_usd: Number(usd.toFixed(6)),
+          source: source || 'unknown',
+        }])
+        .then(({ error }) => {
+          if (error) console.error('[usage_stats] Insert failed:', error);
+        })
+        .catch(err => console.error('[usage_stats] Unexpected error:', err));
+    } catch (err) {
+      console.error('[usage_stats] Failed to init supabase or insert:', err);
+    }
+  }
 }
 
-export async function generateStudyTopics(input) {
+export async function generateStudyTopics(input, userId) {
   if (customStudyTopicsGenerator) {
     return await customStudyTopicsGenerator(input);
   }
@@ -904,6 +937,8 @@ export async function generateStudyTopics(input) {
     attachments,
     attachmentsInlineOptions: { maxPerFileChars: 4000, maxTotalChars: 12000 },
     messages: primaryMessages,
+    userId,
+    source: 'planner_topics',
   };
 
   const first = await executeOpenRouterChat(chatArgs);
@@ -965,6 +1000,8 @@ export async function generateStudyTopics(input) {
       temperature: 0.2,
       maxTokens: 400,
       messages: repairMessages,
+      userId,
+      source: 'planner_topics_repair',
     });
     const repairText = Array.isArray(repair.content)
       ? repair.content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()

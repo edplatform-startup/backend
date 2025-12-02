@@ -77,6 +77,8 @@ router.post('/', async (req, res) => {
       attachments,
       reasoning,
       ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
+      userId,
+      source: 'chat',
     });
 
     // Normalize content to string for convenience

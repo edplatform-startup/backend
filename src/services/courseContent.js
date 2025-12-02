@@ -910,7 +910,7 @@ import { pickModel, STAGES } from './modelRouter.js';
 /**
  * Generate a single multiple-choice question for a chunk.
  */
-export async function generateInlineQuestion(chunkText) {
+export async function generateInlineQuestion(chunkText, contextInfo = {}) {
 
 
   const systemPrompt = {
@@ -975,7 +975,11 @@ Use \\(...\\) for inline math and \\[...\\] for display math. Do not use $ or $$
 
     md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
 
-    return md;
+    // --- VALIDATION STEP ---
+    const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
+    const validatedMd = await validateContent('inline_question', md, validationContext);
+
+    return validatedMd;
   } catch (error) {
     return null;
   }
@@ -1085,7 +1089,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       // Only enrich the first N chunks
       if (i < MAX_ENRICHED && chunk.length > 500) {
         // Generate inline question
-        const questionMd = await generateInlineQuestion(chunk);
+        const questionMd = await generateInlineQuestion(chunk, { title, courseName, moduleName });
         if (questionMd) {
           chunk += questionMd;
         }
@@ -1099,8 +1103,12 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     // Fallback to original text if enrichment blows up
   }
 
+  // --- VALIDATION STEP ---
+  const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
+  const validatedText = await validateContent('reading', resultText, validationContext);
+
   return {
-    data: resultText,
+    data: validatedText,
     stats: {
       total: 1,
       immediate: retries === 0 ? 1 : 0,
@@ -1206,7 +1214,11 @@ Each question: 4 options, single correct_index, validation_check before finalizi
       throw new Error('Quiz generator returned no valid questions after repair');
     }
 
-    return { data: repairedQuestions, stats };
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
+    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext);
+
+    return { data: validatedQuestions, stats };
   } catch (err) {
     throw err;
   }
@@ -1301,7 +1313,12 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
     if (!repairedItems.length) {
       throw new Error('Practice exam generator returned no valid problems after repair');
     }
-    return { data: repairedItems, stats };
+
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
+    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext);
+
+    return { data: validatedItems, stats };
   } catch (err) {
     throw err;
   }
@@ -1394,7 +1411,12 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     if (!repairedCards.length) {
       throw new Error('Flashcard generator returned no valid cards after repair');
     }
-    return { data: repairedCards, stats };
+
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
+    const validatedCards = await validateContent('flashcards', repairedCards, validationContext);
+
+    return { data: validatedCards, stats };
   } catch (err) {
     throw err;
   }
@@ -1504,10 +1526,14 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
     // Fallback to text without enrichment
   }
 
-  return {
-    data: resultText,
-    stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
-  };
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
+    const validatedText = await validateContent('reading', resultText, validationContext);
+
+    return {
+      data: validatedText,
+      stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
+    };
 }
 
 export async function regenerateQuiz(title, currentQuiz, changeInstruction, courseName, moduleName, prereqs = []) {
@@ -1590,7 +1616,11 @@ Rules:
 
     if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
 
-    return { data: repairedQuestions, stats };
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
+    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext);
+
+    return { data: validatedQuestions, stats };
   } catch (err) {
     throw err;
   }
@@ -1653,7 +1683,12 @@ Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$
     const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'regenerateFlashcards');
 
     if (!repairedCards.length) throw new Error('Flashcard regenerator returned no valid cards');
-    return { data: repairedCards, stats };
+
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
+    const validatedCards = await validateContent('flashcards', repairedCards, validationContext);
+
+    return { data: validatedCards, stats };
   } catch (err) {
     throw err;
   }
@@ -1721,7 +1756,12 @@ Always respond with JSON:
     const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'regeneratePracticeExam');
 
     if (!repairedItems.length) throw new Error('Practice exam regenerator returned no valid problems');
-    return { data: repairedItems, stats };
+
+    // --- VALIDATION STEP ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
+    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext);
+
+    return { data: validatedItems, stats };
   } catch (err) {
     throw err;
   }
@@ -1867,4 +1907,91 @@ Select the best video index.`
   }
 
   return { videos, logs };
+}
+
+/**
+ * Validates generated content using a worker model.
+ * @param {string} contentType - 'reading', 'quiz', 'flashcards', 'practice_exam', 'inline_question'
+ * @param {any} content - The content to validate
+ * @param {string} context - Additional context (e.g., lesson title, plan)
+ * @returns {Promise<any>} - The validated (and possibly fixed) content
+ */
+async function validateContent(contentType, content, context) {
+  const modelConfig = pickModel(STAGES.VALIDATOR);
+  
+  let contentStr = '';
+  if (typeof content === 'string') {
+    contentStr = content;
+  } else {
+    contentStr = JSON.stringify(content, null, 2);
+  }
+
+  const systemPrompt = {
+    role: 'system',
+    content: `You are a strict Quality Assurance Validator for educational content.
+Your job is to review the provided ${contentType} for factual correctness, answer accuracy, and clarity.
+
+If the content is completely correct and high-quality:
+Respond with the single word: "CORRECT"
+
+If there are ANY factual errors, incorrect answers, hallucinations, or major quality issues:
+Respond with the FIXED version of the content in the exact same format (JSON or Markdown) as the input.
+Do NOT include any explanations, "Here is the fixed version", or markdown fences around the output if the input didn't have them (unless it's a markdown file).
+Just output the clean, fixed content.
+
+Context:
+${context}`
+  };
+
+  const userPrompt = {
+    role: 'user',
+    content: `Review this ${contentType}:\n\n${contentStr}`
+  };
+
+  try {
+    const { content: responseText } = await grokExecutor({
+      model: modelConfig.model,
+      temperature: modelConfig.temperature,
+      top_p: modelConfig.top_p,
+      maxTokens: 8192, // Allow enough space for full rewrite
+      messages: [systemPrompt, userPrompt],
+      requestTimeoutMs: 120000,
+    });
+
+    const cleaned = responseText.trim();
+
+    if (cleaned.toUpperCase().includes('CORRECT') && cleaned.length < 20) {
+      return content;
+    }
+
+    // If we got a rewrite, try to parse it if the original was an object
+    if (typeof content !== 'string') {
+      // Try to parse JSON
+      const json = parseJsonObject(coerceModelText(cleaned), `validateContent-${contentType}`);
+      if (json) {
+        // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
+        if (Array.isArray(content) && !Array.isArray(json)) {
+           // Check common keys
+           if (Array.isArray(json.quiz)) return json.quiz;
+           if (Array.isArray(json.questions)) return json.questions;
+           if (Array.isArray(json.flashcards)) return json.flashcards;
+           if (Array.isArray(json.practice_exam)) return json.practice_exam;
+           // If we can't find the array, return original to be safe, or maybe the object itself if that matches?
+           // But usually we want to return the array.
+        }
+        return json;
+      } else {
+        // Failed to parse fixed JSON, return original
+        console.warn(`[validateContent] Failed to parse fixed JSON for ${contentType}, returning original.`);
+        return content;
+      }
+    } else {
+      // For markdown/string content
+      return cleanupMarkdown(cleaned);
+    }
+
+  } catch (error) {
+    console.error(`[validateContent] Error validating ${contentType}:`, error);
+    return content; // Fallback to original
+  }
 }

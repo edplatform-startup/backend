@@ -6,6 +6,7 @@ export const STAGES = Object.freeze({
   LESSON_ARCHITECT: 'LESSON_ARCHITECT',
   EXAM_GENERATOR: 'EXAM_GENERATOR',
   EXAM_GRADER: 'EXAM_GRADER',
+  VALIDATOR: 'VALIDATOR',
 });
 
 const { courseV2Models = {} } = runtimeConfig;
@@ -41,6 +42,11 @@ const DEFAULTS = {
     model: 'google/gemini-3-pro-preview',
     temp: 0.2,
     top_p: 0.8,
+  },
+  [STAGES.VALIDATOR]: {
+    model: 'x-ai/grok-4-fast',
+    temp: 0.1,
+    top_p: 0.5,
   },
 };
 

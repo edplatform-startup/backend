@@ -522,6 +522,12 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/topics', async (req, res) => {
+  // Extract userId from body if present, or rely on shared parser if it handles it (it usually doesn't extract userId for auth purposes)
+  // The shared parser parses 'req.body'. We need to ensure userId is passed.
+  // Let's check if req.body has userId.
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
   const shared = parseSharedCourseInputs(req.body || {});
   if (!shared.valid) {
     return res.status(400).json({ error: shared.error });
@@ -548,7 +554,7 @@ router.post('/topics', async (req, res) => {
       examFormatDetails: shared.examFormatDetails,
       attachments: shared.attachments,
       finishByDate: shared.finishByDateIso,
-    });
+    }, shared.userId);
 
     return res.status(200).json({
       success: true,
@@ -584,7 +590,7 @@ router.post('/:courseId/review-modules', async (req, res) => {
 
   try {
     // 1. Generate Structure
-    const lessonGraph = await generateReviewModule(topics, examType);
+    const lessonGraph = await generateReviewModule(topics, examType, userId);
 
     // 2. Persist Structure
     await saveCourseStructure(courseId, userId, lessonGraph);

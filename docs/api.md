@@ -642,6 +642,105 @@ Base URL (production): https://api.kognolearn.com
   - `400 Bad Request` → Missing parameters
   - `500 Internal Server Error` → Restructuring failure
 
+### GET /courses/:courseId/questions
+- **Purpose**: Fetch individual quiz questions for a course, with optional filtering.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Query parameters**:
+  - `userId` (string, required) – UUID of the user
+  - `correctness` (string, optional) – Filter by status: `"correct"`, `"incorrect"`, or `"unattempted"`
+  - `attempted` (boolean, optional) – If `true`, returns only questions that are NOT `"unattempted"`
+  - `lessons` (string, optional) – Comma-separated list of lesson UUIDs to filter by
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "questions": [
+        {
+          "id": "...",
+          "question": "...",
+          "options": ["..."],
+          "correct_index": 0,
+          "status": "unattempted",
+          "explanation": "..."
+        }
+      ]
+    }
+    ```
+  - `400 Bad Request` → Missing userId
+  - `500 Internal Server Error` → Database error
+
+### PATCH /courses/:courseId/questions
+- **Purpose**: Bulk update the status (correct/incorrect) of quiz questions.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `updates` (object[], required) – List of updates
+    - `id` (string, required) – UUID of the quiz question
+    - `status` (string, required) – New status (`"correct"`, `"incorrect"`, `"unattempted"`)
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "updated": 5,
+      "errors": []
+    }
+    ```
+  - `400 Bad Request` → Missing parameters
+  - `403 Forbidden` → Access denied
+  - `500 Internal Server Error` → Database error
+
+### GET /courses/:courseId/flashcards
+- **Purpose**: Fetch flashcards for a course, with optional filtering for spaced repetition.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Query parameters**:
+  - `userId` (string, required) – UUID of the user
+  - `current_timestamp` (string, optional ISO date) – If provided, returns only cards with `next_show_timestamp` < `current_timestamp`
+  - `lessons` (string, optional) – Comma-separated list of lesson UUIDs to filter by
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "flashcards": [
+        {
+          "id": "...",
+          "front": "...",
+          "back": "...",
+          "next_show_timestamp": "2023-..."
+        }
+      ]
+    }
+    ```
+  - `400 Bad Request` → Missing userId
+  - `500 Internal Server Error` → Database error
+
+### PATCH /courses/:courseId/flashcards
+- **Purpose**: Bulk update the scheduling of flashcards.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `updates` (object[], required) – List of updates
+    - `id` (string, required) – UUID of the flashcard
+    - `next_show_timestamp` (string, required ISO date) – New scheduled time
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "updated": 3,
+      "errors": []
+    }
+    ```
+  - `400 Bad Request` → Missing parameters
+  - `403 Forbidden` → Access denied
+  - `500 Internal Server Error` → Database error
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

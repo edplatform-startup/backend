@@ -298,6 +298,7 @@ export async function synthesizeSyllabus({
   examFormatDetails,
   topics,
   attachments = [],
+  userId,
 }) {
   if (customSyllabusSynthesizer) {
     return customSyllabusSynthesizer({
@@ -307,6 +308,7 @@ export async function synthesizeSyllabus({
       examFormatDetails,
       topics,
       attachments,
+      userId,
     });
   }
 
@@ -328,6 +330,7 @@ export async function synthesizeSyllabus({
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
+      userId,
     });
 
     const rawContent = result?.content;
@@ -358,6 +361,7 @@ Return corrected JSON only.`,
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for repair call
+      userId,
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
@@ -378,7 +382,7 @@ Return corrected JSON only.`,
 /**
  * Hierarchical topic generation (already working well; do not touch its use).
  */
-export async function generateHierarchicalTopics(input = {}) {
+export async function generateHierarchicalTopics(input = {}, userId) {
   const {
     university = null,
     courseTitle = 'Custom course',
@@ -397,6 +401,7 @@ export async function generateHierarchicalTopics(input = {}) {
       examFormatDetails,
       topics: [],
       attachments: attachments || [],
+      userId,
     });
 
     const skeletonUnits = Array.isArray(syllabus?.skeleton) ? syllabus.skeleton : [];
@@ -495,6 +500,7 @@ Using this information, produce competency-based overviewTopics with fully popul
       allowWeb: true,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for TOPICS with web search
+      userId,
     });
 
     const parsed = tryParseJson(result?.content);

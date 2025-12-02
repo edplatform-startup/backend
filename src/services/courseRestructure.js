@@ -71,7 +71,8 @@ Identify all lessons that need to change.`;
       { role: 'system', content: selectionSystemPrompt },
       { role: 'user', content: selectionUserPrompt }
     ],
-    responseFormat: { type: 'json_object' }
+    responseFormat: { type: 'json_object' },
+    userId,
   });
 
   let affectedIds = [];
@@ -133,7 +134,8 @@ Return JSON ONLY (no markdown, no conversational text):
       stage: STAGES.LESSON_ARCHITECT,
       maxTokens: 2048,
       messages: [{ role: 'user', content: `Generate change instructions for lesson "${node.title}".` }],
-      responseFormat: { type: 'json_object' }
+      responseFormat: { type: 'json_object' },
+      userId,
     });
 
     let changePlans = {};
