@@ -1926,18 +1926,20 @@ async function validateContent(contentType, content, context) {
     contentStr = JSON.stringify(content, null, 2);
   }
 
+  const isJsonContent = typeof content !== 'string';
+
   const systemPrompt = {
     role: 'system',
     content: `You are a strict Quality Assurance Validator for educational content.
 Your job is to review the provided ${contentType} for factual correctness, answer accuracy, and clarity.
 
 If the content is completely correct and high-quality:
-Respond with the single word: "CORRECT"
+Respond with ONLY the single word: "CORRECT"
 
 If there are ANY factual errors, incorrect answers, hallucinations, or major quality issues:
-Respond with the FIXED version of the content in the exact same format (JSON or Markdown) as the input.
-Do NOT include any explanations, "Here is the fixed version", or markdown fences around the output if the input didn't have them (unless it's a markdown file).
-Just output the clean, fixed content.
+${isJsonContent 
+  ? 'Respond with ONLY the FIXED JSON. Do not include ANY explanatory text, markdown fences, or commentary. Just output the pure JSON object or array.'
+  : 'Respond with ONLY the FIXED markdown content. Do not include explanatory text or markdown fences around the output.'}
 
 Context:
 ${context}`
@@ -1949,14 +1951,21 @@ ${context}`
   };
 
   try {
-    const { content: responseText } = await grokExecutor({
+    const grokOptions = {
       model: modelConfig.model,
       temperature: modelConfig.temperature,
       top_p: modelConfig.top_p,
       maxTokens: 8192, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
-    });
+    };
+
+    // For JSON content, hint that we want JSON response format
+    if (isJsonContent) {
+      grokOptions.responseFormat = { type: 'json_object' };
+    }
+
+    const { content: responseText } = await grokExecutor(grokOptions);
 
     const cleaned = responseText.trim();
 
@@ -1965,25 +1974,50 @@ ${context}`
     }
 
     // If we got a rewrite, try to parse it if the original was an object
-    if (typeof content !== 'string') {
-      // Try to parse JSON
-      const json = parseJsonObject(coerceModelText(cleaned), `validateContent-${contentType}`);
-      if (json) {
-        // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
-        if (Array.isArray(content) && !Array.isArray(json)) {
-           // Check common keys
-           if (Array.isArray(json.quiz)) return json.quiz;
-           if (Array.isArray(json.questions)) return json.questions;
-           if (Array.isArray(json.flashcards)) return json.flashcards;
-           if (Array.isArray(json.practice_exam)) return json.practice_exam;
-           // If we can't find the array, return original to be safe, or maybe the object itself if that matches?
-           // But usually we want to return the array.
+    if (isJsonContent) {
+      // Try to parse JSON - use the robust extraction from our utilities
+      let jsonToParse = coerceModelText(cleaned);
+      
+      // Use extractJsonBlock from jsonUtils if the direct parse fails
+      try {
+        // First try direct parse
+        const json = JSON.parse(jsonToParse);
+        if (json) {
+          // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
+          if (Array.isArray(content) && !Array.isArray(json)) {
+             // Check common keys
+             if (Array.isArray(json.quiz)) return json.quiz;
+             if (Array.isArray(json.questions)) return json.questions;
+             if (Array.isArray(json.flashcards)) return json.flashcards;
+             if (Array.isArray(json.practice_exam)) return json.practice_exam;
+             // If we can't find the array, return original to be safe
+          }
+          return json;
         }
-        return json;
-      } else {
-        // Failed to parse fixed JSON, return original
-        console.warn(`[validateContent] Failed to parse fixed JSON for ${contentType}, returning original.`);
-        return content;
+      } catch (directParseError) {
+        // Direct parse failed, try the full repair pipeline
+        try {
+          const json = parseJsonObject(jsonToParse, `validateContent-${contentType}`);
+          if (json) {
+            // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
+            if (Array.isArray(content) && !Array.isArray(json)) {
+               // Check common keys
+               if (Array.isArray(json.quiz)) return json.quiz;
+               if (Array.isArray(json.questions)) return json.questions;
+               if (Array.isArray(json.flashcards)) return json.flashcards;
+               if (Array.isArray(json.practice_exam)) return json.practice_exam;
+               // If we can't find the array, return original to be safe
+            }
+            return json;
+          }
+        } catch (parseError) {
+          // Log the actual response to help debug
+          console.error(`[validateContent] Failed to parse JSON for ${contentType}. Raw response length: ${cleaned.length}`);
+          console.error(`[validateContent] First 500 chars of response:`, cleaned.substring(0, 500));
+          console.error(`[validateContent] Parse error:`, parseError.message);
+          console.warn(`[validateContent] Returning original content due to parse failure.`);
+          return content;
+        }
       }
     } else {
       // For markdown/string content
