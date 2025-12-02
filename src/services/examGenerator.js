@@ -199,21 +199,68 @@ function extractLatexError(error) {
 async function compileLatexToPdf(latexCode) {
   return new Promise((resolve, reject) => {
     const input = Readable.from([Buffer.from(latexCode)]);
-    const outputPath = join(tmpdir(), `exam_${Date.now()}.pdf`);
+    const timestamp = Date.now();
+    const outputPath = join(tmpdir(), `exam_${timestamp}.pdf`);
+    const logPath = join(tmpdir(), `exam_${timestamp}.log`);
+    
     const output = createWriteStream(outputPath);
-    const pdf = latex(input);
+    // Enable errorLogs to capture the full log file
+    const pdf = latex(input, { errorLogs: logPath });
 
     pdf.pipe(output);
-    pdf.on('error', (err) => {
-      reject(err);
+    pdf.on('error', async (err) => {
+      try {
+        // Try to read the log file to get detailed errors
+        const fs = await import('fs/promises');
+        let detailedError = err.message;
+        
+        try {
+          const logContent = await fs.readFile(logPath, 'utf8');
+          
+          // Parse log for LaTeX errors (lines starting with !)
+          const lines = logContent.split('\n');
+          const errorLines = [];
+          let contextLines = [];
+          
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.startsWith('!')) {
+              // Found an error, capture it and some context
+              errorLines.push(line);
+              // Add a few lines of context after the error if available
+              if (lines[i+1]) errorLines.push(lines[i+1]);
+              if (lines[i+2]) errorLines.push(lines[i+2]);
+            }
+          }
+          
+          if (errorLines.length > 0) {
+            detailedError = `LaTeX Syntax Error\n${errorLines.join('\n')}`;
+          } else {
+            // Fallback if no "!" errors found but compilation failed
+            detailedError = `LaTeX Compilation Failed\n${logContent.slice(-1000)}`; // Last 1000 chars
+          }
+          
+          // Clean up log file
+          await fs.unlink(logPath).catch(() => {});
+        } catch (readErr) {
+          console.warn('[examGenerator] Could not read LaTeX log file:', readErr.message);
+        }
+        
+        // Reject with the detailed error message
+        reject(new Error(detailedError));
+      } catch (e) {
+        reject(e);
+      }
     });
+    
     pdf.on('finish', async () => {
       try {
         // Read the file back into a buffer
         const fs = await import('fs/promises');
         const buffer = await fs.readFile(outputPath);
-        // Cleanup
+        // Cleanup PDF and Log
         await fs.unlink(outputPath).catch(() => {});
+        await fs.unlink(logPath).catch(() => {}); // Clean up log on success too
         resolve(buffer);
       } catch (e) {
         reject(e);
