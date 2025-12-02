@@ -182,9 +182,6 @@ router.patch('/:courseId/nodes/:nodeId/progress', async (req, res) => {
       result = data;
     }
 
-      }
-    });
-
     // Log progress update
     await logUsageEvent(userId, 'lesson_progress_updated', { 
       courseId, 
@@ -582,9 +579,6 @@ router.post('/topics', async (req, res) => {
       finishByDate: shared.finishByDateIso,
     }, shared.userId);
 
-      model: result.model,
-    });
-
     // Log topics generation
     // Note: userId is extracted from body above
     await logUsageEvent(userId, 'topics_generated', { 
@@ -632,8 +626,6 @@ router.post('/:courseId/review-modules', async (req, res) => {
     await saveCourseStructure(courseId, userId, lessonGraph);
 
     // 3. Generate Content
-    const contentResult = await generateCourseContent(courseId);
-
     const contentResult = await generateCourseContent(courseId);
 
     // Log review module creation
@@ -700,8 +692,6 @@ router.get('/:courseId/review-modules', async (req, res) => {
     }
 
     const { data, error } = await query;
-
-    if (error) throw error;
 
     if (error) throw error;
 
@@ -829,8 +819,6 @@ router.get('/:courseId/exams/:type', async (req, res) => {
       })
       .sort((a, b) => a.number - b.number);
 
-      .sort((a, b) => a.number - b.number);
-
     // Log practice exam list view
     await logUsageEvent(userId, 'practice_exam_list_viewed', { 
       courseId, 
@@ -900,8 +888,6 @@ router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res
       // We don't fail the request if saving fails, but we log it. 
       // Alternatively, we could include a warning in the response.
     }
-
-    });
 
     // Log exam graded
     await logUsageEvent(userId, 'practice_exam_graded', { 

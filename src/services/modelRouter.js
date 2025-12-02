@@ -11,9 +11,9 @@ export const STAGES = Object.freeze({
 
 const { courseV2Models = {} } = runtimeConfig;
 
-const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4-fast';
+const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-3-pro-preview';
 const topicsModel =
-  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'google/gemini-3-pro-preview';
+  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'x-ai/grok-4-fast';
 const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
