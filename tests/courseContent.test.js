@@ -195,7 +195,7 @@ test('generateCourseContent fills node payloads and marks course ready', async (
       };
     }
 
-    const mdDoc = "# Lesson Body\nIt's great.";
+    const mdDoc = "# Lesson Body\nIt's great.\n" + "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(20);
     return {
       content: JSON.stringify({
         internal_audit: 'reading scratchpad',

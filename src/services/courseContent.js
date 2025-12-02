@@ -839,26 +839,27 @@ function splitContentIntoChunks(markdown) {
     }
   }
 
-  // Filter and merge small chunks
+  // Filter and merge chunks to ensure minimum size
   const mergedChunks = [];
   let buffer = '';
+  const MIN_CHUNK_SIZE = 1500;
 
   for (const chunk of chunks) {
-    // If chunk is very short (e.g. just a header or < 100 chars), append to buffer
-    // But if it starts with a header, we generally want to keep it unless it's empty content
-    const isJustHeader = /^#{1,3}\s+[^\n]*$/.test(chunk.trim());
-
-    if (chunk.length < 100 && !isJustHeader && buffer) {
-      buffer += '\n\n' + chunk;
+    if (buffer.length < MIN_CHUNK_SIZE) {
+      buffer += (buffer ? '\n\n' : '') + chunk;
     } else {
-      if (buffer) {
-        mergedChunks.push(buffer);
-      }
+      mergedChunks.push(buffer);
       buffer = chunk;
     }
   }
+
   if (buffer) {
-    mergedChunks.push(buffer);
+    // If the last buffer is small and we have previous chunks, merge it to the last one
+    if (mergedChunks.length > 0 && buffer.length < 500) {
+      mergedChunks[mergedChunks.length - 1] += '\n\n' + buffer;
+    } else {
+      mergedChunks.push(buffer);
+    }
   }
 
   return mergedChunks;
@@ -876,7 +877,7 @@ import { pickModel, STAGES } from './modelRouter.js';
  */
 export async function generateInlineQuestion(chunkText) {
 
-  
+
   const systemPrompt = {
     role: 'system',
     content: `You are an expert instructional designer and subject matter expert. 
@@ -932,7 +933,7 @@ Ensure answerIndex is valid.`,
       // Only strip prefix if it's a letter followed by . or ) (not just a space)
       // e.g., "A. content" -> "content", but "By doing..." stays intact
       cleanOpt = cleanOpt.replace(/^[A-D][.)]\s*/i, '').trim();
-      
+
       md += `- ${letter}. ${cleanOpt}\n`;
     });
 
@@ -1046,7 +1047,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       let chunk = chunks[i];
 
       // Only enrich the first N chunks
-      if (i < MAX_ENRICHED) {
+      if (i < MAX_ENRICHED && chunk.length > 500) {
         // Generate inline question
         const questionMd = await generateInlineQuestion(chunk);
         if (questionMd) {
@@ -1427,7 +1428,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
     } catch (err) {
       throw err;
     }
-    
+
     let body = typeof parsed?.final_content?.markdown === 'string'
       ? parsed.final_content.markdown
       : typeof parsed?.final_content === 'string'
@@ -1451,7 +1452,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
 
     for (let i = 0; i < chunks.length; i++) {
       let chunk = chunks[i];
-      if (i < MAX_ENRICHED) {
+      if (i < MAX_ENRICHED && chunk.length > 500) {
         const questionMd = await generateInlineQuestion(chunk);
         if (questionMd) {
           chunk += questionMd;
@@ -1521,9 +1522,9 @@ Rules:
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
   });
-  
+
   const text = coerceModelText(content);
-  
+
   try {
     let questions = parseJsonArray(text, 'quiz');
     if (!questions.length) questions = parseJsonArray(text, 'questions');
@@ -1546,7 +1547,7 @@ Rules:
     };
 
     const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'regenerateQuiz');
-    
+
     if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
 
     return { data: repairedQuestions, stats };
@@ -1724,7 +1725,7 @@ export async function generateVideoSelection(queries) {
       // 1. EXECUTE SEARCH MANUALLY
       console.log(`[VIDEO GENERATION] Querying yt-search with: "${query}" (Attempt ${attempt + 1})`);
       logs.push(`Searching YouTube for: "${query}"`);
-      
+
       const res = await yts(query);
       searchResults = res.videos.slice(0, 5).map((v, i) => ({
         index: i,
@@ -1740,13 +1741,13 @@ export async function generateVideoSelection(queries) {
       if (searchResults.length === 0) {
         logs.push('No videos found for this query.');
         if (attempt < maxRetries) {
-           break; 
+          break;
         }
         continue;
       }
 
       // 2. ASK LLM TO SELECT
-      const videoListString = searchResults.map(v => 
+      const videoListString = searchResults.map(v =>
         `[${v.index}] Title: "${v.title}" | Channel: ${v.author} | Duration: ${v.timestamp}`
       ).join('\n');
 
@@ -1796,18 +1797,18 @@ Select the best video index.`
           thumbnail: selected.thumbnail,
           url: selected.url,
         });
-        
+
         console.log('[VIDEO GENERATION] ✓ Selected Video:');
         console.log('  Index:', selectedIndex);
         console.log('  Title:', selected.title);
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         logs.push(`Selected video index ${selectedIndex}: "${selected.title}"`);
-        
+
         return { videos, logs }; // Success!
       } else if (selectedIndex === -1) {
         console.log('[VIDEO GENERATION] LLM rejected all videos.');
         logs.push('LLM indicated no valid videos in this batch.');
-        break; 
+        break;
       } else {
         console.log('[VIDEO GENERATION] Invalid selection index:', selectedIndex);
         logs.push(`Invalid selection index: ${selectedIndex}`);
