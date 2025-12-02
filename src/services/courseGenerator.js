@@ -60,22 +60,23 @@ CRITICAL RULES:
 1. **Granularity:** "Atomic" means a lesson that takes 15-45 minutes to complete. Split broad topics. Merge tiny fragments (unless foundational).
 2. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
 3. **No Cycles:** The graph must be strictly Acyclic.
-4. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
+4. **Module Organization:** Aim for modules with MORE than 2 lessons whenever possible to keep content properly chunked and modularized. Single-lesson or two-lesson modules should only be used when the topic is genuinely standalone or foundational. Well-organized modules (3-6 lessons) improve learning flow and coherence.
+5. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
    - A lesson can have multiple readings (e.g., theory + examples + edge cases)
    - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
   - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
    - ALL content should flow in a logical learning order for maximum comprehension
-5. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the entire module's content.
-6. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
+6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the entire module's content.
+7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
    - **video:** 2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.
    - **quiz:** Detailed prompt for an examiner. Explicitly request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that would test even a strong student. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
-7. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
-8. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
-9. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
+8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
+9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
+10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
