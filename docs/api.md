@@ -847,6 +847,46 @@ Base URL (production): https://api.kognolearn.com
     ```
   - 500 Internal Server Error → Database error.
 
+### POST /feedback
+- Purpose: Submit user feedback (bugs, feature requests, content issues, or general feedback).
+- Request body (JSON):
+  ```json
+  {
+    "userId": "uuid-string (required)",
+    "userEmail": "user@example.com (optional)",
+    "type": "bug | feature | content | other (required)",
+    "message": "User's feedback text (required)",
+    "context": {
+      "url": "https://kognolearn.com/courses/abc123",
+      "pathname": "/courses/abc123",
+      "timestamp": "2025-12-02T10:30:00.000Z",
+      "courseId": "abc123",
+      "page": "course | dashboard | review",
+      "viewport": { "width": 1920, "height": 1080 },
+      "userAgent": "Mozilla/5.0..."
+    }
+  }
+  ```
+- Field requirements:
+  - `userId` (string, required) – User's UUID.
+  - `userEmail` (string, optional) – User's email for follow-up.
+  - `type` (string, required) – One of: `bug`, `feature`, `content`, `other`.
+  - `message` (string, required) – Feedback text.
+  - `context` (object, optional) – Additional context about where/when feedback was submitted.
+- Responses:
+  - 201 Created →
+    ```json
+    {
+      "success": true,
+      "feedback": {
+        "id": "uuid",
+        "created_at": "2025-12-02T10:30:00.000Z"
+      }
+    }
+    ```
+  - 400 Bad Request → Missing required fields or invalid type.
+  - 500 Internal Server Error → Database error.
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

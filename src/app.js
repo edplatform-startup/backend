@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import coursesRouter from './routes/courses.js';
 import chatRouter from './routes/chat.js';
 import analyticsRouter from './routes/analytics.js';
+import feedbackRouter from './routes/feedback.js';
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.get('/healthz', (req, res) => {
 app.use('/courses', coursesRouter);
 app.use('/chat', chatRouter);
 app.use('/analytics', analyticsRouter);
+app.use('/feedback', feedbackRouter);
 
 // 404 handler
 app.use((req, res) => {
