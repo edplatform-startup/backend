@@ -564,6 +564,7 @@ router.post('/topics', async (req, res) => {
 });
 
 import { generateLessonGraph, generateReviewModule } from '../services/courseGenerator.js';
+import { restructureCourse } from '../services/courseRestructure.js';
 import { generatePracticeExam } from '../services/examGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
@@ -595,6 +596,23 @@ router.post('/:courseId/review-modules', async (req, res) => {
   } catch (error) {
     console.error('Error creating review module:', error);
     return res.status(500).json({ error: 'Failed to create review module', details: error.message });
+  }
+
+});
+
+router.post('/:courseId/restructure', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, prompt, lessonIds } = req.body;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+
+  try {
+    const result = await restructureCourse(courseId, userId, prompt, lessonIds);
+    return res.json(result);
+  } catch (error) {
+    console.error('Error restructuring course:', error);
+    return res.status(500).json({ error: 'Failed to restructure course', details: error.message });
   }
 });
 

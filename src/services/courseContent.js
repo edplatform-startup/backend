@@ -1369,6 +1369,322 @@ function normalizeFlashcard(card, index) {
   return { front, back };
 }
 
+export async function regenerateReading(title, currentContent, changeInstruction, courseName, moduleName, prereqs = []) {
+  const contextNote = prereqs.length
+    ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites.`
+    : `Context: This is an introductory lesson with no prerequisites.`;
+
+  const systemPrompt = {
+    role: 'system',
+    content: `You are an elite instructional designer editing an existing reading lesson.
+You are modifying the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+${contextNote}
+
+Your goal is to rewrite the content based strictly on the Change Instruction.
+Keep the parts that don't need changing, but ensure the flow remains coherent.
+
+Always respond with JSON shaped exactly as:
+{
+  "internal_audit": "scratchpad reasoning about changes",
+  "final_content": {
+    "markdown": "FULL new markdown content"
+  }
+}
+
+CRITICAL REQUIREMENTS:
+1. Output the ENTIRE lesson content, not just the diff.
+2. Prefer Markdown for all text, headings, lists and examples.
+3. Use inline LaTeX ($...$) or display math ($$...$$) only when required.
+4. Do NOT include inline questions or "Check Your Understanding" blocks; these will be generated automatically.
+5. Do not include editor scratchpad text inside the markdown.
+`,
+  };
+
+  const userPrompt = {
+    role: 'user',
+    content: `Current Content:
+${currentContent}
+
+Change Instruction:
+${changeInstruction}
+
+Return JSON ONLY. Populate final_content.markdown with the entire updated text.`,
+  };
+
+  const renderResponse = async (promptMessages) => {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.3,
+      maxTokens: 8192,
+      messages: promptMessages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000,
+    });
+    const raw = coerceModelText(content);
+    let parsed;
+    try {
+      parsed = parseJsonObject(raw, 'regenerateReading');
+    } catch (err) {
+      throw err;
+    }
+    
+    let body = typeof parsed?.final_content?.markdown === 'string'
+      ? parsed.final_content.markdown
+      : typeof parsed?.final_content === 'string'
+        ? parsed.final_content
+        : '';
+
+    if (!body) {
+      throw new Error('Reading regenerator returned empty final_content');
+    }
+
+    return cleanupMarkdown(body);
+  };
+
+  let resultText = await renderResponse([systemPrompt, userPrompt]);
+
+  // --- ENRICHMENT STEP (Same as generateReading) ---
+  try {
+    const chunks = splitContentIntoChunks(resultText);
+    const enrichedChunks = [];
+    const MAX_ENRICHED = 5;
+
+    for (let i = 0; i < chunks.length; i++) {
+      let chunk = chunks[i];
+      if (i < MAX_ENRICHED) {
+        const questionMd = await generateInlineQuestion(chunk);
+        if (questionMd) {
+          chunk += questionMd;
+        }
+      }
+      enrichedChunks.push(chunk);
+    }
+    resultText = enrichedChunks.join('\n\n---\n\n');
+  } catch (enrichError) {
+    // Fallback to text without enrichment
+  }
+
+  return {
+    data: resultText,
+    stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
+  };
+}
+
+export async function regenerateQuiz(title, currentQuiz, changeInstruction, courseName, moduleName, prereqs = []) {
+  const contextNote = prereqs.length
+    ? `Context: The student has completed lessons on [${prereqs.join(', ')}].`
+    : `Context: This is an introductory lesson.`;
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are editing a graduate-level quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+${contextNote}
+
+Current Quiz JSON:
+${JSON.stringify(currentQuiz, null, 2)}
+
+Change Instruction:
+${changeInstruction}
+
+Always respond with JSON:
+{
+  "internal_audit": "reasoning about changes",
+  "quiz": [
+    {
+      "validation_check": "Chain-of-thought",
+      "question": "Student-facing stem",
+      "options": ["..."],
+      "correct_index": 0,
+      "explanation": "Rationale"
+    }
+  ]
+}
+
+Rules:
+- Replace or modify questions as requested.
+- Keep the total number of questions similar unless instructed otherwise.
+- Ensure one "Challenge Question" remains.
+`,
+    },
+    {
+      role: 'user',
+      content: `Generate the new JSON 'quiz' array based on the changes.`,
+    },
+  ];
+
+  const { content } = await grokExecutor({
+    model: 'x-ai/grok-4-fast',
+    temperature: 0.2,
+    maxTokens: 2048,
+    messages,
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 120000,
+  });
+  
+  const text = coerceModelText(content);
+  
+  try {
+    let questions = parseJsonArray(text, 'quiz');
+    if (!questions.length) questions = parseJsonArray(text, 'questions');
+
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { validation_check, step_by_step_thinking, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizeQuizItem(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    };
+
+    const repairPrompt = (brokenItems, errors) => {
+      return `Regenerate these invalid quiz items:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}`;
+    };
+
+    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'regenerateQuiz');
+    
+    if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
+
+    return { data: repairedQuestions, stats };
+  } catch (err) {
+    throw err;
+  }
+}
+
+export async function regenerateFlashcards(title, currentCards, changeInstruction, courseName, moduleName) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are editing flashcards for the lesson "${title}" in module "${moduleName}".
+Current Cards:
+${JSON.stringify(currentCards, null, 2)}
+
+Change Instruction:
+${changeInstruction}
+
+Always respond with JSON:
+{
+  "internal_audit": "reasoning",
+  "flashcards": [
+    { "step_by_step_thinking": "...", "front": "...", "back": "..." }
+  ]
+}
+`,
+    },
+    {
+      role: 'user',
+      content: `Generate the new JSON 'flashcards' array.`,
+    },
+  ];
+
+  const { content } = await grokExecutor({
+    model: 'x-ai/grok-4-fast',
+    temperature: 0.25,
+    maxTokens: 2048,
+    messages,
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 120000,
+  });
+
+  const text = coerceModelText(content);
+
+  try {
+    const flashcards = parseJsonArray(text, 'flashcards');
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { step_by_step_thinking, internal_audit, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizeFlashcard(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    };
+
+    const repairPrompt = (brokenItems, errors) => `Regenerate invalid flashcards:\n${JSON.stringify(brokenItems)}`;
+    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'regenerateFlashcards');
+
+    if (!repairedCards.length) throw new Error('Flashcard regenerator returned no valid cards');
+    return { data: repairedCards, stats };
+  } catch (err) {
+    throw err;
+  }
+}
+
+export async function regeneratePracticeExam(title, currentExam, changeInstruction, courseName, moduleName) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are editing a practice exam for the lesson "${title}" in module "${moduleName}".
+Current Exam:
+${JSON.stringify(currentExam, null, 2)}
+
+Change Instruction:
+${changeInstruction}
+
+Always respond with JSON:
+{
+  "internal_audit": "reasoning",
+  "practice_exam": [
+    {
+      "validation_check": "...",
+      "question": "...",
+      "answer_key": "...",
+      "rubric": "...",
+      "estimated_minutes": 20
+    }
+  ]
+}
+`,
+    },
+    {
+      role: 'user',
+      content: `Generate the new JSON 'practice_exam' array.`,
+    },
+  ];
+
+  const { content } = await grokExecutor({
+    model: 'x-ai/grok-4-fast',
+    temperature: 0.25,
+    maxTokens: 4096,
+    messages,
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 120000,
+  });
+
+  const text = coerceModelText(content);
+
+  try {
+    const rawItems = parseJsonArray(text, 'practice_exam');
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { validation_check, step_by_step_thinking, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizePracticeExamItem(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    };
+
+    const repairPrompt = (brokenItems, errors) => `Regenerate invalid practice exam items:\n${JSON.stringify(brokenItems)}`;
+    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'regeneratePracticeExam');
+
+    if (!repairedItems.length) throw new Error('Practice exam regenerator returned no valid problems');
+    return { data: repairedItems, stats };
+  } catch (err) {
+    throw err;
+  }
+}
+
 export async function generateVideoSelection(queries) {
   const logs = [];
   const videos = [];
