@@ -543,7 +543,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label) 
       const { content } = await grokExecutor({
         model: 'x-ai/grok-4-fast',
         temperature: 0.2,
-        maxTokens: 1500,
+        maxTokens: 2048,
         messages: [
           { role: 'system', content: 'You are a JSON repair assistant. Fix the provided broken JSON objects based on the error messages. Return a JSON object with a key "repaired_items" containing the array of fixed objects.' },
           { role: 'user', content: prompt }
@@ -905,7 +905,7 @@ Ensure answerIndex is valid.`,
     const response = await grokExecutor({
       model: 'x-ai/grok-4-fast',
       temperature: 0.3, // Slightly higher for creativity in question design
-      maxTokens: 600,
+      maxTokens: 512,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
     });
@@ -987,7 +987,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     const { content } = await grokExecutor({
       model: 'x-ai/grok-4-fast',
       temperature: 0.35,
-      maxTokens: 1800,
+      maxTokens: 8192,
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
@@ -1131,7 +1131,7 @@ Each question: 4 options, single correct_index, validation_check before finalizi
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4-fast',
     temperature: 0.2,
-    maxTokens: 900,
+    maxTokens: 1024,
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
@@ -1228,7 +1228,7 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4-fast',
     temperature: 0.25,
-    maxTokens: 1400,
+    maxTokens: 4096,
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
@@ -1321,7 +1321,7 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4-fast',
     temperature: 0.25,
-    maxTokens: 700,
+    maxTokens: 1024,
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
@@ -1460,7 +1460,7 @@ Select the best video index.`
       const response = await grokExecutor({
         model: 'x-ai/grok-4-fast',
         temperature: 0.1,
-        maxTokens: 200,
+        maxTokens: 256,
         messages,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
