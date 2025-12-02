@@ -85,19 +85,20 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
           type: 'file',
           file: {
             filename: 'blank_exam.pdf',
-            fileData: blankExamUrl
-          }
+            file_data: blankExamUrl,      // <-- change here
+          },
         },
         {
           type: 'file',
           file: {
             filename: 'student_submission.pdf',
-            fileData: studentSubmissionUrl
-          }
-        }
-      ]
-    }
+            file_data: studentSubmissionUrl,  // <-- and here
+          },
+        },
+      ],
+    },
   ];
+
 
   // 4. Call LLM
   console.log(`[examGrader] Calling LLM with EXAM_GRADER stage (multimodal)`);
@@ -106,7 +107,7 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
     messages,
     attachments: [], // No legacy attachments
     maxTokens: 10000,
-    responseFormat: 'json',
+    responseFormat: {type: 'json_object'},
     plugins: [
       {
         id: 'file-parser',
