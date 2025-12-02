@@ -197,7 +197,7 @@ async function runContentWorker(courseId, options = {}) {
   const { data: pendingNodes, error: fetchError } = await supabase
     .schema('api')
     .from('course_nodes')
-    .select('id, title, content_payload, metadata, module_ref')
+    .select('id, title, content_payload, metadata, module_ref, user_id, course_id')
     .eq('course_id', courseId)
     .contains('content_payload', { status: STATUS_PENDING });
 
@@ -352,6 +352,41 @@ async function processNode(node, supabase, courseTitle, prereqs = []) {
     videoPromise,
     practiceExamPromise,
   ]);
+
+  // Save Quizzes to DB
+  if (quizRes?.data?.length) {
+    const quizPayloads = quizRes.data.map(q => ({
+      course_id: node.course_id,
+      node_id: node.id,
+      user_id: node.user_id,
+      question: q.question,
+      options: q.options,
+      correct_index: q.correct_index,
+      explanation: q.explanation,
+      status: 'unattempted'
+    }));
+    const { error: quizError } = await supabase.schema('api').from('quiz_questions').insert(quizPayloads);
+    if (quizError) {
+      console.error(`[processNode] Failed to save quizzes for node ${node.id}:`, quizError);
+      // We don't throw here to avoid failing the whole node content update, but we log it.
+    }
+  }
+
+  // Save Flashcards to DB
+  if (flashcardsRes?.data?.length) {
+    const flashcardPayloads = flashcardsRes.data.map(f => ({
+      course_id: node.course_id,
+      node_id: node.id,
+      user_id: node.user_id,
+      front: f.front,
+      back: f.back,
+      next_show_timestamp: new Date().toISOString()
+    }));
+    const { error: fcError } = await supabase.schema('api').from('flashcards').insert(flashcardPayloads);
+    if (fcError) {
+      console.error(`[processNode] Failed to save flashcards for node ${node.id}:`, fcError);
+    }
+  }
 
   const videos = videoResult?.videos || [];
   const videoLogs = videoResult?.logs || [];

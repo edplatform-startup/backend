@@ -1289,4 +1289,163 @@ function deriveCourseTitle(grokDraft, metadata) {
   return 'Generated course';
 }
 
+
+// GET /:courseId/questions
+router.get('/:courseId/questions', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, correctness, attempted, lessons } = req.query;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .schema('api')
+      .from('quiz_questions')
+      .select('*')
+      .eq('course_id', courseId)
+      .eq('user_id', userId);
+
+    if (correctness) {
+      query = query.eq('status', correctness);
+    }
+
+    if (attempted === 'true') {
+      query = query.neq('status', 'unattempted');
+    }
+
+    if (lessons) {
+      const lessonIds = lessons.split(',');
+      query = query.in('node_id', lessonIds);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return res.json({ success: true, questions: data });
+  } catch (error) {
+    console.error('Error fetching questions:', error);
+    return res.status(500).json({ error: 'Failed to fetch questions', details: error.message });
+  }
+});
+
+// PATCH /:courseId/questions
+router.patch('/:courseId/questions', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, updates } = req.body; // updates: [{ id, status }]
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (!updates || !Array.isArray(updates)) return res.status(400).json({ error: 'updates array is required' });
+
+  try {
+    const supabase = getSupabase();
+    
+    // Verify course access
+    const { data: courseAccess } = await supabase.schema('api').from('courses').select('id').eq('id', courseId).eq('user_id', userId).single();
+    if (!courseAccess) return res.status(403).json({ error: 'Access denied' });
+
+    const results = [];
+    const errors = [];
+
+    await Promise.all(updates.map(async (update) => {
+      const { id, status } = update;
+      if (!id || !status) return;
+      
+      const { data, error } = await supabase
+        .schema('api')
+        .from('quiz_questions')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('course_id', courseId)
+        .eq('user_id', userId)
+        .select();
+        
+      if (error) errors.push({ id, error: error.message });
+      else results.push(data[0]);
+    }));
+
+    return res.json({ success: true, updated: results.length, errors });
+  } catch (error) {
+    console.error('Error updating questions:', error);
+    return res.status(500).json({ error: 'Failed to update questions', details: error.message });
+  }
+});
+
+// GET /:courseId/flashcards
+router.get('/:courseId/flashcards', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, current_timestamp, lessons } = req.query;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .schema('api')
+      .from('flashcards')
+      .select('*')
+      .eq('course_id', courseId)
+      .eq('user_id', userId);
+
+    if (current_timestamp) {
+      query = query.lt('next_show_timestamp', current_timestamp);
+    }
+
+    if (lessons) {
+      const lessonIds = lessons.split(',');
+      query = query.in('node_id', lessonIds);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return res.json({ success: true, flashcards: data });
+  } catch (error) {
+    console.error('Error fetching flashcards:', error);
+    return res.status(500).json({ error: 'Failed to fetch flashcards', details: error.message });
+  }
+});
+
+// PATCH /:courseId/flashcards
+router.patch('/:courseId/flashcards', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, updates } = req.body; // updates: [{ id, next_show_timestamp }]
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (!updates || !Array.isArray(updates)) return res.status(400).json({ error: 'updates array is required' });
+
+  try {
+    const supabase = getSupabase();
+    
+    // Verify course access
+    const { data: courseAccess } = await supabase.schema('api').from('courses').select('id').eq('id', courseId).eq('user_id', userId).single();
+    if (!courseAccess) return res.status(403).json({ error: 'Access denied' });
+
+    const results = [];
+    const errors = [];
+
+    await Promise.all(updates.map(async (update) => {
+      const { id, next_show_timestamp } = update;
+      if (!id || !next_show_timestamp) return;
+
+      const { data, error } = await supabase
+        .schema('api')
+        .from('flashcards')
+        .update({ next_show_timestamp, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('course_id', courseId)
+        .eq('user_id', userId)
+        .select();
+
+      if (error) errors.push({ id, error: error.message });
+      else results.push(data[0]);
+    }));
+
+    return res.json({ success: true, updated: results.length, errors });
+  } catch (error) {
+    console.error('Error updating flashcards:', error);
+    return res.status(500).json({ error: 'Failed to update flashcards', details: error.message });
+  }
+});
+
 export default router;
