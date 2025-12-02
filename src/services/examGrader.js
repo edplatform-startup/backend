@@ -113,7 +113,8 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
         id: 'file-parser',
         pdf: { engine: 'mistral-ocr' }
       }
-    ]
+    ],
+    requestTimeoutMs: 300000 // 5 minutes
   });
   console.log(`[examGrader] Received LLM response, content length: ${result.content?.length || 0}`);
 
