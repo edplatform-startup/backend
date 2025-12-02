@@ -1,7 +1,7 @@
 import { runtimeConfig } from '../config/env.js';
 
 const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
-const DEFAULT_MODEL = 'x-ai/grok-4-fast';
+const DEFAULT_MODEL = 'google/gemini-3-pro-preview';
 const DEFAULT_MAX_TOOL_ITERATIONS = 1;
 const MAX_TOTAL_CALLS = 6;
 const TOOL_RESULT_CHAR_LIMIT = 2000;
@@ -28,9 +28,9 @@ export function clearOpenRouterChatExecutor() {
 }
 
 function resolveApiKey(explicitKey) {
-  const apiKey = explicitKey || process.env.OPENROUTER_GROK_4_FAST_KEY || process.env.OPENROUTER_API_KEY;
+  const apiKey = explicitKey || process.env.OPENROUTER_GEMINI_KEY || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error('Missing OpenRouter API key (set OPENROUTER_GROK_4_FAST_KEY or OPENROUTER_API_KEY)');
+    throw new Error('Missing OpenRouter API key (set OPENROUTER_GEMINI_KEY or OPENROUTER_API_KEY)');
   }
   return apiKey;
 }
@@ -256,7 +256,7 @@ export function createBrowsePageTool() {
       if (browsePageCache.has(url)) {
         return browsePageCache.get(url);
       }
-      
+
       try {
         const response = await fetch(url, {
           headers: {
@@ -264,7 +264,7 @@ export function createBrowsePageTool() {
           },
           signal: AbortSignal.timeout(120000), // 2m timeout for browse_page
         });
-        
+
         if (!response.ok) {
           const failure = `Failed to fetch page: ${response.status} ${response.statusText}`;
           browsePageCache.set(url, failure);
@@ -278,7 +278,7 @@ export function createBrowsePageTool() {
           browsePageCache.set(url, simulated);
           return simulated;
         }
-        
+
         const text = await response.text();
         // Simple text extraction - strip HTML tags and limit size
         const cleanText = sanitizeToolContent(
@@ -424,7 +424,7 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
             const tokenMeta = err.tokenLimitDetails;
             console.error(`\[openrouter\]\[TOKEN\] model hit token limit: stage=${tokenMeta.stage} model=${tokenMeta.model} maxTokens=${tokenMeta.maxTokens ?? 'unknown'}`);
           }
-        } catch (ignore) {}
+        } catch (ignore) { }
         if (shouldRetry && (response.status === 502 || response.status === 400)) {
           const backoff = 2000 * (attempt + 1);
           await new Promise((resolve) => setTimeout(resolve, backoff));
@@ -604,7 +604,7 @@ export async function executeOpenRouterChat(options = {}) {
     }
     try {
       accumulateUsage(effectiveModel, payload?.usage || payload?.meta?.usage || {});
-    } catch {}
+    } catch { }
     const message = payload?.choices?.[0]?.message;
 
     if (!message) {
@@ -885,9 +885,9 @@ export async function generateStudyTopics(input) {
   const attachments = normalizedAttachments.length
     ? normalizedAttachments
     : [
-        ...fallbackFromFiles(input?.syllabusFiles, 'syllabus'),
-        ...fallbackFromFiles(input?.examFiles, 'exam'),
-      ].filter((att) => att.url || att.data);
+      ...fallbackFromFiles(input?.syllabusFiles, 'syllabus'),
+      ...fallbackFromFiles(input?.examFiles, 'exam'),
+    ].filter((att) => att.url || att.data);
 
   const primaryMessages = [
     { role: 'system', content: STUDY_TOPICS_SYSTEM_PROMPT },
@@ -990,7 +990,7 @@ export async function generateStudyTopics(input) {
       };
       console.log('[topics] usage:', delta);
     }
-  } catch {}
+  } catch { }
 
   return JSON.stringify({ topics });
 }
