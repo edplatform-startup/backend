@@ -324,7 +324,7 @@ export async function synthesizeSyllabus({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
-      maxTokens: 4800,
+      maxTokens: 8192,
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
@@ -354,7 +354,7 @@ Return corrected JSON only.`,
       stage: STAGES.PLANNER,
       messages: criticMessages,
       allowWeb: false,
-      maxTokens: 4500,
+      maxTokens: 8192,
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for repair call
@@ -491,7 +491,7 @@ Using this information, produce competency-based overviewTopics with fully popul
         { role: 'system', content: systemPrompt.trim() },
         { role: 'user', content: userPrompt.trim() },
       ],
-      maxTokens: 4400,
+      maxTokens: 8192,
       allowWeb: true,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for TOPICS with web search
