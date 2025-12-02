@@ -9,6 +9,7 @@ export async function callStageLLM({
   allowWeb = false,
   modelOverride = null,
   requestTimeoutMs,
+  plugins,
 }) {
   const {
     model,
@@ -44,6 +45,7 @@ export async function callStageLLM({
     messages,
     attachments,
     requestTimeoutMs,
+    plugins,
   });
 
   return { model: chosenModel, result: response };

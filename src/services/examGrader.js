@@ -1,6 +1,6 @@
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
-import { getBlankExam } from './storage.js';
+import { getBlankExam, uploadExamFile } from './storage.js';
 
 // Export dependencies for testing
 export const deps = {
@@ -33,35 +33,24 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
   }
   console.log(`[examGrader] Successfully fetched blank exam URL:`, blankExamUrl);
 
-  // 2. Prepare attachments (Answered Exam + Blank Exam)
-  console.log(`[examGrader] Preparing attachments for LLM call`);
-  const attachments = [
-    {
-      type: 'application/pdf',
-      mimeType: 'application/pdf',
-      data: inputPdfBuffer.toString('base64'),
-      name: 'answered_exam.pdf'
-    },
-    {
-      type: 'application/pdf',
-      mimeType: 'application/pdf',
-      url: blankExamUrl,
-      name: 'blank_exam_template.pdf'
-    }
-  ];
-  console.log(`[examGrader] Prepared ${attachments.length} attachments`);
+  // 2. Upload student submission to get public URL
+  console.log(`[examGrader] Uploading student submission to storage`);
+  const studentSubmissionUrl = await uploadExamFile(courseId, userId, inputPdfBuffer, 'student_submission.pdf');
+  console.log(`[examGrader] Student submission uploaded:`, studentSubmissionUrl);
 
-  // 3. Construct Prompt
-  console.log(`[examGrader] Constructing grading prompt`);
+  // 3. Construct Multimodal Prompt
+  console.log(`[examGrader] Constructing multimodal grading prompt`);
   const systemPrompt = `You are an expert academic grader. Your task is to grade a student's answered exam against the provided blank exam template.
   
+  You will be provided with two PDFs: one is the original blank exam (questions) and one is the student's completed exam (answers). You must read and interpret these PDFs and grade based on what is written in the student's exam, not based on the example output in this prompt.
+
   Inputs:
-  1. 'answered_exam.pdf': The student's completed exam.
-  2. 'blank_exam_template.pdf': The original blank exam containing questions and total marks.
+  1. 'blank_exam.pdf': The original blank exam containing questions and total marks.
+  2. 'student_submission.pdf': The student's completed exam.
 
   Instructions:
-  - Analyze the student's answers in 'answered_exam.pdf'.
-  - Compare them with the questions in 'blank_exam_template.pdf'.
+  - Analyze the student's answers in 'student_submission.pdf'.
+  - Compare them with the questions in 'blank_exam.pdf'.
   - Evaluate the correctness of each answer.
   - Assign a grade for each topic covered in the exam.
   - Provide a standardized JSON output.
@@ -85,17 +74,45 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: 'Please grade this exam.' }
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'Grade this exam using the attached PDFs. Read the blank exam questions from blank_exam.pdf and the student answers from student_submission.pdf.'
+        },
+        {
+          type: 'file',
+          file: {
+            filename: 'blank_exam.pdf',
+            fileData: blankExamUrl
+          }
+        },
+        {
+          type: 'file',
+          file: {
+            filename: 'student_submission.pdf',
+            fileData: studentSubmissionUrl
+          }
+        }
+      ]
+    }
   ];
 
   // 4. Call LLM
-  console.log(`[examGrader] Calling LLM with EXAM_GRADER stage`);
+  console.log(`[examGrader] Calling LLM with EXAM_GRADER stage (multimodal)`);
   const { result } = await deps.callStageLLM({
     stage: STAGES.EXAM_GRADER,
     messages,
-    attachments,
+    attachments: [], // No legacy attachments
     maxTokens: 10000,
-    responseFormat: 'json' // Hint to the LLM wrapper to expect JSON
+    responseFormat: 'json',
+    plugins: [
+      {
+        id: 'file-parser',
+        pdf: { engine: 'mistral-ocr' }
+      }
+    ]
   });
   console.log(`[examGrader] Received LLM response, content length: ${result.content?.length || 0}`);
 

@@ -492,6 +492,7 @@ export async function executeOpenRouterChat(options = {}) {
     responseFormat,
     requestTimeoutMs = 55000,
     enableWebSearch = false,
+    plugins,
   } = options;
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -529,6 +530,13 @@ export async function executeOpenRouterChat(options = {}) {
 
     if (enableWebSearch) {
       requestBody.plugins = [{ id: 'web' }];
+    } else if (options.plugins) {
+      requestBody.plugins = options.plugins;
+    }
+
+    // Log the actual payload for debugging multimodal requests
+    if (options.plugins || (options.messages && options.messages.some(m => Array.isArray(m.content)))) {
+      console.log('[grokClient] OpenRouter Request Body:', JSON.stringify(requestBody, null, 2));
     }
 
     if (typeof topP === 'number') requestBody.top_p = topP;
