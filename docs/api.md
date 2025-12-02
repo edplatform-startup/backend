@@ -540,6 +540,60 @@ Base URL (production): https://api.kognolearn.com
   - `400 Bad Request` → Missing parameters or file
   - `500 Internal Server Error` → Grading failure
 
+### POST /courses/:courseId/review-modules
+- **Purpose**: Generate a new review module (set of lessons) for a specific exam type (midterm/final) based on a list of weak topics.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `examType` (string, required) – Type of review: `"midterm"` or `"final"`
+  - `topics` (object[], required) – List of topics with performance data
+    - `topic` (string) – Name of the topic
+    - `grade` (number) – Score (e.g., 1-5)
+    - `explanation` (string) – Why the student received this grade
+    - `feedback` (object, optional) – Additional feedback details
+- **Behavior**:
+  1. Calls the Lesson Architect (LLM) to generate a DAG of review lessons based on the provided graded topics, prioritizing weak areas.
+  2. Persists the new lessons to `api.course_nodes` with `metadata.review_type` set to the provided type.
+  3. Triggers the content worker to generate reading, quizzes, etc., for the new lessons.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "nodeCount": 5,
+      "contentStatus": "ready"
+    }
+    ```
+  - `400 Bad Request` → Missing parameters or invalid type
+  - `500 Internal Server Error` → Generation or persistence failure
+
+### GET /courses/:courseId/review-modules
+- **Purpose**: Fetch existing review modules for a course, optionally filtered by exam type.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Query parameters**:
+  - `userId` (string, required) – UUID of the user
+  - `type` (string, optional) – Filter by review type (`"midterm"` or `"final"`). If omitted, returns all review modules.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "modules": [
+        {
+          "id": "...",
+          "title": "Review: Calculus Limits",
+          "module_ref": "Midterm Review",
+          "metadata": { "review_type": "midterm" },
+          ...
+        }
+      ]
+    }
+    ```
+  - `400 Bad Request` → Missing userId
+  - `500 Internal Server Error` → Database error
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

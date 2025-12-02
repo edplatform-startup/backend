@@ -287,3 +287,129 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
 
   return { finalNodes, finalEdges };
 }
+
+/**
+ * Generates a Review Module based on a list of graded topics.
+ * @param {Array<{topic: string, grade: number, explanation: string}>} topics - List of topics with grades and feedback.
+ * @param {string} type - 'midterm' or 'final'.
+ * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
+ */
+export async function generateReviewModule(topics, type) {
+  const systemPrompt = `You are the Lesson Architect. Your goal is to create a Review Module for a ${type} exam based on the provided graded topics.
+
+INPUT: A list of topics with student grades (1-5 scale) and explanations of their performance.
+OUTPUT: A structured JSON object containing a list of lessons.
+
+CRITICAL RULES:
+1. **Prioritize Weaknesses:** Focus heavily on topics where the grade is low (1-3). You can group strong topics (4-5) into a quick summary lesson or omit them if the list is long.
+2. **Granularity:** Create lessons that take 15-30 minutes. Group related weak topics into cohesive lessons.
+3. **Module Group:** ALL lessons must have "module_group" set to "${type} Review".
+4. **Content:** Include readings (summary/review), videos (if helpful), and quizzes.
+5. **Practice:** Include a "practice_exam" content plan for at least one lesson, or spread practice problems across lessons.
+6. **IDs:** Use kebab-case slug_ids.
+7. **Reasoning:** Explain why you grouped topics this way and how you addressed the specific weaknesses mentioned in the input.
+
+Output STRICT VALID JSON format (no markdown, no comments):
+{
+  "lessons": [
+    {
+      "slug_id": "topic-review",
+      "title": "Review: Topic Name",
+      "module_group": "${type} Review",
+      "estimated_minutes": 30,
+      "bloom_level": "Analyze",
+      "intrinsic_exam_value": 10,
+      "architectural_reasoning": "Focused on this because the student scored 1/5 due to...",
+      "dependencies": [],
+      "content_plans": {
+         "reading": "Review the key concepts of...",
+         "video": ["topic explanation"],
+         "quiz": "Create review questions...",
+         "practice_exam": "Create 2 free response problems..."
+      }
+    }
+  ]
+}`;
+
+  const userPrompt = `Student Performance Report: ${JSON.stringify(topics)}`;
+
+  const { result } = await llmCaller({
+    stage: STAGES.LESSON_ARCHITECT,
+    maxTokens: 10000,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 600000,
+  });
+
+  let lessonGraph;
+  try {
+    const cleanJson = result.content
+      .replace(/^```json\s*/, '')
+      .replace(/^```\s*/, '')
+      .replace(/\s*```$/, '')
+      .replace(/\\'/g, "'");
+
+    lessonGraph = tryParseJson(cleanJson, 'ReviewModuleArchitect');
+  } catch (e) {
+    throw new Error('Invalid JSON response from Lesson Architect for Review Module');
+  }
+
+  if (!lessonGraph || !Array.isArray(lessonGraph.lessons)) {
+    throw new Error('Invalid response structure: missing lessons array');
+  }
+
+  // Normalization & Output
+  const slugToUuid = new Map();
+  lessonGraph.lessons.forEach(l => slugToUuid.set(l.slug_id, uuidv4()));
+
+  const finalNodes = lessonGraph.lessons.map(l => {
+    return {
+      id: slugToUuid.get(l.slug_id),
+      title: l.title,
+      description: null,
+      intrinsic_exam_value: l.intrinsic_exam_value,
+      bloom_level: l.bloom_level,
+      yield_tag: 'High', // Review modules are usually high yield
+      estimated_minutes: l.estimated_minutes,
+      is_checkpoint: false,
+      in_degree: 0,
+      out_degree: 0,
+      content_payload: {
+        generation_plans: l.content_plans || {}
+      },
+      module_ref: l.module_group,
+      created_at: new Date().toISOString(),
+      confidence_score: 1.0, // Generated from known topics
+      metadata: {
+        architectural_reasoning: l.architectural_reasoning,
+        review_type: type // Tag for fetching later
+      }
+    };
+  });
+
+  const finalEdges = [];
+  // We assume review lessons are mostly independent or linear, but if the LLM outputs dependencies, we respect them.
+  lessonGraph.lessons.forEach(l => {
+    const childId = slugToUuid.get(l.slug_id);
+    if (l.dependencies) {
+      l.dependencies.forEach(parentSlug => {
+        const parentId = slugToUuid.get(parentSlug);
+        if (parentId) {
+          finalEdges.push({
+            parent_id: parentId,
+            child_id: childId
+          });
+          const childNode = finalNodes.find(n => n.id === childId);
+          const parentNode = finalNodes.find(n => n.id === parentId);
+          if (childNode) childNode.in_degree = (childNode.in_degree || 0) + 1;
+          if (parentNode) parentNode.out_degree = (parentNode.out_degree || 0) + 1;
+        }
+      });
+    }
+  });
+
+  return { finalNodes, finalEdges };
+}

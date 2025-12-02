@@ -563,11 +563,75 @@ router.post('/topics', async (req, res) => {
   }
 });
 
-import { generateLessonGraph } from '../services/courseGenerator.js';
+import { generateLessonGraph, generateReviewModule } from '../services/courseGenerator.js';
 import { generatePracticeExam } from '../services/examGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
 import { uploadExamFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
+
+router.post('/:courseId/review-modules', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, topics, examType } = req.body;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (!topics || !Array.isArray(topics) || topics.length === 0) {
+    return res.status(400).json({ error: 'topics array is required' });
+  }
+  if (!examType || !['midterm', 'final'].includes(examType)) {
+    return res.status(400).json({ error: 'examType must be "midterm" or "final"' });
+  }
+
+  try {
+    // 1. Generate Structure
+    const lessonGraph = await generateReviewModule(topics, examType);
+
+    // 2. Persist Structure
+    await saveCourseStructure(courseId, userId, lessonGraph);
+
+    // 3. Generate Content
+    const contentResult = await generateCourseContent(courseId);
+
+    return res.json({ success: true, nodeCount: lessonGraph.finalNodes.length, contentStatus: contentResult.status });
+  } catch (error) {
+    console.error('Error creating review module:', error);
+    return res.status(500).json({ error: 'Failed to create review module', details: error.message });
+  }
+});
+
+router.get('/:courseId/review-modules', async (req, res) => {
+  const { courseId } = req.params;
+  const { userId, type } = req.query;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('*')
+      .eq('course_id', courseId)
+      .eq('user_id', userId);
+
+    if (type) {
+      // Filter by metadata->>review_type
+      // Note: Supabase JS filter for JSONB value
+      query = query.eq('metadata->>review_type', type);
+    } else {
+        // If no type is specified, only return nodes that HAVE a review_type
+        query = query.not('metadata->>review_type', 'is', null);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return res.json({ success: true, modules: data });
+  } catch (error) {
+    console.error('Error fetching review modules:', error);
+    return res.status(500).json({ error: 'Failed to fetch review modules', details: error.message });
+  }
+});
 
 router.post('/:courseId/exams/generate', async (req, res) => {
   const { courseId } = req.params;
