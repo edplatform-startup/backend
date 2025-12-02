@@ -298,7 +298,7 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       switch (format.toLowerCase()) {
         case 'video':
           // For video, return only the videos array
-          filteredData = { 
+          filteredData = {
             videos: payload.video || [],
             // optionally include logs if needed for debugging, but user asked for "only the videos key"
             // keeping it strictly to what was asked:
@@ -321,7 +321,7 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
           // If format is unknown, return everything (or handle as error? defaulting to everything is safer)
           filteredData = payload;
       }
-      
+
       // Replace the full payload with the filtered one
       // The user request said: "in the attached info the only thing given should be the videos key"
       // This implies the structure should be cleaner. 
@@ -636,8 +636,8 @@ router.get('/:courseId/review-modules', async (req, res) => {
       // Note: Supabase JS filter for JSONB value
       query = query.eq('metadata->>review_type', type);
     } else {
-        // If no type is specified, only return nodes that HAVE a review_type
-        query = query.not('metadata->>review_type', 'is', null);
+      // If no type is specified, only return nodes that HAVE a review_type
+      query = query.not('metadata->>review_type', 'is', null);
     }
 
     const { data, error } = await query;
@@ -710,33 +710,69 @@ router.get('/:courseId/exams/:type', async (req, res) => {
 
   try {
     const files = await getCourseExamFiles(courseId, userId);
-    const expectedName = `${type}_exam.pdf`;
-    // Files are stored with timestamp prefix: [timestamp]_[filename].pdf
-    const examFile = files.find(f => f.name.endsWith(expectedName));
 
-    if (!examFile) {
-      return res.status(404).json({ error: 'Exam not generated. Please call the generate endpoint first.' });
+    // Filter for exams of the requested type
+    // Matches: [timestamp]_[type]_exam.pdf OR [timestamp]_[type]_exam_[number].pdf
+    const typeRegex = new RegExp(`_${type}_exam(?:_(\\d+))?\\.pdf$`);
+
+    // Fetch grades from database
+    const supabase = getSupabase();
+    const { data: grades, error: gradesError } = await supabase
+      .schema('api')
+      .from('exam_grades')
+      .select('*')
+      .eq('course_id', courseId)
+      .eq('user_id', userId)
+      .eq('exam_type', type);
+
+    if (gradesError) {
+      console.error('Error fetching exam grades:', gradesError);
+      // Continue without grades if fetch fails, or throw? 
+      // Better to log and continue so we at least return the files.
     }
 
-    return res.json({ success: true, url: examFile.url });
+    const exams = files
+      .filter(f => typeRegex.test(f.name))
+      .map(f => {
+        const match = f.name.match(typeRegex);
+        const number = match[1] ? parseInt(match[1], 10) : 1;
+
+        // Find matching grade
+        const grade = grades ? grades.find(g => g.exam_number === number) : null;
+
+        return {
+          name: f.name,
+          url: f.url,
+          number,
+          grade: grade ? {
+            score: grade.score,
+            feedback: grade.feedback,
+            topic_grades: grade.topic_grades,
+            created_at: grade.created_at
+          } : null
+        };
+      })
+      .sort((a, b) => a.number - b.number);
+
+    return res.json({ success: true, exams });
   } catch (error) {
-    console.error('Error fetching practice exam:', error);
-    return res.status(500).json({ error: 'Failed to fetch practice exam', details: error.message });
+    console.error('Error fetching practice exams:', error);
+    return res.status(500).json({ error: 'Failed to fetch practice exams', details: error.message });
   }
 });
 
 // POST /:courseId/grade-exam - Grade an answered exam
 router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res) => {
   const { courseId } = req.params;
-  const { userId, exam_tag } = req.body;
+  const { userId, exam_type, exam_number } = req.body;
   const inputPdf = req.file;
 
   if (!userId) {
     return res.status(400).json({ error: 'Missing required fields: userId' });
   }
 
-  if (!exam_tag) {
-    return res.status(400).json({ error: 'Missing required fields: exam_tag' });
+  if (!exam_type) {
+    return res.status(400).json({ error: 'Missing required fields: exam_type' });
   }
 
   if (!inputPdf) {
@@ -754,8 +790,39 @@ router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res
   }
 
   try {
-    const gradingResult = await gradeExam(courseId, userId, exam_tag, inputPdf.buffer);
-    res.json({ success: true, ...gradingResult });
+    // Default to number 1 if not provided (backward compatibility attempt, though frontend should send it)
+    const number = exam_number ? parseInt(exam_number, 10) : 1;
+
+    const gradingResult = await gradeExam(courseId, userId, exam_type, number, inputPdf.buffer);
+
+    // Persist the grade
+    const supabase = getSupabase();
+    const { data: savedGrade, error: saveError } = await supabase
+      .schema('api')
+      .from('exam_grades')
+      .insert({
+        user_id: userId,
+        course_id: courseId,
+        exam_type: exam_type,
+        exam_number: number,
+        score: gradingResult.overall_score,
+        feedback: gradingResult.overall_feedback,
+        topic_grades: gradingResult.topic_list
+      })
+      .select()
+      .single();
+
+    if (saveError) {
+      console.error('Error saving exam grade:', saveError);
+      // We don't fail the request if saving fails, but we log it. 
+      // Alternatively, we could include a warning in the response.
+    }
+
+    res.json({
+      success: true,
+      ...gradingResult,
+      grade_id: savedGrade ? savedGrade.id : null
+    });
   } catch (error) {
     console.error('Error grading exam:', error);
     res.status(500).json({ error: 'Failed to grade exam: ' + error.message });
@@ -879,19 +946,19 @@ router.post('/', async (req, res) => {
     if (parsedInputs.examFiles && parsedInputs.examFiles.length > 0) {
       try {
         console.log(`[courses] Converting and uploading ${parsedInputs.examFiles.length} exam files individually...`);
-        
+
         // Import the new single file converter
         const { convertSingleFileToPdf } = await import('../services/examConverter.js');
-        
+
         for (let i = 0; i < parsedInputs.examFiles.length; i++) {
           const file = parsedInputs.examFiles[i];
           const examNumber = i + 1;
           const fileName = `exam${examNumber}.pdf`;
-          
+
           try {
             const pdfBuffer = await convertSingleFileToPdf(file);
             const examUrl = await uploadExamFile(courseId, userId, pdfBuffer, fileName);
-            
+
             examFileUrls.push({ name: fileName, url: examUrl });
             console.log(`[courses] Uploaded ${fileName}: ${examUrl}`);
           } catch (fileError) {
@@ -902,10 +969,10 @@ router.post('/', async (req, res) => {
 
         // Update the course row with all exam file URLs
         if (examFileUrls.length > 0) {
-          const attachmentText = '\n\n**Attached Exam Files**:\n' + 
+          const attachmentText = '\n\n**Attached Exam Files**:\n' +
             examFileUrls.map(({ name, url }) => `- [${name}](${url})`).join('\n');
           combinedExamDetails = combinedExamDetails ? combinedExamDetails + attachmentText : attachmentText;
-          
+
           await supabase
             .schema('api')
             .from('courses')

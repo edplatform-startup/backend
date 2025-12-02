@@ -475,24 +475,26 @@ Base URL (production): https://api.kognolearn.com
   - `type` (string, required) – Type of exam: `"midterm"` or `"final"`
 - **Behavior**:
   1. Fetches existing practice exams from storage to use as style/format references.
-  2. Calls Gemini 1.5 Pro to generate a LaTeX exam covering the specified lessons.
-  3. Sanitizes and checks the LaTeX for semantic issues (repairing via LLM if needed).
-  4. Compiles the LaTeX to PDF (retrying via LLM if compilation fails).
-  5. Saves the generated PDF file to storage.
+  2. Determines the next exam number (e.g., if `midterm_exam_1.pdf` exists, creates `midterm_exam_2.pdf`).
+  3. Calls Gemini 1.5 Pro to generate a LaTeX exam covering the specified lessons.
+  4. Sanitizes and checks the LaTeX for semantic issues (repairing via LLM if needed).
+  5. Compiles the LaTeX to PDF (retrying via LLM if compilation fails).
+  6. Saves the generated PDF file to storage.
 - **Responses**:
   - `200 OK` →
     ```json
     {
       "success": true,
       "url": "https://...",
-      "name": "midterm_exam.pdf"
+      "name": "midterm_exam_2.pdf",
+      "number": 2
     }
     ```
   - `400 Bad Request` → Missing parameters or invalid values
   - `500 Internal Server Error` → Generation or storage failure
 
 ### GET /courses/:courseId/exams/:type
-- **Purpose**: Fetch the URL of a generated practice exam.
+- **Purpose**: Fetch the list of generated practice exams for a specific type.
 - **Path parameters**:
   - `courseId` (string, required) – UUID of the course
   - `type` (string, required) – Type of exam: `"midterm"` or `"final"`
@@ -503,10 +505,27 @@ Base URL (production): https://api.kognolearn.com
     ```json
     {
       "success": true,
-      "url": "https://..."
+      "exams": [
+        {
+          "name": "midterm_exam_1.pdf",
+          "url": "https://...",
+          "number": 1,
+          "grade": {
+            "score": 85,
+            "feedback": "Good job...",
+            "topic_grades": [...],
+            "created_at": "2023-..."
+          }
+        },
+        {
+          "name": "midterm_exam_2.pdf",
+          "url": "https://...",
+          "number": 2,
+          "grade": null
+        }
+      ]
     }
     ```
-  - `404 Not Found` → Exam not generated. Please call the generate endpoint first.
   - `500 Internal Server Error` → Storage error
 
 ### POST /courses/:courseId/grade-exam
@@ -515,10 +534,11 @@ Base URL (production): https://api.kognolearn.com
   - `courseId` (string, required) – UUID of the course
 - **Request body (Multipart/Form-Data)**:
   - `userId` (string, required) – UUID of the user
-  - `exam_tag` (string, required) – Tag of the exam (e.g., `"midterm"`, `"final"`)
+  - `exam_type` (string, required) – Type of the exam (e.g., `"midterm"`, `"final"`)
+  - `exam_number` (number, required) – The number of the exam to grade (e.g., `1`, `2`)
   - `input_pdf` (file, required) – The answered exam PDF file
 - **Behavior**:
-  1. Fetches the blank exam template from storage based on `exam_tag`.
+  1. Fetches the blank exam template from storage based on `exam_type` and `exam_number`.
   2. Sends both the answered exam and the blank template to Gemini 3 Pro.
   3. Returns a standardized grading report with topic-level scores and feedback.
 - **Responses**:

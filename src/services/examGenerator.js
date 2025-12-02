@@ -312,9 +312,9 @@ function autoFillEmptyLists(questionsBlock) {
 /*  Build full exam document from questions block                             */
 /* -------------------------------------------------------------------------- */
 
-function buildExamDocument(examType, questionsBlock) {
-  const examDisplayName =
-    examType === 'midterm' ? 'Midterm Practice Examination' : 'Final Practice Examination';
+function buildExamDocument(examType, questionsBlock, customExamName) {
+  const examDisplayName = customExamName ||
+    (examType === 'midterm' ? 'Midterm Practice Examination' : 'Final Practice Examination');
 
   return `
 \\documentclass[11pt,addpoints]{exam}
@@ -490,7 +490,7 @@ async function compileLatexToPdf(latexCode) {
  * @param {string} userId
  * @param {string[]} lessons
  * @param {'midterm' | 'final'} examType
- * @returns {Promise<{ url: string, name: string }>}
+ * @returns {Promise<{ url: string, name: string, number: number }>}
  */
 export async function generatePracticeExam(courseId, userId, lessons, examType) {
   if (!Array.isArray(lessons) || lessons.length === 0) {
@@ -501,17 +501,42 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
     throw new Error('Exam type must be either "midterm" or "final"');
   }
 
-  // 1. Fetch existing practice exams as style references
+  // 1. Fetch existing practice exams to determine the next number
   const existingExams = await getCourseExamFiles(courseId, userId);
-  const attachments = existingExams.map((exam) => ({
-    url: exam.url,
-    name: exam.name,
-    mimeType: 'application/pdf',
-  }));
+
+  // Filter for exams of the same type and find the max number
+  // Expected format: [timestamp]_[type]_exam_[number].pdf
+  // But we also need to support the legacy format: [timestamp]_[type]_exam.pdf (treat as #1)
+
+  let maxNumber = 0;
+  const typeRegex = new RegExp(`_${examType}_exam(?:_(\\d+))?\\.pdf$`);
+
+  existingExams.forEach(file => {
+    const match = file.name.match(typeRegex);
+    if (match) {
+      const num = match[1] ? parseInt(match[1], 10) : 1;
+      if (num > maxNumber) maxNumber = num;
+    }
+  });
+
+  const nextNumber = maxNumber + 1;
+  const examDisplayName =
+    examType === 'midterm'
+      ? `Midterm Practice Examination ${nextNumber}`
+      : `Final Practice Examination ${nextNumber}`;
+
+  // Attachments for style reference (use all previous exams of this type)
+  const attachments = existingExams
+    .filter(e => e.name.includes(`${examType}_exam`))
+    .map((exam) => ({
+      url: exam.url,
+      name: exam.name,
+      mimeType: 'application/pdf',
+    }));
 
   // 2. System & user prompts (LLM outputs ONLY the questions block)
   const systemPrompt = `
-You are an expert academic exam creator. Your task is to create a high-quality ${examType} practice exam in LaTeX for an undergraduate course.
+You are an expert academic exam creator. Your task is to create a high-quality ${examType} practice exam (Exam #${nextNumber}) in LaTeX for an undergraduate course.
 
 ${LATEX_ENV_SPEC}
 
@@ -541,7 +566,8 @@ Generate the ${examType} exam questions now. Remember:
   });
 
   let questionsBlock = sanitizeQuestionBlock(result.content);
-  let fullExam = buildExamDocument(examType, questionsBlock);
+  // Pass the specific display name to the builder
+  let fullExam = buildExamDocument(examType, questionsBlock, examDisplayName);
 
   // 4. Pre-compile semantic repair (one pass)
   let semanticIssues = checkSemanticIssues(fullExam);
@@ -573,7 +599,7 @@ Return the FULL corrected questions block, with no preamble or document wrappers
     });
 
     questionsBlock = sanitizeQuestionBlock(repairResult.result.content);
-    fullExam = buildExamDocument(examType, questionsBlock);
+    fullExam = buildExamDocument(examType, questionsBlock, examDisplayName);
 
     semanticIssues = checkSemanticIssues(fullExam);
     if (semanticIssues.length > 0) {
@@ -591,7 +617,7 @@ Return the FULL corrected questions block, with no preamble or document wrappers
   for (let i = 0; i <= MAX_COMPILE_RETRIES; i++) {
     try {
       const safeQuestionsBlock = autoFillEmptyLists(questionsBlock);
-      const latexToCompile = buildExamDocument(examType, safeQuestionsBlock);
+      const latexToCompile = buildExamDocument(examType, safeQuestionsBlock, examDisplayName);
 
       console.log(
         `[examGenerator] Compiling LaTeX (attempt ${i + 1}/${MAX_COMPILE_RETRIES + 1})...`,
@@ -621,7 +647,7 @@ ${QUESTION_BLOCK_INSTRUCTIONS}
 
         // If it's the classic "missing \item" error, give extra hints and static findings
         if (/perhaps a missing \\item/i.test(errorSummary)) {
-          const currentFullExam = buildExamDocument(examType, questionsBlock);
+          const currentFullExam = buildExamDocument(examType, questionsBlock, examDisplayName);
           const listIssues = checkListEnvs(currentFullExam);
 
           errorPrompt += `
@@ -672,9 +698,9 @@ Ensure each contains the proper commands and no environment is left empty.
     );
   }
 
-  // 6. Save PDF
-  const fileName = `${examType}_exam.pdf`;
+  // 6. Save PDF with numbered filename
+  const fileName = `${examType}_exam_${nextNumber}.pdf`;
   const url = await uploadExamFile(courseId, userId, pdfBuffer, fileName, 'application/pdf');
 
-  return { url, name: fileName };
+  return { url, name: fileName, number: nextNumber };
 }

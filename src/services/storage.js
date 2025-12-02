@@ -13,7 +13,7 @@ const BUCKET_NAME = 'practice_exams';
  */
 export async function uploadExamFile(courseId, userId, fileBuffer, fileName, contentType = 'application/pdf') {
   const supabase = getSupabase();
-  
+
   // Sanitize filename
   const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
   const filePath = `${userId}/${courseId}/${Date.now()}_${safeFileName}`;
@@ -123,7 +123,7 @@ export async function getCourseExamFiles(courseId, userId) {
       console.error(`[storage] Failed to create signed URL for ${f.name}:`, error);
       return null;
     }
-    
+
     return {
       name: f.name,
       url: data.signedUrl
@@ -139,10 +139,11 @@ export async function getCourseExamFiles(courseId, userId) {
  * 
  * @param {string} courseId - The course ID
  * @param {string} userId - The user ID
- * @param {string} examTag - The tag of the exam (e.g., 'midterm', 'final')
+ * @param {string} examType - The type of the exam (e.g., 'midterm', 'final')
+ * @param {number} examNumber - The number of the exam (e.g., 1, 2)
  * @returns {Promise<string|null>} The signed URL or null if not found
  */
-export async function getBlankExam(courseId, userId, examTag) {
+export async function getBlankExam(courseId, userId, examType, examNumber) {
   const supabase = getSupabase();
   const folderPath = `${userId}/${courseId}`;
 
@@ -153,7 +154,7 @@ export async function getBlankExam(courseId, userId, examTag) {
     .list(folderPath);
 
   if (listError) {
-    console.error(`[storage] Failed to list files for blank exam search (tag: ${examTag}):`, listError);
+    console.error(`[storage] Failed to list files for blank exam search (type: ${examType}, number: ${examNumber}):`, listError);
     return null;
   }
 
@@ -162,15 +163,22 @@ export async function getBlankExam(courseId, userId, examTag) {
     return null;
   }
 
-  // Find a file that contains the examTag (case-insensitive)
-  // Expected format: [timestamp]_[tag]_exam.pdf or similar
-  const matchingFile = files.find(f => 
-    f.name.toLowerCase().includes(examTag.toLowerCase()) && 
-    f.name.toLowerCase().endsWith('.pdf')
-  );
+  // Find a file that matches the type and number
+  // Expected format: [timestamp]_[type]_exam_[number].pdf
+  // Legacy format: [timestamp]_[type]_exam.pdf (treat as #1)
+
+  const typeRegex = new RegExp(`_${examType}_exam(?:_(\\d+))?\\.pdf$`);
+
+  const matchingFile = files.find(f => {
+    const match = f.name.match(typeRegex);
+    if (!match) return false;
+
+    const num = match[1] ? parseInt(match[1], 10) : 1;
+    return num === examNumber;
+  });
 
   if (!matchingFile) {
-    console.warn(`[storage] No matching blank exam found for tag '${examTag}' in ${folderPath}`);
+    console.warn(`[storage] No matching blank exam found for type '${examType}' number '${examNumber}' in ${folderPath}`);
     return null;
   }
 

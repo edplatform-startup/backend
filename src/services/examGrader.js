@@ -12,24 +12,26 @@ export const deps = {
  * 
  * @param {string} courseId - The course ID
  * @param {string} userId - The user ID
- * @param {string} examTag - The exam tag (e.g., 'midterm', 'final')
+ * @param {string} examType - The exam type (e.g., 'midterm', 'final')
+ * @param {number} examNumber - The exam number (e.g., 1, 2)
  * @param {Buffer} inputPdfBuffer - The buffer of the answered exam PDF
  * @returns {Promise<object>} The grading result
  */
-export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
+export async function gradeExam(courseId, userId, examType, examNumber, inputPdfBuffer) {
   console.log(`[examGrader] Starting exam grading process`, {
     courseId,
     userId,
-    examTag,
+    examType,
+    examNumber,
     inputPdfSize: inputPdfBuffer.length
   });
 
   // 1. Fetch blank exam URL
-  console.log(`[examGrader] Fetching blank exam template for tag: ${examTag}`);
-  const blankExamUrl = await getBlankExam(courseId, userId, examTag);
+  console.log(`[examGrader] Fetching blank exam template for type: ${examType}, number: ${examNumber}`);
+  const blankExamUrl = await getBlankExam(courseId, userId, examType, examNumber);
   if (!blankExamUrl) {
-    console.error(`[examGrader] Blank exam template not found for tag: ${examTag}`);
-    throw new Error(`Blank exam template not found for tag: ${examTag}`);
+    console.error(`[examGrader] Blank exam template not found for type: ${examType}, number: ${examNumber}`);
+    throw new Error(`Blank exam template not found for type: ${examType}, number: ${examNumber}`);
   }
   console.log(`[examGrader] Successfully fetched blank exam URL:`, blankExamUrl);
 
@@ -107,7 +109,7 @@ export async function gradeExam(courseId, userId, examTag, inputPdfBuffer) {
     messages,
     attachments: [], // No legacy attachments
     maxTokens: 10000,
-    responseFormat: {type: 'json_object'},
+    responseFormat: { type: 'json_object' },
     plugins: [
       {
         id: 'file-parser',
