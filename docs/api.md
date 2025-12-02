@@ -788,6 +788,65 @@ Base URL (production): https://api.kognolearn.com
     ```
   - 500 Internal Server Error → Database error.
 
+### GET /analytics/events
+- Purpose: Retrieve raw user behavior events (e.g., `lesson_opened`, `course_created`) with filtering.
+- Query parameters:
+  - `userId` (string, required) – Filter by user UUID.
+  - `eventTypes` (string, optional) – Comma-separated list of event types to include.
+  - `courseId` (string, optional) – Filter events related to a specific course.
+  - `startDate` (string, optional ISO date) – Filter events after this date.
+  - `endDate` (string, optional ISO date) – Filter events before this date.
+  - `limit` (number, optional) – Max records (default: 50).
+  - `offset` (number, optional) – Pagination offset (default: 0).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "events": [
+        {
+          "id": "...",
+          "user_id": "...",
+          "event_type": "lesson_opened",
+          "details": { "courseId": "...", "lessonId": "..." },
+          "created_at": "..."
+        }
+      ],
+      "count": 42
+    }
+    ```
+  - 500 Internal Server Error → Database error.
+
+### GET /analytics/events/summary
+- Purpose: Retrieve aggregated counts of user events.
+- Query parameters:
+  - `userId` (string, required) – Filter by user UUID.
+  - `groupBy` (string, optional) – `"event_type"` (default) or `"date"`.
+  - `courseId` (string, optional) – Filter by course.
+  - `startDate` / `endDate` (optional ISO dates).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "summary": {
+        "lesson_opened": 15,
+        "quiz_completed": 5
+      }
+    }
+    ```
+    OR (if groupBy="date")
+    ```json
+    {
+      "success": true,
+      "summary": {
+        "2023-10-01": 12,
+        "2023-10-02": 8
+      }
+    }
+    ```
+  - 500 Internal Server Error → Database error.
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.
