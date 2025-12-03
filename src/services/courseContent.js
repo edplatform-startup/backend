@@ -47,6 +47,9 @@ export function __resetYouTubeFetcher() {
   customYouTubeFetcher = null;
 }
 
+// Export for testing - mergeValidatedArray is used internally but we expose it for unit tests
+export { mergeValidatedArray as __mergeValidatedArray };
+
 export async function saveCourseStructure(courseId, userId, lessonGraph) {
   if (customSaveCourseStructure) {
     return await customSaveCourseStructure(courseId, userId, lessonGraph);
@@ -2239,6 +2242,67 @@ Select the best video index.`
 }
 
 /**
+ * Merges validated array items with the original array to prevent shrinking.
+ * If the validator only returned fixed items, we need to keep the rest of the original.
+ * @param {Array} original - The original content array
+ * @param {Array} validated - The validated/fixed array (may be partial)
+ * @param {string} contentType - Type of content for logging
+ * @returns {Array} - The merged array preserving all original items
+ */
+function mergeValidatedArray(original, validated, contentType) {
+  if (!Array.isArray(original) || !Array.isArray(validated)) {
+    console.warn(`[mergeValidatedArray] Invalid input types for ${contentType}`);
+    return original;
+  }
+
+  // If validated has same or more items, it's likely a full replacement
+  if (validated.length >= original.length) {
+    return validated;
+  }
+
+  // If validated is empty, return original
+  if (validated.length === 0) {
+    console.warn(`[mergeValidatedArray] Validator returned empty array for ${contentType}, keeping original`);
+    return original;
+  }
+
+  // If validated is significantly smaller, the model likely only returned fixed items
+  // Try to match and merge them with the original
+  console.warn(`[mergeValidatedArray] Validator returned ${validated.length} items but original had ${original.length} for ${contentType}`);
+
+  // Determine the key to use for matching based on content type
+  const matchKey = contentType === 'flashcards' ? 'front' : 'question';
+
+  // Create a map of validated items by their question/front text for quick lookup
+  const validatedMap = new Map();
+  for (const item of validated) {
+    const key = item[matchKey];
+    if (key) {
+      // Normalize the key for matching (trim whitespace, lowercase for comparison)
+      validatedMap.set(key.trim().toLowerCase(), item);
+    }
+  }
+
+  // Merge: replace original items with validated versions where they match
+  const merged = original.map((origItem, index) => {
+    const origKey = origItem[matchKey];
+    if (origKey) {
+      const normalizedKey = origKey.trim().toLowerCase();
+      const validatedItem = validatedMap.get(normalizedKey);
+      if (validatedItem) {
+        // Found a match - use the validated version
+        return validatedItem;
+      }
+    }
+    // No match found - keep the original item
+    return origItem;
+  });
+
+  console.log(`[mergeValidatedArray] Merged ${validatedMap.size} validated items into ${original.length} original items for ${contentType}`);
+  return merged;
+}
+
+/**
  * Validates generated content using a worker model.
  * @param {string} contentType - 'reading', 'quiz', 'flashcards', 'practice_exam', 'inline_question'
  * @param {any} content - The content to validate
@@ -2356,11 +2420,16 @@ ${context}`
           // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
           if (Array.isArray(content) && !Array.isArray(json)) {
             // Check common keys
-            if (Array.isArray(json.quiz)) return json.quiz;
-            if (Array.isArray(json.questions)) return json.questions;
-            if (Array.isArray(json.flashcards)) return json.flashcards;
-            if (Array.isArray(json.practice_exam)) return json.practice_exam;
+            if (Array.isArray(json.quiz)) return mergeValidatedArray(content, json.quiz, contentType);
+            if (Array.isArray(json.questions)) return mergeValidatedArray(content, json.questions, contentType);
+            if (Array.isArray(json.flashcards)) return mergeValidatedArray(content, json.flashcards, contentType);
+            if (Array.isArray(json.practice_exam)) return mergeValidatedArray(content, json.practice_exam, contentType);
             // If we can't find the array, return original to be safe
+            return content;
+          }
+          // If original was an array, ensure we don't shrink it
+          if (Array.isArray(content) && Array.isArray(json)) {
+            return mergeValidatedArray(content, json, contentType);
           }
           return json;
         }
@@ -2372,11 +2441,16 @@ ${context}`
             // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
             if (Array.isArray(content) && !Array.isArray(json)) {
               // Check common keys
-              if (Array.isArray(json.quiz)) return json.quiz;
-              if (Array.isArray(json.questions)) return json.questions;
-              if (Array.isArray(json.flashcards)) return json.flashcards;
-              if (Array.isArray(json.practice_exam)) return json.practice_exam;
+              if (Array.isArray(json.quiz)) return mergeValidatedArray(content, json.quiz, contentType);
+              if (Array.isArray(json.questions)) return mergeValidatedArray(content, json.questions, contentType);
+              if (Array.isArray(json.flashcards)) return mergeValidatedArray(content, json.flashcards, contentType);
+              if (Array.isArray(json.practice_exam)) return mergeValidatedArray(content, json.practice_exam, contentType);
               // If we can't find the array, return original to be safe
+              return content;
+            }
+            // If original was an array, ensure we don't shrink it
+            if (Array.isArray(content) && Array.isArray(json)) {
+              return mergeValidatedArray(content, json, contentType);
             }
             return json;
           }
