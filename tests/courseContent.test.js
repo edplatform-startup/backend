@@ -160,13 +160,13 @@ test('generateCourseContent fills node payloads and marks course ready', async (
       };
     }
 
-    if (/Create one .*multiple-choice question/i.test(lastContent)) {
+    if (/Create one deep-understanding multiple-choice question/i.test(lastContent)) {
       return {
         content: JSON.stringify({
           question: 'What is the main implication?',
           options: ['Option A', 'Option B', 'Option C', 'Option D'],
           answerIndex: 1,
-          explanation: 'Option B is correct because...',
+          explanation: ['Expl A', 'Expl B', 'Expl C', 'Expl D'],
         }),
       };
     }

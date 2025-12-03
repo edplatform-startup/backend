@@ -911,6 +911,9 @@ import { pickModel, STAGES } from './modelRouter.js';
 /**
  * Generate a single multiple-choice question for a chunk.
  */
+/**
+ * Generate a single multiple-choice question for a chunk.
+ */
 export async function generateInlineQuestion(chunkText, contextInfo = {}) {
 
 
@@ -945,7 +948,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
 
   try {
     const response = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'google/gemini-3-pro-preview',
       temperature: 0.3, // Slightly higher for creativity in question design
       maxTokens: 1024,
       messages: [systemPrompt, userPrompt],
@@ -953,42 +956,53 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     });
 
     const content = response.content;
-
     const raw = coerceModelText(content);
+    let parsed = parseJsonObject(raw, 'inline_question');
 
-    const parsed = parseJsonObject(raw, 'inline_question');
+    // --- VALIDATION & REPAIR ---
+    const validator = (item) => {
+      try {
+        if (!item || typeof item !== 'object') throw new Error('Item is not an object');
+        if (!item.question || typeof item.question !== 'string') throw new Error('Missing question');
+        if (!Array.isArray(item.options) || item.options.length !== 4) throw new Error('Options must be an array of 4 strings');
+        if (!Number.isInteger(item.answerIndex) || item.answerIndex < 0 || item.answerIndex > 3) throw new Error('answerIndex must be 0-3');
+        if (!Array.isArray(item.explanation) || item.explanation.length !== 4) throw new Error('Explanation must be an array of 4 strings');
+        return { valid: true, data: item };
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    };
 
-    if (!parsed || !parsed.question || !Array.isArray(parsed.options) || parsed.options.length < 2) {
-      return null;
-    }
+    const repairPrompt = (brokenItems, errors) => {
+      return `The following inline question is invalid:\n${JSON.stringify(brokenItems[0], null, 2)}\n\nError:\n${errors[0]}\n\nPlease regenerate it correctly. Ensure 'options' and 'explanation' are both arrays of 4 strings.`;
+    };
 
-    const answerIndex = Number.isInteger(parsed.answerIndex) ? parsed.answerIndex : 0;
-    const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
+    // Wrap in array for the repair tool
+    const { items: repairedItems } = await repairContentArray([parsed], validator, repairPrompt, 'generateInlineQuestion');
 
-    // Handle explanation: if it's an array, pick the correct one. If string, use as is (fallback).
-    let correctExplanation = '';
-    if (Array.isArray(parsed.explanation) && parsed.explanation[answerIndex]) {
-      correctExplanation = parsed.explanation[answerIndex];
-    } else if (typeof parsed.explanation === 'string') {
-      correctExplanation = parsed.explanation;
-    } else {
-      correctExplanation = 'Correct answer.';
-    }
+    if (!repairedItems.length) return null;
+    parsed = repairedItems[0];
+
+    const answerIndex = parsed.answerIndex;
+    const correctOption = ['A', 'B', 'C', 'D'][answerIndex];
 
     // Format as Markdown
     let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
       const letter = ['A', 'B', 'C', 'D'][i];
-      // Clean up option text: remove "A.", "A)", etc. ONLY if followed by punctuation (not just space)
-      let cleanOpt = opt.trim();
-      // Only strip prefix if it's a letter followed by . or ) (not just a space)
-      // e.g., "A. content" -> "content", but "By doing..." stays intact
-      cleanOpt = cleanOpt.replace(/^[A-D][.)]\s*/i, '').trim();
-
+      let cleanOpt = opt.trim().replace(/^[A-D][.)]\s*/i, '').trim();
       md += `- ${letter}. ${cleanOpt}\n`;
     });
 
-    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${correctExplanation}\n</details>\n`;
+    // Build explanations list
+    const explanationList = parsed.options.map((_, i) => {
+      const letter = ['A', 'B', 'C', 'D'][i];
+      const isCorrect = i === answerIndex;
+      const icon = isCorrect ? '✅' : '❌';
+      return `- **${letter}** ${icon} ${parsed.explanation[i]}`;
+    }).join('\n');
+
+    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}\n\n${explanationList}\n</details>\n`;
 
     // --- VALIDATION STEP ---
     const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
@@ -1029,6 +1043,22 @@ CRITICAL REQUIREMENTS:
 5. When examples require equations or formal notation, include LaTeX within math fences only.
 6. Use consistent heading levels matching the plan (e.g., #, ##, ### as appropriate).
 7. Do not reference any figure, graph, or image unless one is provided. If a visual aid is needed, describe it in text instead.
+8. **Mermaid Diagrams:** You support the following Mermaid diagram types:
+   - \`sequenceDiagram\` (protocols, algorithms)
+   - \`classDiagram\` (OOP, data models)
+   - \`stateDiagram - v2\` (finite states, UI flows)
+   - \`erDiagram\` (databases)
+   - \`gantt\` (timelines)
+   - \`journey\` (user steps)
+   - \`pie\` (distributions)
+   - \`mindmap\` (concepts)
+   - \`quadrantChart\` (2x2 frameworks)
+   **CRITICAL:** Only generate a mermaid block if the plan EXPLICITLY requests it (e.g., "Include a sequence diagram..."). Do not generate diagrams otherwise.
+   Syntax:
+   \`\`\`mermaid
+   graph TD;
+     A-->B;
+   \`\`\`
 `,
   };
 
@@ -1194,11 +1224,12 @@ Rules:
     },
     {
       role: 'user',
-      content: `Generate JSON with a 'quiz' array of 3-5 standard multiple-choice questions plus 1 extra "Challenge Question" (total 4-6 questions) for "${title}". 
+      content: `Generate JSON with a 'quiz' array of **8-12 comprehensive multiple-choice questions** plus 1 extra "Challenge Question" (total 9-13 questions) for "${title}". 
 Follow the plan:
 ${plan}
 
-Each question: 4 options, single correct_index, validation_check before finalizing, explanation array for all options. Ensure the last question is the Challenge Question.`,
+Each question: 4 options, single correct_index, validation_check before finalizing, explanation array for all options. Ensure the last question is the Challenge Question.
+Ensure the questions cover the ENTIRE breadth of the lesson content provided in the plan.`,
     },
   ];
   const { content } = await grokExecutor({

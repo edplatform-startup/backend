@@ -272,7 +272,7 @@ Base URL (production): https://api.kognolearn.com
   3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, and sets `status: "pending"` for downstream progress tracking.
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
-     - Calls `x-ai/grok-4-fast` three times (reading Markdown, quiz JSON, flashcards JSON) using strict JSON mode for assessments.
+     - Calls LLMs (Grok 4 Fast, Gemini 3 Pro) to generate reading Markdown, quiz JSON, and flashcards JSON.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
      - Updates each node's `content_payload` to `{ reading, quiz, flashcards, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
     - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
@@ -436,9 +436,14 @@ Base URL (production): https://api.kognolearn.com
           "quiz": [
             {
               "question": "Consider the argument: (P → Q) ∧ P ∴ Q. Which rule is this?",
-              "options": ["Modus Ponens", "Affirming Consequent", "Denying Antecedent"],
+              "options": ["Modus Ponens", "Affirming Consequent", "Denying Antecedent", "Modus Tollens"],
               "correct_index": 0,
-              "explanation": ["string"]
+              "explanation": [
+                "Correct. This matches the form p -> q, p, therefore q.",
+                "Incorrect. This would be q, therefore p.",
+                "Incorrect. This would be ~p, therefore ~q.",
+                "Incorrect. This would be ~q, therefore ~p."
+              ]
             }
           ],
           "generation_plans": {
