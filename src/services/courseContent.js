@@ -930,7 +930,7 @@ Return JSON ONLY:
   "explanation": "string"
 }
 Ensure answerIndex is valid.
-Use \\(...\\) for inline math and \\[...\\] for display math. Do not use $ or $$.`,
+Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
   };
 
   const userPrompt = {
@@ -1162,7 +1162,7 @@ Rules:
 - Exactly one option may be correct, enforce via validation_check.
 - Ensure questions vary in difficulty (Easy, Medium, Hard).
 - You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).
-- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
+- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 `,
     },
     {
@@ -1264,7 +1264,7 @@ Rules:
 - validation_check is required for every item and must audit completeness before final answers
 - answer_key must stay solution-focused, no meta-commentary
 - rubric should reference the same subparts mentioned in the question.
-- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.`,
+- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
@@ -1365,7 +1365,7 @@ Always respond with JSON:
 }
 
 Never include scratchpad text inside front/back.
-Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.`,
+Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
@@ -1571,7 +1571,7 @@ Rules:
 - Replace or modify questions as requested.
 - Keep the total number of questions similar unless instructed otherwise.
 - Ensure one "Challenge Question" remains.
-- Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
+- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 `,
     },
     {
@@ -1644,7 +1644,7 @@ Always respond with JSON:
     { "step_by_step_thinking": "...", "front": "...", "back": "..." }
   ]
 }
-Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
+Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 `,
     },
     {
