@@ -798,6 +798,35 @@ Base URL (production): https://api.kognolearn.com
   - `endDate` (string, optional ISO date) – Filter events before this date.
   - `limit` (number, optional) – Max records (default: 50).
   - `offset` (number, optional) – Pagination offset (default: 0).
+  
+### GET /feedback
+- Purpose: Retrieve feedback entries with filtering and pagination.
+- Query parameters:
+  - `userId` (string, optional) – Filter by user UUID.
+  - `type` (string, optional) – Filter by feedback type (`bug`, `feature`, `content`, `other`).
+  - `limit` (number, optional) – Number of records to return (default: 50).
+  - `offset` (number, optional) – Pagination offset (default: 0).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "feedback": [
+        {
+          "id": "...",
+          "user_id": "...",
+          "user_email": "...",
+          "type": "bug",
+          "message": "...",
+          "context": {},
+          "created_at": "..."
+        }
+      ],
+      "count": 1
+    }
+    ```
+  - 500 Internal Server Error → Database error.
+
 - Responses:
   - 200 OK →
     ```json

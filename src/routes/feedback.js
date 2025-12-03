@@ -25,8 +25,8 @@ router.post('/', async (req, res) => {
   }
 
   if (!VALID_FEEDBACK_TYPES.includes(type)) {
-    return res.status(400).json({ 
-      error: `type must be one of: ${VALID_FEEDBACK_TYPES.join(', ')}` 
+    return res.status(400).json({
+      error: `type must be one of: ${VALID_FEEDBACK_TYPES.join(', ')}`
     });
   }
 
@@ -53,9 +53,9 @@ router.post('/', async (req, res) => {
 
     if (error) {
       console.error('Error saving feedback:', error);
-      return res.status(500).json({ 
-        error: 'Failed to save feedback', 
-        details: error.message 
+      return res.status(500).json({
+        error: 'Failed to save feedback',
+        details: error.message
       });
     }
 
@@ -68,9 +68,56 @@ router.post('/', async (req, res) => {
     });
   } catch (error) {
     console.error('Unexpected error saving feedback:', error);
-    return res.status(500).json({ 
-      error: 'Internal server error', 
-      details: error.message 
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
+// GET /feedback
+router.get('/', async (req, res) => {
+  const { userId, type, limit = 50, offset = 0 } = req.query;
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .schema('api')
+      .from('feedback')
+      .select('*', { count: 'exact' });
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+
+    query = query
+      .order('created_at', { ascending: false })
+      .range(Number(offset), Number(offset) + Number(limit) - 1);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      console.error('Error fetching feedback:', error);
+      return res.status(500).json({
+        error: 'Failed to fetch feedback',
+        details: error.message
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      feedback: data,
+      count
+    });
+  } catch (error) {
+    console.error('Unexpected error fetching feedback:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: error.message
     });
   }
 });
