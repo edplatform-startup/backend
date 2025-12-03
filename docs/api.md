@@ -849,7 +849,7 @@ Base URL (production): https://api.kognolearn.com
 ### GET /analytics/events/summary
 - Purpose: Retrieve aggregated counts of user events.
 - Query parameters:
-  - `userId` (string, required) – Filter by user UUID.
+  - `userId` (string, optional) – Filter by user UUID.
   - `groupBy` (string, optional) – `"event_type"` (default) or `"date"`.
   - `courseId` (string, optional) – Filter by course.
   - `startDate` / `endDate` (optional ISO dates).

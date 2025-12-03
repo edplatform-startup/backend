@@ -56,7 +56,7 @@ router.get('/usage/summary', async (req, res) => {
   const totalSpend = data.reduce((sum, record) => sum + (record.cost_usd || 0), 0);
   const totalTokens = data.reduce((sum, record) => sum + (record.total_tokens || 0), 0);
   const totalCalls = data.length;
-  
+
   // Calculate unique users if no userId filter
   const uniqueUsers = new Set(data.map(r => r.user_id)).size;
   const avgSpendPerUser = uniqueUsers > 0 ? totalSpend / uniqueUsers : 0;
@@ -134,18 +134,17 @@ router.get('/events', async (req, res) => {
 router.get('/events/summary', async (req, res) => {
   const { userId, groupBy = 'event_type', courseId, startDate, endDate } = req.query;
 
-  if (!userId) {
-    return res.status(400).json({ error: 'userId is required' });
-  }
-
   const supabase = getSupabase();
-  
+
   // We fetch relevant data and aggregate in memory for flexibility
   let query = supabase
     .schema('api')
     .from('analytics_events')
-    .select('event_type, created_at, details')
-    .eq('user_id', userId);
+    .select('event_type, created_at, details');
+
+  if (userId) {
+    query = query.eq('user_id', userId);
+  }
 
   if (courseId) {
     query = query.eq('details->>courseId', courseId);
