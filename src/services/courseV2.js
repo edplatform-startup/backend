@@ -490,12 +490,14 @@ ${trimmedSyllabus}
 
 Using this information, produce competency-based overviewTopics with fully populated atomic concept metadata.`;
 
+    const messages = [
+      { role: 'system', content: systemPrompt.trim() },
+      { role: 'user', content: userPrompt.trim() },
+    ];
+
     const { result, model } = await courseV2LLMCaller({
       stage: STAGES.TOPICS,
-      messages: [
-        { role: 'system', content: systemPrompt.trim() },
-        { role: 'user', content: userPrompt.trim() },
-      ],
+      messages,
       maxTokens: 8192,
       allowWeb: false, // Disabled web search to avoid compatibility issues with Grok
       responseFormat: { type: 'json_object' },
@@ -503,12 +505,58 @@ Using this information, produce competency-based overviewTopics with fully popul
       userId,
     });
 
-    const parsed = tryParseJson(result?.content);
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Topic generation returned invalid JSON.');
+    let parsed = tryParseJson(result?.content);
+    let validationError = null;
+
+    // Initial validation
+    if (parsed && typeof parsed === 'object') {
+      const check = TopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
+      if (!check.success) {
+        validationError = check.error.toString();
+      }
+    } else {
+      validationError = 'Output was not valid JSON (parse failed).';
+    }
+
+    // Repair loop if needed
+    if (validationError) {
+      console.log('[topics] Initial validation failed, attempting repair. Error:', validationError);
+
+      const criticMessages = [
+        ...messages,
+        {
+          role: 'user',
+          content: `Prior output was invalid JSON. 
+Validation error: ${validationError}
+Original output: ${result.content?.slice(0, 2000) ?? 'N/A'}
+Please return **only** a correct JSON object for the topic map, with no extra text.`
+        }
+      ];
+
+      const { result: repairedResult } = await courseV2LLMCaller({
+        stage: STAGES.TOPICS,
+        messages: criticMessages,
+        allowWeb: false,
+        maxTokens: 8192,
+        responseFormat: { type: 'json_object' },
+        requestTimeoutMs: 120000,
+        userId
+      });
+
+      parsed = tryParseJson(repairedResult?.content);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Topic generation returned invalid JSON after repair attempt.');
+      }
+
+      // Re-validate
+      const recheck = TopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
+      if (!recheck.success) {
+        throw new Error(`Topic generation failed validation after repair: ${recheck.error.toString()}`);
+      }
     }
 
     const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics, rawTopicSummaries);
+    // Final safe parse to ensure normalization didn't break anything (though normalize handles most things)
     const validated = TopicMapSchema.parse({ overviewTopics });
     return {
       overviewTopics: validated.overviewTopics,

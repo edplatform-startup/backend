@@ -237,7 +237,7 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(synthOptions.courseName, 'Foundations of CS');
     assert.ok(llmOptions);
     assert.equal(llmOptions.stage, 'TOPICS');
-    assert.equal(llmOptions.allowWeb, true);
+    assert.equal(llmOptions.allowWeb, false);
   });
 
   await t.test('ensures dense coverage includes 30+ subtopics when LLM supplies them', async () => {
@@ -455,7 +455,7 @@ test('courses route validations and behaviors', async (t) => {
   await t.test('GET /courses/:id/plan uses seconds_to_complete from DB', async () => {
     const courseId = 'course-plan-1';
     const userId = 'user-plan-1';
-    
+
     setSupabaseClient(
       createSupabaseStub({
         listResponses: [
@@ -484,7 +484,7 @@ test('courses route validations and behaviors', async (t) => {
   await t.test('GET /courses/:id/plan errors if seconds_to_complete is missing', async () => {
     const courseId = 'course-plan-2';
     const userId = 'user-plan-2';
-    
+
     setSupabaseClient(
       createSupabaseStub({
         listResponses: [
