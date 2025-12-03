@@ -49,24 +49,69 @@ export async function generateStudyPlan(courseId, userId) {
 function insertPracticeExams(nodes) {
     if (!nodes || nodes.length === 0) return [];
 
-    const totalDuration = nodes.reduce((sum, n) => sum + (n.effective_cost || 0), 0);
-    const midPoint = totalDuration / 2;
+    // Calculate total structural cost (based on estimated minutes)
+    // We use estimated_minutes to ensure the exam is placed based on content volume,
+    // regardless of user's current mastery state.
+    let totalStructuralCost = 0;
+    const cumulativeCosts = [];
 
-    let currentDuration = 0;
-    let midExamInserted = false;
+    nodes.forEach(node => {
+        const cost = node.estimated_minutes || 30;
+        totalStructuralCost += cost;
+        cumulativeCosts.push(totalStructuralCost);
+    });
+
+    const midPoint = totalStructuralCost / 2;
+
+    // Find the best index to insert the exam
+    // We prefer module boundaries (where module_ref changes)
+    let bestIndex = -1;
+    let minDiff = Infinity;
+
+    for (let i = 0; i < nodes.length - 1; i++) {
+        const node = nodes[i];
+        const nextNode = nodes[i + 1];
+
+        // Check if this is a module boundary
+        if (node.module_ref !== nextNode.module_ref) {
+            const costAtBoundary = cumulativeCosts[i];
+            const diff = Math.abs(costAtBoundary - midPoint);
+
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestIndex = i;
+            }
+        }
+    }
+
+    // Fallback: If no boundary is close enough (e.g., within 15% of total cost),
+    // or if no boundaries found, find the closest node regardless of boundary.
+    // This handles cases with huge modules.
+    const threshold = totalStructuralCost * 0.15;
+    if (minDiff > threshold) {
+        for (let i = 0; i < nodes.length; i++) {
+            const diff = Math.abs(cumulativeCosts[i] - midPoint);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestIndex = i;
+            }
+        }
+    }
+
+    // If still invalid, default to middle index
+    if (bestIndex === -1) {
+        bestIndex = Math.floor(nodes.length / 2) - 1;
+    }
+
     const result = [];
     const precedingIds = [];
 
-    for (const node of nodes) {
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
         result.push(node);
         precedingIds.push(node.id);
 
-        // Only count duration of non-mastered nodes for placement logic
-        if (node.userState?.mastery_status !== 'mastered') {
-            currentDuration += (node.effective_cost || 0);
-        }
-
-        if (!midExamInserted && currentDuration >= midPoint) {
+        if (i === bestIndex) {
             result.push({
                 id: 'practice-exam-mid',
                 title: 'Mid-Course Practice Exam',
@@ -77,7 +122,6 @@ function insertPracticeExams(nodes) {
                 userState: { mastery_status: 'pending' },
                 preceding_lessons: [...precedingIds]
             });
-            midExamInserted = true;
         }
     }
 
