@@ -1012,7 +1012,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     const response = await grokExecutor({
       model: 'google/gemini-3-pro-preview',
       temperature: 0.3, // Slightly higher for creativity in question design
-      maxTokens: 1024,
+      maxTokens: 4096,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
     });
