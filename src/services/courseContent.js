@@ -1978,7 +1978,9 @@ async function validateContent(contentType, content, context) {
 Your job is to review the provided ${contentType} for factual correctness, answer accuracy, and clarity.
 
 If the content is completely correct and high-quality:
-Respond with ONLY the single word: "CORRECT"
+${isJsonContent
+        ? 'Respond with JSON: { "status": "CORRECT" }'
+        : 'Respond with ONLY the single word: "CORRECT"'}
 
 If there are ANY factual errors, incorrect answers, hallucinations, or major quality issues:
 ${isJsonContent
@@ -2030,6 +2032,12 @@ ${context}`
       try {
         // First try direct parse
         const json = JSON.parse(jsonToParse);
+
+        // Check if the validator returned a "CORRECT" status object
+        if (json && (json.status === 'CORRECT' || json.review === 'CORRECT')) {
+          return content;
+        }
+
         if (json) {
           // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
           if (Array.isArray(content) && !Array.isArray(json)) {

@@ -134,6 +134,14 @@ test('generateCourseContent fills node payloads and marks course ready', async (
 
     const lastMessage = messages[messages.length - 1] || {};
     const lastContent = stringifyContent(lastMessage.content);
+    const systemMessage = messages.find(m => m.role === 'system')?.content || '';
+
+    if (systemMessage.includes('Quality Assurance Validator')) {
+      if (systemMessage.includes('Respond with JSON: { "status": "CORRECT" }')) {
+        return { content: JSON.stringify({ status: 'CORRECT' }) };
+      }
+      return { content: 'CORRECT' };
+    }
 
     if (/practice_exam/i.test(lastContent)) {
       return {
