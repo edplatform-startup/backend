@@ -67,11 +67,11 @@ CRITICAL RULES:
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
   - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
    - ALL content should flow in a logical learning order for maximum comprehension
-6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the entire module's content.
+6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
 7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.
    - **video:** 2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.
-   - **quiz:** Detailed prompt for an examiner. Explicitly request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that would test even a strong student. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
+   - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
 8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
@@ -95,7 +95,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
       "content_plans": {
          "reading": "Explain the chain rule using a 'peeling the onion' analogy. Focus on identifying inner vs outer functions.",
          "video": ["chain rule calculus intuition", "chain rule visualization 3blue1brown"],
-         "quiz": "Generate 3 multiple-choice questions. One must involve a trigonometric function inside a polynomial.",
+         "quiz": "Generate 3-5 multiple-choice questions. Question 1 on Chain Rule intuition, Question 2 on identifying inner/outer functions, Question 3 on applying the formula. Include a Challenge Question involving a trigonometric function inside a polynomial.",
          "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions."
       }
     }
@@ -214,6 +214,63 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     } catch (e) {
       // Fallback to dropping all bad deps (Stage 3) implicitly since we didn't add them back
     }
+  }
+
+  // Step 2.5: Inject Module Quizzes
+  // Group lessons by module
+  const moduleMap = new Map();
+  lessonGraph.lessons.forEach(l => {
+    if (!moduleMap.has(l.module_group)) {
+      moduleMap.set(l.module_group, []);
+    }
+    moduleMap.get(l.module_group).push(l);
+  });
+
+  // Create Module Quiz for each module
+  for (const [moduleName, lessons] of moduleMap.entries()) {
+    // Skip if module already has a module quiz (unlikely but safe)
+    if (lessons.some(l => l.title === 'Module Quiz')) continue;
+
+    const moduleSlug = moduleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const quizSlug = `module-quiz-${moduleSlug}`;
+
+    // Gather context from lessons in this module
+    const lessonSummaries = lessons.map(l => {
+      // Use title and reading prompt to give context
+      const readingPrompt = l.content_plans?.reading || '';
+      // Truncate reading prompt to avoid excessive context, just get the gist
+      const gist = readingPrompt.length > 150 ? readingPrompt.substring(0, 150) + '...' : readingPrompt;
+      return `- Lesson: "${l.title}" (Focus: ${gist})`;
+    }).join('\n');
+
+    const quizPrompt = `Create a comprehensive Module Quiz for the module "${moduleName}".
+The quiz should cover the key concepts from the following lessons:
+${lessonSummaries}
+
+Requirements:
+1. This is a cumulative review quiz for the entire module.
+2. Include questions that test understanding of how these concepts relate to each other.
+3. Ensure a mix of difficulty levels (Easy, Medium, Hard).
+4. Provide detailed explanations for every answer (correct and incorrect).
+5. Use proper LaTeX formatting for any math.
+6. Do NOT include content from outside this module.`;
+
+    const moduleQuizLesson = {
+      slug_id: quizSlug,
+      title: 'Module Quiz',
+      module_group: moduleName,
+      estimated_minutes: 20,
+      bloom_level: 'Evaluate',
+      intrinsic_exam_value: 10,
+      architectural_reasoning: 'Automatically generated comprehensive review quiz for the module.',
+      dependencies: lessons.map(l => l.slug_id), // Depend on ALL lessons in the module
+      original_source_ids: [],
+      content_plans: {
+        quiz: quizPrompt
+      }
+    };
+
+    lessonGraph.lessons.push(moduleQuizLesson);
   }
 
   // Step 3: Normalization & Output

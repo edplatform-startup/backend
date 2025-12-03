@@ -362,7 +362,8 @@ async function processNode(node, supabase, courseTitle, prereqs = []) {
       question: q.question,
       options: q.options,
       correct_index: q.correct_index,
-      explanation: q.explanation,
+      correct_index: q.correct_index,
+      explanation: JSON.stringify(q.explanation),
       status: 'unattempted'
     }));
     const { error: quizError } = await supabase.schema('api').from('quiz_questions').insert(quizPayloads);
@@ -927,9 +928,13 @@ Return JSON ONLY:
   "question": "string",
   "options": ["A", "B", "C", "D"],
   "answerIndex": number (0-3),
-  "explanation": "string"
+  "explanation": ["Expl for A", "Expl for B", "Expl for C", "Expl for D"]
 }
 Ensure answerIndex is valid.
+"explanation" must be an array of 4 strings, corresponding to each option.
+- For the correct option, explain WHY it is correct.
+- For incorrect options, explain WHY they are incorrect.
+- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
 Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
   };
 
@@ -942,7 +947,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     const response = await grokExecutor({
       model: 'x-ai/grok-4-fast',
       temperature: 0.3, // Slightly higher for creativity in question design
-      maxTokens: 512,
+      maxTokens: 1024,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
     });
@@ -960,6 +965,16 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     const answerIndex = Number.isInteger(parsed.answerIndex) ? parsed.answerIndex : 0;
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex] || 'A';
 
+    // Handle explanation: if it's an array, pick the correct one. If string, use as is (fallback).
+    let correctExplanation = '';
+    if (Array.isArray(parsed.explanation) && parsed.explanation[answerIndex]) {
+      correctExplanation = parsed.explanation[answerIndex];
+    } else if (typeof parsed.explanation === 'string') {
+      correctExplanation = parsed.explanation;
+    } else {
+      correctExplanation = 'Correct answer.';
+    }
+
     // Format as Markdown
     let md = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
     parsed.options.forEach((opt, i) => {
@@ -973,7 +988,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
       md += `- ${letter}. ${cleanOpt}\n`;
     });
 
-    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${parsed.explanation}\n</details>\n`;
+    md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}. *Explanation:* ${correctExplanation}\n</details>\n`;
 
     // --- VALIDATION STEP ---
     const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
@@ -1013,6 +1028,7 @@ CRITICAL REQUIREMENTS:
 4. Do not include editor scratchpad text inside the markdown.
 5. When examples require equations or formal notation, include LaTeX within math fences only.
 6. Use consistent heading levels matching the plan (e.g., #, ##, ### as appropriate).
+7. Do not reference any figure, graph, or image unless one is provided. If a visual aid is needed, describe it in text instead.
 `,
   };
 
@@ -1136,6 +1152,14 @@ async function generateQuiz(title, plan, courseName, moduleName, prereqs = []) {
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}]. Do not test concepts from future lessons.`
     : `Context: This is an introductory lesson.`;
 
+  // Select a random prerequisite for cumulative review if available
+  let reviewInstruction = '';
+  if (prereqs.length > 0) {
+    // Pick one random prereq to review
+    const randomPrereq = prereqs[Math.floor(Math.random() * prereqs.length)];
+    reviewInstruction = `\n- **Cumulative Review:** Include exactly one question that reviews a key concept from the prerequisite lesson "${randomPrereq}". This question should reinforce retention and be accessible.`;
+  }
+
   const messages = [
     {
       role: 'system',
@@ -1151,17 +1175,20 @@ Always respond with JSON:
       "question": "Student-facing stem",
       "options": ["..."],
       "correct_index": 0,
-      "explanation": "Clean rationale with no meta-commentary"
+      "explanation": ["Expl for A", "Expl for B", "Expl for C", "Expl for D"]
     }
   ]
 }
 
 Rules:
 - validation_check is the ONLY place you reason about distractors
-- Explanation must be concise feedback for students (no scratchpad)
+- "explanation" must be an array of 4 strings, corresponding to each option.
+- For the correct option, explain WHY it is correct.
+- For incorrect options, explain WHY they are incorrect.
+- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
 - Exactly one option may be correct, enforce via validation_check.
 - Ensure questions vary in difficulty (Easy, Medium, Hard).
-- You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).
+- You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).${reviewInstruction}
 - Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 `,
     },
@@ -1171,13 +1198,13 @@ Rules:
 Follow the plan:
 ${plan}
 
-Each question: 4 options, single correct_index, validation_check before finalizing, explanation strictly for students. Ensure the last question is the Challenge Question.`,
+Each question: 4 options, single correct_index, validation_check before finalizing, explanation array for all options. Ensure the last question is the Challenge Question.`,
     },
   ];
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4-fast',
     temperature: 0.2,
-    maxTokens: 1024,
+    maxTokens: 2048, // Increased for detailed explanations
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
@@ -1205,7 +1232,7 @@ Each question: 4 options, single correct_index, validation_check before finalizi
     };
 
     const repairPrompt = (brokenItems, errors) => {
-      return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has a 'question', 'options' (array of 4 strings), 'correct_index' (0-3), and 'explanation'.`;
+      return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has a 'question', 'options' (array of 4 strings), 'correct_index' (0-3), and 'explanation' (array of 4 strings).`;
     };
 
     const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz');
@@ -1226,9 +1253,22 @@ Each question: 4 options, single correct_index, validation_check before finalizi
 
 function normalizeQuizItem(item, index) {
   const question = typeof item?.question === 'string' ? item.question.trim() : '';
-  const explanation = typeof item?.explanation === 'string' ? item.explanation.trim() : '';
+
+  // Handle explanation: ensure it's an array of strings
+  let explanation = [];
+  if (Array.isArray(item?.explanation)) {
+    explanation = item.explanation.map(e => (typeof e === 'string' ? e.trim() : String(e)));
+  } else if (typeof item?.explanation === 'string') {
+    // Fallback if model returns a single string: replicate it or just put it in the correct slot?
+    // Let's just put it as a single item array, but ideally we want 4.
+    // Better: if it's a single string, make it an array of length 4 with that string repeated or empty?
+    // Let's just wrap it. The UI should handle it. But the prompt asks for 4.
+    explanation = [item.explanation.trim()];
+  }
+
   const options = Array.isArray(item?.options) ? item.options.map((opt) => (typeof opt === 'string' ? opt : String(opt))) : [];
   const correctIndex = Number.isInteger(item?.correct_index) ? item.correct_index : 0;
+
   if (!question || options.length < 2) {
     throw new Error(`Quiz item ${index + 1} is invalid`);
   }
@@ -1236,7 +1276,7 @@ function normalizeQuizItem(item, index) {
     question,
     options,
     correct_index: correctIndex,
-    explanation: explanation || 'Answer rationale not provided.',
+    explanation: explanation.length > 0 ? explanation : ['Answer rationale not provided.'],
   };
 }
 
@@ -1526,14 +1566,14 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
     // Fallback to text without enrichment
   }
 
-    // --- VALIDATION STEP ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedText = await validateContent('reading', resultText, validationContext);
+  // --- VALIDATION STEP ---
+  const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
+  const validatedText = await validateContent('reading', resultText, validationContext);
 
-    return {
-      data: validatedText,
-      stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
-    };
+  return {
+    data: validatedText,
+    stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
+  };
 }
 
 export async function regenerateQuiz(title, currentQuiz, changeInstruction, courseName, moduleName, prereqs = []) {
@@ -1562,7 +1602,7 @@ Always respond with JSON:
       "question": "Student-facing stem",
       "options": ["..."],
       "correct_index": 0,
-      "explanation": "Rationale"
+      "explanation": ["Expl A", "Expl B", "Expl C", "Expl D"]
     }
   ]
 }
@@ -1571,6 +1611,10 @@ Rules:
 - Replace or modify questions as requested.
 - Keep the total number of questions similar unless instructed otherwise.
 - Ensure one "Challenge Question" remains.
+- "explanation" must be an array of 4 strings (one per option).
+- For the correct option, explain WHY it is correct.
+- For incorrect options, explain WHY they are incorrect.
+- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
 - Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
 `,
     },
@@ -1918,7 +1962,7 @@ Select the best video index.`
  */
 async function validateContent(contentType, content, context) {
   const modelConfig = pickModel(STAGES.VALIDATOR);
-  
+
   let contentStr = '';
   if (typeof content === 'string') {
     contentStr = content;
@@ -1937,9 +1981,13 @@ If the content is completely correct and high-quality:
 Respond with ONLY the single word: "CORRECT"
 
 If there are ANY factual errors, incorrect answers, hallucinations, or major quality issues:
-${isJsonContent 
-  ? 'Respond with ONLY the FIXED JSON. Do not include ANY explanatory text, markdown fences, or commentary. Just output the pure JSON object or array.'
-  : 'Respond with ONLY the FIXED markdown content. Do not include explanatory text or markdown fences around the output.'}
+${isJsonContent
+        ? 'Respond with ONLY the FIXED JSON. Do not include ANY explanatory text, markdown fences, or commentary. Just output the pure JSON object or array.'
+        : 'Respond with ONLY the FIXED markdown content. Do not include explanatory text or markdown fences around the output.'}
+
+Check for and remove any references to figures, graphs, or images that are not present (e.g., 'the graph below'). Rewrite such references as textual descriptions or remove them if they are not essential.
+
+Also, ensure that quiz questions DO NOT test concepts that are not present in the provided context (lesson content + prerequisites). If a question asks about a topic that hasn't been taught yet, remove or replace it.
 
 Context:
 ${context}`
@@ -1977,7 +2025,7 @@ ${context}`
     if (isJsonContent) {
       // Try to parse JSON - use the robust extraction from our utilities
       let jsonToParse = coerceModelText(cleaned);
-      
+
       // Use extractJsonBlock from jsonUtils if the direct parse fails
       try {
         // First try direct parse
@@ -1985,12 +2033,12 @@ ${context}`
         if (json) {
           // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
           if (Array.isArray(content) && !Array.isArray(json)) {
-             // Check common keys
-             if (Array.isArray(json.quiz)) return json.quiz;
-             if (Array.isArray(json.questions)) return json.questions;
-             if (Array.isArray(json.flashcards)) return json.flashcards;
-             if (Array.isArray(json.practice_exam)) return json.practice_exam;
-             // If we can't find the array, return original to be safe
+            // Check common keys
+            if (Array.isArray(json.quiz)) return json.quiz;
+            if (Array.isArray(json.questions)) return json.questions;
+            if (Array.isArray(json.flashcards)) return json.flashcards;
+            if (Array.isArray(json.practice_exam)) return json.practice_exam;
+            // If we can't find the array, return original to be safe
           }
           return json;
         }
@@ -2001,12 +2049,12 @@ ${context}`
           if (json) {
             // If the original was an array (like quiz/flashcards), we might need to extract it if the model wrapped it
             if (Array.isArray(content) && !Array.isArray(json)) {
-               // Check common keys
-               if (Array.isArray(json.quiz)) return json.quiz;
-               if (Array.isArray(json.questions)) return json.questions;
-               if (Array.isArray(json.flashcards)) return json.flashcards;
-               if (Array.isArray(json.practice_exam)) return json.practice_exam;
-               // If we can't find the array, return original to be safe
+              // Check common keys
+              if (Array.isArray(json.quiz)) return json.quiz;
+              if (Array.isArray(json.questions)) return json.questions;
+              if (Array.isArray(json.flashcards)) return json.flashcards;
+              if (Array.isArray(json.practice_exam)) return json.practice_exam;
+              // If we can't find the array, return original to be safe
             }
             return json;
           }

@@ -438,7 +438,7 @@ Base URL (production): https://api.kognolearn.com
               "question": "Consider the argument: (P → Q) ∧ P ∴ Q. Which rule is this?",
               "options": ["Modus Ponens", "Affirming Consequent", "Denying Antecedent"],
               "correct_index": 0,
-              "explanation": "This is Modus Ponens, affirming the antecedent..."
+              "explanation": ["string"]
             }
           ],
           "generation_plans": {

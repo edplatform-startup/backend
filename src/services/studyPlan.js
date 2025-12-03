@@ -14,7 +14,7 @@ export async function generateStudyPlan(courseId, userId) {
 
     // 1. Data Fetching & Hydration
     const { nodes, edges, userStateMap, course } = await fetchData(courseId, userId);
-    
+
     // Determine available time from DB
     const secondsToComplete = course?.seconds_to_complete;
     if (typeof secondsToComplete !== 'number' || secondsToComplete <= 0) {
@@ -23,7 +23,7 @@ export async function generateStudyPlan(courseId, userId) {
         // Given the user explicitly asked to use this field, missing it implies the course isn't ready for planning.
         throw new Error('Course time limit (seconds_to_complete) is not set');
     }
-    
+
     const minutesAvailable = secondsToComplete / 60;
 
     const graph = buildGraph(nodes, edges);
@@ -51,7 +51,7 @@ function insertPracticeExams(nodes) {
 
     const totalDuration = nodes.reduce((sum, n) => sum + (n.effective_cost || 0), 0);
     const midPoint = totalDuration / 2;
-    
+
     let currentDuration = 0;
     let midExamInserted = false;
     const result = [];
@@ -60,7 +60,7 @@ function insertPracticeExams(nodes) {
     for (const node of nodes) {
         result.push(node);
         precedingIds.push(node.id);
-        
+
         // Only count duration of non-mastered nodes for placement logic
         if (node.userState?.mastery_status !== 'mastered') {
             currentDuration += (node.effective_cost || 0);
@@ -73,7 +73,7 @@ function insertPracticeExams(nodes) {
                 type: 'practice_exam',
                 is_standalone_module: true,
                 module_ref: '__practice_exam_mid__',
-                effective_cost: 45, 
+                effective_cost: 45,
                 userState: { mastery_status: 'pending' },
                 preceding_lessons: [...precedingIds]
             });
@@ -225,7 +225,10 @@ function runDeepStudyAlgorithm(nodeMap) {
 function runCramModeAlgorithm(nodeMap, minutesAvailable) {
     // 1. Identify Target Nodes (exclude mastered)
     let targets = Array.from(nodeMap.values()).filter(
-        (node) => (node.intrinsic_exam_value || 0) >= 7 && node.userState.mastery_status !== 'mastered'
+        (node) => (
+            ((node.intrinsic_exam_value || 0) >= 7 || node.title === 'Module Quiz') &&
+            node.userState.mastery_status !== 'mastered'
+        )
     );
 
     // Fallback: If no targets, top 20% by value (exclude mastered)
@@ -305,7 +308,7 @@ function runCramModeAlgorithm(nodeMap, minutesAvailable) {
     // Get all nodes (including mastered) that should be in the final output
     const selectedSet = new Set(finalSelectedNodes.map(n => n.id));
     const allNodesToInclude = Array.from(nodeMap.values()).filter(
-        (node) => selectedSet.has(node.id) || node.userState.mastery_status === 'mastered'
+        (node) => selectedSet.has(node.id) || node.userState.mastery_status === 'mastered' || node.title === 'Module Quiz'
     );
 
     return topologicalSort(nodeMap, allNodesToInclude);
