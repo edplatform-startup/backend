@@ -83,16 +83,17 @@ router.get('/usage/summary', async (req, res) => {
 router.get('/events', async (req, res) => {
   const { userId, eventTypes, courseId, startDate, endDate, limit = 50, offset = 0 } = req.query;
 
-  if (!userId) {
-    return res.status(400).json({ error: 'userId is required' });
-  }
-
   const supabase = getSupabase();
   let query = supabase
     .schema('api')
     .from('analytics_events')
-    .select('*', { count: 'exact' })
-    .eq('user_id', userId)
+    .select('*', { count: 'exact' });
+
+  if (userId) {
+    query = query.eq('user_id', userId);
+  }
+
+  query = query
     .order('created_at', { ascending: false })
     .range(Number(offset), Number(offset) + Number(limit) - 1);
 
