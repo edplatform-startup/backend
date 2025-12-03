@@ -1014,7 +1014,88 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
   }
 }
 
-async function generateReading(title, plan, courseName, moduleName, prereqs = []) {
+
+
+/**
+ * Validates Mermaid code using an LLM.
+ */
+async function validateMermaidBlock(code) {
+  try {
+    const response = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.1,
+      maxTokens: 512,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a strict Mermaid syntax validator. Check the following Mermaid code for syntax errors.
+If valid, return JSON: { "valid": true }
+If invalid, return JSON: { "valid": false, "error": "Detailed error message explaining exactly what is wrong" }
+Do not fix the code, just validate it.`
+        },
+        { role: 'user', content: code }
+      ],
+      responseFormat: { type: 'json_object' }
+    });
+
+    const raw = coerceModelText(response.content);
+    return parseJsonObject(raw, 'mermaid_validation');
+  } catch (e) {
+    // If validation fails (e.g. model error), assume valid to avoid blocking
+    console.warn('Mermaid validation failed to run:', e);
+    return { valid: true };
+  }
+}
+
+/**
+ * Repairs Mermaid code using an LLM loop.
+ */
+async function repairMermaidBlock(code, error) {
+  let currentCode = code;
+  let currentError = error;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await grokExecutor({
+        model: 'x-ai/grok-4-fast',
+        temperature: 0.2,
+        maxTokens: 1024,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a Mermaid code repair assistant. Fix the provided Mermaid code based on the error message.
+Return JSON: { "repaired_code": "string" }
+Ensure the code is valid Mermaid syntax. Do not include markdown fences in the string.`
+          },
+          {
+            role: 'user',
+            content: `Code:\n${currentCode}\n\nError:\n${currentError}`
+          }
+        ],
+        responseFormat: { type: 'json_object' }
+      });
+
+      const raw = coerceModelText(response.content);
+      const parsed = parseJsonObject(raw, 'mermaid_repair');
+
+      if (parsed && parsed.repaired_code) {
+        currentCode = parsed.repaired_code;
+        // Re-validate
+        const validation = await validateMermaidBlock(currentCode);
+        if (validation.valid) {
+          return currentCode;
+        }
+        currentError = validation.error;
+      }
+    } catch (e) {
+      console.warn(`Mermaid repair attempt ${attempt} failed:`, e);
+    }
+  }
+
+  return null; // Failed to repair
+}
+
+export async function generateReading(title, plan, courseName, moduleName, prereqs = []) {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites. They are now in the lesson [${title}] (this lesson). They have not yet learned topics from later lessons. Generate content accordingly.`
     : `Context: This is an introductory lesson with no prerequisites.`;
@@ -1104,7 +1185,50 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       return cleanupLatex(latexOnly);
     }
 
-    return cleanupMarkdown(body);
+    let cleanedMarkdown = cleanupMarkdown(body);
+
+    // --- MERMAID VALIDATION & REPAIR ---
+    // Regex to find mermaid blocks: ```mermaid ... ```
+    const mermaidRegex = /```mermaid\s*([\s\S]*?)\s*```/g;
+    let match;
+    const replacements = [];
+
+    // Find all matches first
+    while ((match = mermaidRegex.exec(cleanedMarkdown)) !== null) {
+      replacements.push({
+        fullMatch: match[0],
+        code: match[1],
+        index: match.index
+      });
+    }
+
+    // Process sequentially to avoid overlapping replacement issues if we were doing string manipulation in place
+    // But since we're replacing exact blocks, we can just do string replace.
+    // However, if multiple identical blocks exist, string.replace might replace the wrong one.
+    // Better to reconstruct the string or use a unique placeholder.
+    // For simplicity, we'll iterate and replace.
+
+    for (const item of replacements) {
+      const validation = await validateMermaidBlock(item.code);
+      if (!validation.valid) {
+        console.log(`Found invalid Mermaid block. Error: ${validation.error}. Attempting repair...`);
+        const repairedCode = await repairMermaidBlock(item.code, validation.error);
+        if (repairedCode) {
+          console.log('Mermaid block repaired successfully.');
+          // Replace the *exact* full match with the repaired version
+          // We use split/join or specific replacement to ensure we target this instance if possible,
+          // but for now, simple replace is likely safe enough as identical invalid blocks are rare.
+          const newBlock = `\`\`\`mermaid\n${repairedCode}\n\`\`\``;
+          cleanedMarkdown = cleanedMarkdown.replace(item.fullMatch, newBlock);
+        } else {
+          console.warn('Failed to repair Mermaid block. Keeping original (or could comment out).');
+          // Optional: Comment it out to prevent rendering errors?
+          // cleanedMarkdown = cleanedMarkdown.replace(item.fullMatch, `<!-- Invalid Mermaid Diagram: ${validation.error} -->\n${item.fullMatch}`);
+        }
+      }
+    }
+
+    return cleanedMarkdown;
   };
   let resultText = await renderResponse([systemPrompt, userPrompt]);
   let retries = 0;
