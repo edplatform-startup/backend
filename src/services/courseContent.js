@@ -914,6 +914,68 @@ import { pickModel, STAGES } from './modelRouter.js';
 /**
  * Generate a single multiple-choice question for a chunk.
  */
+function validateInlineQuestionFormat(markdown) {
+  if (!markdown) return { valid: false, error: 'Empty content' };
+
+  // 1. Header Check
+  const headerRegex = /(?:^Question:|^[\*]{0,2}Question:[\*]{0,2}|^[\*]{0,2}Check Your Understanding[\*]{0,2})/mi;
+  if (!headerRegex.test(markdown)) {
+    return { valid: false, error: 'Missing or invalid header' };
+  }
+
+  // 2. Options Check
+  const optionRegex = /^[-*]?\s*[A-D][.)]\s+/gm;
+  const options = markdown.match(optionRegex);
+  if (!options || options.length < 4) {
+    return { valid: false, error: 'Must have at least 4 options (A-D)' };
+  }
+
+  const letters = options.map(o => o.match(/[A-D]/i)[0].toUpperCase());
+  const uniqueLetters = new Set(letters);
+  if (!uniqueLetters.has('A') || !uniqueLetters.has('B') || !uniqueLetters.has('C') || !uniqueLetters.has('D')) {
+    return { valid: false, error: 'Missing one or more options A-D' };
+  }
+
+  // 3. Answer Section Check
+  const detailsRegex = /<details>[\s\S]*?<\/details>/i;
+  const detailsMatch = markdown.match(detailsRegex);
+  if (!detailsMatch) {
+    return { valid: false, error: 'Missing <details> block for answer' };
+  }
+
+  const answerRegex = /\*\*Answer:\*\*\s*[A-D]/i;
+  if (!answerRegex.test(detailsMatch[0])) {
+    return { valid: false, error: 'Missing or invalid **Answer:** format inside details' };
+  }
+
+  return { valid: true };
+}
+
+function manualRepairInlineQuestion(markdown) {
+  let repaired = markdown;
+
+  // 1. Repair Header
+  const headerRegex = /(?:^Question:|^[\*]{0,2}Question:[\*]{0,2}|^[\*]{0,2}Check Your Understanding[\*]{0,2})/mi;
+  if (!headerRegex.test(repaired)) {
+    repaired = `**Check Your Understanding**\n\n${repaired}`;
+  }
+
+  // 2. Repair Answer Section
+  const answerRegex = /(\*\*Answer:\*\*\s*[A-D][\s\S]*)/i;
+  const detailsRegex = /<details>[\s\S]*?<\/details>/i;
+
+  if (answerRegex.test(repaired) && !detailsRegex.test(repaired)) {
+    const match = repaired.match(answerRegex);
+    if (match) {
+      const answerBlock = match[0];
+      repaired = repaired.replace(answerBlock, '');
+      repaired = repaired.trim() + `\n\n<details><summary>Show Answer</summary>\n\n${answerBlock.trim()}\n</details>`;
+    }
+  }
+
+  return repaired;
+}
+
 export async function generateInlineQuestion(chunkText, contextInfo = {}) {
 
 
@@ -1004,11 +1066,79 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
 
     md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctOption}\n\n${explanationList}\n</details>\n`;
 
-    // --- VALIDATION STEP ---
-    const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
-    const validatedMd = await validateContent('inline_question', md, validationContext);
+    // --- FORMAT VALIDATION & REPAIR ---
+    let validatedMd = md;
+    let formatCheck = validateInlineQuestionFormat(validatedMd);
 
-    return validatedMd;
+    if (!formatCheck.valid) {
+      console.log(`[generateInlineQuestion] Format invalid: ${formatCheck.error}. Attempting manual repair.`);
+      validatedMd = manualRepairInlineQuestion(validatedMd);
+      formatCheck = validateInlineQuestionFormat(validatedMd);
+    }
+
+    if (!formatCheck.valid) {
+      console.log(`[generateInlineQuestion] Manual repair failed. Attempting LLM repair.`);
+      // LLM Repair Loop for Markdown
+      const repairPrompt = (brokenItems, errors) => {
+        return `The following inline question markdown is invalid:\n\n${brokenItems[0]}\n\nError:\n${errors[0]}\n\nPlease fix the markdown to strictly follow this format:
+1. Header: **Check Your Understanding**
+2. Options: - A. Text, - B. Text, etc.
+3. Answer: Inside <details><summary>Show Answer</summary> block, with **Answer:** X.
+
+Return JSON: { "repaired_markdown": "string" }`;
+      };
+
+      const validator = (item) => validateInlineQuestionFormat(item);
+
+      // We need to adapt repairContentArray or write a simple loop here since repairContentArray expects objects/arrays
+      // Let's write a simple loop here for string repair
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const response = await grokExecutor({
+            model: 'x-ai/grok-4-fast',
+            temperature: 0.2,
+            maxTokens: 1024,
+            messages: [
+              { role: 'system', content: 'You are a Markdown repair assistant. Return JSON with "repaired_markdown".' },
+              { role: 'user', content: repairPrompt([validatedMd], [formatCheck.error]) }
+            ],
+            responseFormat: { type: 'json_object' }
+          });
+          const raw = coerceModelText(response.content);
+          const parsed = parseJsonObject(raw, 'inline_repair');
+          if (parsed && parsed.repaired_markdown) {
+            const check = validateInlineQuestionFormat(parsed.repaired_markdown);
+            if (check.valid) {
+              validatedMd = parsed.repaired_markdown;
+              formatCheck = { valid: true };
+              break;
+            } else {
+              formatCheck = check; // Update error for next try
+            }
+          }
+        } catch (e) {
+          console.warn('Inline question LLM repair failed', e);
+        }
+      }
+    }
+
+    if (!formatCheck.valid) {
+      console.warn('[generateInlineQuestion] Failed to generate valid inline question format. Skipping.');
+      return null;
+    }
+
+    // --- CONTENT VALIDATION STEP ---
+    const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
+    const contentValidatedMd = await validateContent('inline_question', validatedMd, validationContext);
+
+    // Verify content validation didn't break format
+    const finalCheck = validateInlineQuestionFormat(contentValidatedMd);
+    if (!finalCheck.valid) {
+      console.warn(`[generateInlineQuestion] validateContent broke the format: ${finalCheck.error}. Reverting to pre-validation version.`);
+      return validatedMd; // Fallback to the formatted but potentially unvalidated content
+    }
+
+    return contentValidatedMd;
   } catch (error) {
     return null;
   }
@@ -2145,6 +2275,20 @@ ${isJsonContent
 Check for and remove any references to figures, graphs, or images that are not present (e.g., 'the graph below'). Rewrite such references as textual descriptions or remove them if they are not essential.
 
 Also, ensure that quiz questions DO NOT test concepts that are not present in the provided context (lesson content + prerequisites). If a question asks about a topic that hasn't been taught yet, remove or replace it.
+
+STRICT FORMATTING RULES:
+${contentType === 'inline_question' ? `
+- You MUST preserve the exact Markdown format:
+  1. Header: **Check Your Understanding**
+  2. Options: - A. Text, - B. Text, ... (must have 4 options)
+  3. Answer: Inside <details><summary>Show Answer</summary> block.
+  4. Answer Line: **Answer:** X (inside details)
+- Do NOT remove the <details> block or the header.
+` : ''}
+${contentType === 'reading' ? `
+- Preserve the Markdown structure (headings, paragraphs).
+- Use LaTeX only for math.
+` : ''}
 
 Context:
 ${context}`
