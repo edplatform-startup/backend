@@ -691,7 +691,19 @@ Base URL (production): https://api.kognolearn.com
     {
       "success": true,
       "updated": 5,
-      "errors": []
+      "results": [
+        {
+          "id": "...",
+          "status": "correct",
+          "updated_at": "2024-..."
+        }
+      ],
+      "errors": [
+        {
+          "id": "...",
+          "error": "Question not found or access denied"
+        }
+      ]
     }
     ```
   - `400 Bad Request` → Missing parameters

@@ -509,4 +509,126 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(res.status, 500);
     assert.match(res.body.details, /Course time limit \(seconds_to_complete\) is not set/);
   });
+
+  await t.test('PATCH /courses/:id/questions requires userId', async () => {
+    const res = await request(app)
+      .patch('/courses/course-1/questions')
+      .send({ updates: [{ id: 'q1', status: 'correct' }] })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /userId is required/);
+  });
+
+  await t.test('PATCH /courses/:id/questions requires updates array', async () => {
+    const res = await request(app)
+      .patch('/courses/course-1/questions')
+      .send({ userId: 'user-1' })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /updates array is required/);
+  });
+
+  await t.test('PATCH /courses/:id/questions returns 403 if course access denied', async () => {
+    setSupabaseClient(
+      createSupabaseStub({
+        singleResponses: [
+          { data: null, error: null }, // course access check returns null
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .patch('/courses/course-1/questions')
+      .send({ userId: 'user-1', updates: [{ id: 'q1', status: 'correct' }] })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 403);
+    assert.match(res.body.error, /Access denied/);
+  });
+
+  await t.test('PATCH /courses/:id/questions successfully updates questions', async () => {
+    const courseId = 'course-patch-1';
+    const userId = 'user-patch-1';
+    const questionId = 'question-1';
+
+    setSupabaseClient(
+      createSupabaseStub({
+        singleResponses: [
+          { data: { id: courseId }, error: null }, // course access check
+        ],
+        updateResponses: [
+          { data: [{ id: questionId, status: 'correct', updated_at: '2025-01-01T00:00:00.000Z' }], error: null },
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .patch(`/courses/${courseId}/questions`)
+      .send({ userId, updates: [{ id: questionId, status: 'correct' }] })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.updated, 1);
+    assert.equal(res.body.results.length, 1);
+    assert.equal(res.body.results[0].id, questionId);
+    assert.equal(res.body.errors.length, 0);
+  });
+
+  await t.test('PATCH /courses/:id/questions reports error when question not found', async () => {
+    const courseId = 'course-patch-2';
+    const userId = 'user-patch-2';
+    const questionId = 'nonexistent-question';
+
+    setSupabaseClient(
+      createSupabaseStub({
+        singleResponses: [
+          { data: { id: courseId }, error: null }, // course access check
+        ],
+        updateResponses: [
+          { data: [], error: null }, // empty array = no rows matched
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .patch(`/courses/${courseId}/questions`)
+      .send({ userId, updates: [{ id: questionId, status: 'correct' }] })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.updated, 0);
+    assert.equal(res.body.results.length, 0);
+    assert.equal(res.body.errors.length, 1);
+    assert.equal(res.body.errors[0].id, questionId);
+    assert.match(res.body.errors[0].error, /Question not found or access denied/);
+  });
+
+  await t.test('PATCH /courses/:id/questions reports error for missing id or status', async () => {
+    const courseId = 'course-patch-3';
+    const userId = 'user-patch-3';
+
+    setSupabaseClient(
+      createSupabaseStub({
+        singleResponses: [
+          { data: { id: courseId }, error: null }, // course access check
+        ],
+      })
+    );
+
+    const res = await request(app)
+      .patch(`/courses/${courseId}/questions`)
+      .send({ userId, updates: [{ id: 'q1' }, { status: 'correct' }] })
+      .set(baseHeaders);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.updated, 0);
+    assert.equal(res.body.errors.length, 2);
+    assert.match(res.body.errors[0].error, /Missing id or status/);
+    assert.match(res.body.errors[1].error, /Missing id or status/);
+  });
 });

@@ -94,10 +94,14 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
   }
 
   function createUpdateChain(response) {
+    const promise = Promise.resolve(response);
     const chain = {
       eq() { return chain; },
       select() { return chain; },
       single() { return Promise.resolve(response); },
+      then: promise.then.bind(promise),
+      catch: promise.catch.bind(promise),
+      finally: promise.finally.bind(promise),
     };
     return chain;
   }

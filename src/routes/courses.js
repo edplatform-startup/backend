@@ -1436,9 +1436,12 @@ router.patch('/:courseId/questions', async (req, res) => {
     const results = [];
     const errors = [];
 
-    await Promise.all(updates.map(async (update) => {
+    for (const update of updates) {
       const { id, status } = update;
-      if (!id || !status) return;
+      if (!id || !status) {
+        errors.push({ id, error: 'Missing id or status' });
+        continue;
+      }
       
       const { data, error } = await supabase
         .schema('api')
@@ -1449,11 +1452,16 @@ router.patch('/:courseId/questions', async (req, res) => {
         .eq('user_id', userId)
         .select();
         
-      if (error) errors.push({ id, error: error.message });
-      else results.push(data[0]);
-    }));
+      if (error) {
+        errors.push({ id, error: error.message });
+      } else if (!data || data.length === 0) {
+        errors.push({ id, error: 'Question not found or access denied' });
+      } else {
+        results.push(data[0]);
+      }
+    }
 
-    return res.json({ success: true, updated: results.length, errors });
+    return res.json({ success: true, updated: results.length, results, errors });
   } catch (error) {
     console.error('Error updating questions:', error);
     return res.status(500).json({ error: 'Failed to update questions', details: error.message });
