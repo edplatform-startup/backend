@@ -336,22 +336,48 @@ export async function synthesizeSyllabus({
     const rawContent = result?.content;
     const parsed = tryParseJson(rawContent);
     const firstPass = CourseSkeletonSchema.safeParse(parsed);
+    let validationError = null;
+    let isMinimumsError = false;
 
     if (firstPass.success) {
-      ensureSkeletonMinimums(firstPass.data);
-      return firstPass.data;
+      try {
+        ensureSkeletonMinimums(firstPass.data);
+        return firstPass.data;
+      } catch (err) {
+        validationError = err.message;
+        isMinimumsError = true;
+      }
+    } else {
+      validationError = firstPass.error.toString();
     }
 
-    const criticMessages = [
-      ...messages.slice(0, 1),
-      {
-        role: 'user',
-        content: `Prior output failed validation.
-Error: ${firstPass.error.toString()}
+    let criticMessages;
+    if (isMinimumsError) {
+      // For minimums error, we need full context to help the model expand
+      criticMessages = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: stringifyForPrompt(parsed),
+        },
+        {
+          role: 'user',
+          content: `The generated skeleton failed validation: ${validationError}\nPlease break down the course into more detailed, sequential units. Ensure at least 2 units are present.`,
+        },
+      ];
+    } else {
+      // For schema/parsing errors, use the existing compact repair prompt
+      criticMessages = [
+        ...messages.slice(0, 1),
+        {
+          role: 'user',
+          content: `Prior output failed validation.
+Error: ${validationError}
 Original JSON: ${stringifyForPrompt(parsed)}
 Return corrected JSON only.`,
-      },
-    ];
+        },
+      ];
+    }
 
     const { result: repairedResult } = await courseV2LLMCaller({
       stage: STAGES.PLANNER,
