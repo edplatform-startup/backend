@@ -90,6 +90,22 @@ async function runTest() {
 
         console.log('Module Quiz A Content Plan:', JSON.stringify(quizA.content_payload.generation_plans.quiz, null, 2));
 
+        // Confirm that the prompt enforces difficult, summative, problem-solving questions and requests at least 6-7 questions
+        const quizPromptText = quizA.content_payload.generation_plans.quiz;
+        const lower = (s) => (s || '').toLowerCase();
+        if (!/\b(difficult|challeng|hard)\b/i.test(quizPromptText)) {
+            console.error('FAILED: Module Quiz prompt does not require difficult questions.');
+            process.exit(1);
+        }
+        if (!/summative/i.test(quizPromptText)) {
+            console.error('FAILED: Module Quiz prompt does not require summative-style questions.');
+            process.exit(1);
+        }
+        if (!/6-7|at least 6|at least 6-7|6 to 7|at least 7/i.test(quizPromptText)) {
+            console.error('FAILED: Module Quiz prompt does not request at least 6-7 questions.');
+            process.exit(1);
+        }
+
         console.log('SUCCESS: Module Quizzes injected correctly.');
 
     } catch (error) {

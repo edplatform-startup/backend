@@ -243,17 +243,19 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       return `- Lesson: "${l.title}" (Focus: ${gist})`;
     }).join('\n');
 
-    const quizPrompt = `Create a comprehensive Module Quiz for the module "${moduleName}".
+  const quizPrompt = `Create a comprehensive Module Quiz for the module "${moduleName}".
 The quiz should cover the key concepts from the following lessons:
 ${lessonSummaries}
 
 Requirements:
 1. This is a cumulative review quiz for the entire module.
-2. Include questions that test understanding of how these concepts relate to each other.
-3. Ensure a mix of difficulty levels (Easy, Medium, Hard).
-4. Provide detailed explanations for every answer (correct and incorrect).
-5. Use proper LaTeX formatting for any math.
-6. Do NOT include content from outside this module.`;
+2. Only include questions that are DIFFICULT and SUMMATIVE in nature — i.e., questions that require problem-solving, application, analysis, or evaluation rather than simple recall of facts or definitions.
+3. Aim for questions that integrate multiple concepts or require reasoning across lessons; include challenge-style problems where appropriate.
+4. Include at least 6-7 questions in the quiz.
+5. Provide a balanced mix of difficulty levels among those difficult questions where applicable (e.g., several multi-step application problems and at least one integrative challenge).
+6. Provide detailed explanations for every answer (correct and incorrect), explaining the reasoning and common misconceptions.
+7. Use proper LaTeX formatting for any math.
+8. Do NOT include content from outside this module.`;
 
     const moduleQuizLesson = {
       slug_id: quizSlug,
