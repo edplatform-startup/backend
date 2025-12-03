@@ -2289,6 +2289,21 @@ ${contentType === 'reading' ? `
 - Preserve the Markdown structure (headings, paragraphs).
 - Use LaTeX only for math.
 ` : ''}
+${contentType === 'quiz' ? `
+- Return a JSON ARRAY of objects.
+- Each object must have: "question", "options" (array of 4 strings), "correct_index" (0-3), "explanation" (array of 4 strings).
+- Do not wrap the array in a "quiz" key.
+` : ''}
+${contentType === 'flashcards' ? `
+- Return a JSON ARRAY of objects.
+- Each object must have: "front", "back".
+- Do not wrap the array in a "flashcards" key.
+` : ''}
+${contentType === 'practice_exam' ? `
+- Return a JSON ARRAY of objects.
+- Each object must have: "question", "answer_key", "rubric", "estimated_minutes".
+- Do not wrap the array in a "practice_exam" key.
+` : ''}
 
 Context:
 ${context}`
