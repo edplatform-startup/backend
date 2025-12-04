@@ -197,7 +197,7 @@ Base URL (production): https://api.kognolearn.com
   - 500 Internal Server Error → Database error.
 
 ### POST /courses/topics
-- Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + competency-based subtopics with Deep/Cram metadata) before full course generation.
+- Purpose: Generate a hierarchical, exam-oriented topic map (overview topics + competency-based subtopics with Deep/Cram metadata) before full course generation. Uses RAG to ground generation in uploaded syllabus/exam material.
 - Request body (JSON):
   - `userId` (string, required)
   - `finishByDate` (string, optional ISO date)
@@ -238,14 +238,18 @@ Base URL (production): https://api.kognolearn.com
           ]
         }
       ],
-      "model": "x-ai/grok-4-fast"
+      "model": "x-ai/grok-4-fast",
+      "rag_session_id": "uuid"  // present when RAG is used; reference for subsequent calls
     }
     ```
   - 400 Bad Request → Missing `userId`, invalid UUID/date, or invalid file metadata.
   - 502 Bad Gateway → Model failure or unusable response.
+- Notes:
+  - `rag_session_id` references chunks stored in `public.rag_chunks`. Pass it to subsequent course generation endpoints to maintain context.
+  - Chunks expire after `RAG_SESSION_TTL_DAYS` (default 7). Run `node scripts/cleanupRagChunks.js` to prune expired chunks.
 
 ### POST /courses
-- Purpose: Generate a lesson DAG from a Gemini draft, persist it to Supabase, and synchronously run the content worker that fills every node with reading/quiz/flashcard/video assets.
+- Purpose: Generate a lesson DAG from a Gemini draft, persist it to Supabase, and synchronously run the content worker that fills every node with reading/quiz/flashcard/video assets. Optionally uses RAG context from a prior `/topics` call.
 - Request body (JSON):
   ```json
   {
@@ -258,7 +262,8 @@ Base URL (production): https://api.kognolearn.com
     "syllabusText": "string (optional)",
     "syllabusFiles": [ { "name": "...", "url": "..." } ],
     "examFormatDetails": "string (optional)",
-    "examFiles": [ { "name": "...", "url": "..." } ]
+    "examFiles": [ { "name": "...", "url": "..." } ],
+    "rag_session_id": "uuid (optional, from /topics response)"
   }
   ```
   - `userId` (string, required) – UUID of the course owner.
@@ -272,6 +277,7 @@ Base URL (production): https://api.kognolearn.com
   - `examFormatDetails` (string, optional) – Raw text of exam details.
   - `examFiles` (array, optional) – Array of file objects for exam details.
   - `mode` (string, optional) – `"deep"` (default) or `"cram"`. Controls the depth of content generation (reading length, quiz size, video selection).
+  - `rag_session_id` (string, optional) – UUID returned by `/courses/topics`. If provided, retrieves context from `public.rag_chunks` to ground lesson structure in source materials.
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.
@@ -1093,6 +1099,15 @@ Base URL (production): https://api.kognolearn.com
 - Every response uses JSON.
 - Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
 - Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
+- RAG storage: `public.rag_chunks` stores embedded syllabus/exam chunks keyed by `session_id`. Expires after `RAG_SESSION_TTL_DAYS`.
+
+## RAG Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENROUTER_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Model for text embeddings |
+| `RAG_TOP_K` | `8` | Top chunks to retrieve per query |
+| `RAG_MAX_CONTEXT_CHARS` | `6000` | Max chars injected into prompt |
+| `RAG_SESSION_TTL_DAYS` | `7` | Days before cleanup deletes chunks |
 
 ## Examples
 - List user courses → `GET https://api.kognolearn.com/courses?userId=...`

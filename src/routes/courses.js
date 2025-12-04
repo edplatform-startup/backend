@@ -587,11 +587,18 @@ router.post('/topics', async (req, res) => {
       courseTitle
     });
 
-    return res.status(200).json({
+    const response = {
       success: true,
       overviewTopics: result.overviewTopics,
       model: result.model,
-    });
+    };
+
+    // Add RAG session ID if available (does not break existing clients)
+    if (result.rag_session_id) {
+      response.rag_session_id = result.rag_session_id;
+    }
+
+    return res.status(200).json(response);
   } catch (err) {
     console.error('[topics] hierarchical topic generation error:', err);
     return res.status(502).json({
@@ -924,6 +931,7 @@ router.post('/', async (req, res) => {
       seconds_to_complete,
       hours,
       minutes,
+      rag_session_id,
     } = req.body || {};
 
     let finalSecondsToComplete = seconds_to_complete;
@@ -1070,7 +1078,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode, courseId);
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode, courseId, rag_session_id || null);
 
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);

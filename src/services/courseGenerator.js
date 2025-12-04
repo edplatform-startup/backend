@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import stringSimilarity from 'string-similarity';
 import { callStageLLM as defaultLLMCaller } from './llmCall.js';
+import { retrieveContext } from '../rag/index.js';
+
+// RAG configuration
+const RAG_TOP_K = parseInt(process.env.RAG_TOP_K, 10) || 5;
+const RAG_MAX_CONTEXT_CHARS = parseInt(process.env.RAG_MAX_CONTEXT_CHARS, 10) || 4000;
 
 let llmCaller = defaultLLMCaller;
 
@@ -13,6 +18,37 @@ export function __resetLLMCaller() {
 }
 import { STAGES } from './modelRouter.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
+
+/**
+ * Extract topic titles from grok draft for RAG retrieval query
+ */
+function extractTopicTitles(grokDraft) {
+  const titles = [];
+  if (!grokDraft || typeof grokDraft !== 'object') return titles;
+  
+  // Handle various draft structures
+  if (grokDraft.course_title) titles.push(grokDraft.course_title);
+  if (grokDraft.title) titles.push(grokDraft.title);
+  
+  const topics = grokDraft.topics || grokDraft.overviewTopics || grokDraft.modules || [];
+  for (const topic of topics) {
+    if (typeof topic === 'string') {
+      titles.push(topic);
+    } else if (topic?.title) {
+      titles.push(topic.title);
+    }
+    // Extract subtopic titles too
+    const subtopics = topic?.subtopics || topic?.lessons || [];
+    for (const st of subtopics) {
+      if (typeof st === 'string') {
+        titles.push(st);
+      } else if (st?.title) {
+        titles.push(st.title);
+      }
+    }
+  }
+  return titles.slice(0, 20); // Limit to avoid overly long query
+}
 
 /**
  * @typedef {Object} ContentPlans
@@ -42,6 +78,21 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * @property {LessonNode[]} lessons
  */
 
+// RAG context retriever override for testing
+let customRagContextRetriever = null;
+
+export function __setRagContextRetriever(fn) {
+  customRagContextRetriever = typeof fn === 'function' ? fn : null;
+}
+
+export function __clearRagContextRetriever() {
+  customRagContextRetriever = null;
+}
+
+async function retrieveContextWrapper(opts) {
+  return customRagContextRetriever ? customRagContextRetriever(opts) : retrieveContext(opts);
+}
+
 /**
  * Generates a DAG of atomic lessons from a rough course draft.
  * @param {Object} grokDraftJson - The rough draft JSON from Grok.
@@ -49,9 +100,30 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * @param {string} userId - The user ID for tracking.
  * @param {string} mode - 'deep' or 'cram' mode.
  * @param {string} courseId - The course ID for usage tracking.
+ * @param {string} [ragSessionId] - Optional RAG session ID to retrieve context.
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep', courseId = null) {
+export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep', courseId = null, ragSessionId = null) {
+
+  // Retrieve RAG context if session ID provided
+  let ragContext = '';
+  if (ragSessionId) {
+    try {
+      const topicTitles = extractTopicTitles(grokDraftJson);
+      const retrievalQuery = topicTitles.join(' | ');
+      ragContext = await retrieveContextWrapper({
+        sessionId: ragSessionId,
+        queryText: retrievalQuery,
+        topK: RAG_TOP_K,
+        maxChars: RAG_MAX_CONTEXT_CHARS,
+      });
+      if (ragContext) {
+        console.log(`[courseGenerator] RAG context retrieved: ${ragContext.length} chars`);
+      }
+    } catch (ragError) {
+      console.warn('[courseGenerator] RAG context retrieval failed:', ragError.message);
+    }
+  }
 
   // Step 1: The Architect Call
   const systemPrompt = `You are the Lesson Architect. Your goal is to transform a rough course outline into a high-quality Directed Acyclic Graph (DAG) of Atomic Lessons.
@@ -84,6 +156,7 @@ CRITICAL RULES:
 10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
 11. **MODE: ${mode.toUpperCase()}**:
     ${mode === 'cram' ? '- Structure for speed. Group topics aggressively. Fewer lessons. Focus on high-yield material.' : '- Granular lessons. Detailed breakdown. Ensure comprehensive coverage.'}
+12. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -109,7 +182,12 @@ Output STRICT VALID JSON format (no markdown, no comments):
   ]
 }`;
 
-  const userPrompt = `Rough Draft: ${JSON.stringify(grokDraftJson)}`;
+  // Build RAG context section for prompt if available
+  const ragContextSection = ragContext
+    ? `\n\n### Authoritative Excerpts (from student's syllabus/exam materials):\nUse these excerpts to ground lesson structure and exam value assignments.\n\n${ragContext}`
+    : '';
+
+  const userPrompt = `Rough Draft: ${JSON.stringify(grokDraftJson)}${ragContextSection}`;
 
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,

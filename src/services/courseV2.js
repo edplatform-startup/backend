@@ -5,6 +5,11 @@ import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import { plannerSyllabus } from './prompts/courseV2Prompts.js';
 import { CourseSkeletonSchema, TopicMapSchema } from '../schemas/courseV2.js';
+import { createRagSession, retrieveContext } from '../rag/index.js';
+
+// RAG configuration
+const RAG_TOP_K = parseInt(process.env.RAG_TOP_K, 10) || 5;
+const RAG_MAX_CONTEXT_CHARS = parseInt(process.env.RAG_MAX_CONTEXT_CHARS, 10) || 4000;
 
 const FOCUS_CANONICAL = new Map([
   ['conceptual', 'Conceptual'],
@@ -91,6 +96,34 @@ export function __setCourseV2LLMCaller(fn) {
 
 export function __resetCourseV2LLMCaller() {
   courseV2LLMCaller = callStageLLM;
+}
+
+// RAG session creator override for testing
+let customRagSessionCreator = null;
+let customRagContextRetriever = null;
+
+export function __setRagSessionCreator(fn) {
+  customRagSessionCreator = typeof fn === 'function' ? fn : null;
+}
+
+export function __clearRagSessionCreator() {
+  customRagSessionCreator = null;
+}
+
+export function __setRagContextRetriever(fn) {
+  customRagContextRetriever = typeof fn === 'function' ? fn : null;
+}
+
+export function __clearRagContextRetriever() {
+  customRagContextRetriever = null;
+}
+
+async function createRagSessionWrapper(opts) {
+  return customRagSessionCreator ? customRagSessionCreator(opts) : createRagSession(opts);
+}
+
+async function retrieveContextWrapper(opts) {
+  return customRagContextRetriever ? customRagContextRetriever(opts) : retrieveContext(opts);
 }
 
 function tryParseJson(content) {
@@ -426,6 +459,24 @@ export async function generateHierarchicalTopics(input = {}, userId, courseId = 
   } = input || {};
 
   const usageStart = captureUsageTotals();
+  let ragSessionId = null;
+  let ragContext = '';
+
+  // Create RAG session if syllabus or exam text is provided
+  if (userId && (syllabusText || examFormatDetails)) {
+    try {
+      const ragResult = await createRagSessionWrapper({
+        userId,
+        syllabusText: syllabusText || '',
+        examText: examFormatDetails || '',
+      });
+      ragSessionId = ragResult.sessionId;
+      console.log(`[courseV2] RAG session created: ${ragSessionId}, chunks: syllabus=${ragResult.counts.syllabus}, exam=${ragResult.counts.exam}`);
+    } catch (ragError) {
+      console.warn('[courseV2] RAG session creation failed, continuing without RAG:', ragError.message);
+    }
+  }
+
   try {
     const syllabus = await synthesizeSyllabus({
       university,
@@ -459,7 +510,37 @@ export async function generateHierarchicalTopics(input = {}, userId, courseId = 
       throw new Error('Course skeleton did not produce any structural units.');
     }
 
+    // Retrieve RAG context if session exists
+    if (ragSessionId) {
+      try {
+        // Build retrieval query from course title + exam details + skeleton headings
+        const skeletonHeadings = rawTopicSummaries.map(s => s.title).join(', ');
+        const retrievalQuery = [
+          courseTitle,
+          examFormatDetails || '',
+          skeletonHeadings,
+        ].filter(Boolean).join(' | ');
+
+        ragContext = await retrieveContextWrapper({
+          sessionId: ragSessionId,
+          queryText: retrievalQuery,
+          topK: RAG_TOP_K,
+          maxChars: RAG_MAX_CONTEXT_CHARS,
+        });
+        if (ragContext) {
+          console.log(`[courseV2] RAG context retrieved: ${ragContext.length} chars`);
+        }
+      } catch (ragError) {
+        console.warn('[courseV2] RAG context retrieval failed:', ragError.message);
+      }
+    }
+
     const trimmedSyllabus = coerceTopicString(syllabusText, 'Not provided').slice(0, 4000);
+
+    // Build RAG context section for prompt
+    const ragContextSection = ragContext
+      ? `\n\n### Authoritative Excerpts (use for specifics):\nThe following excerpts are from the student's actual syllabus and exam materials. Ground your topic coverage and exam relevance claims in these excerpts when possible.\n\n${ragContext}`
+      : '';
 
     const systemPrompt = `You are an expert exam prep strategist. You are creating a master study plan for a student.
 
@@ -467,6 +548,7 @@ INPUTS:
 1. The Course Skeleton (chronological list of topics).
 2. The specific Exam Format (e.g., "Multiple choice focus" or "Proof heavy").
 3. The raw syllabus text (for context).
+4. Authoritative excerpts from the student's actual syllabus/exam materials (if provided).
 
 YOUR TASK:
 Expand the Skeleton into a detailed Topic Map. For every major topic, generate specific "Atomic Concepts" that act as study milestones.
@@ -479,6 +561,7 @@ CRITICAL RULES:
    - **MODE: ${mode.toUpperCase()}**
    ${mode === 'cram' ? '- FOCUS: High-yield, exam-critical topics ONLY. Prune "nice-to-know" background info. Prioritize concepts that appear frequently on exams.' : '- FOCUS: Comprehensive coverage. Expand on all topics, including foundational and peripheral concepts. Ensure deep understanding.'}
 5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
+6. GROUNDING: When authoritative excerpts are provided, use them to ground specific claims about topic coverage and exam relevance. Reference specific details from the excerpts in your exam_relevance_reasoning fields.
 
 OUTPUT JSON STRUCTURE:
 {
@@ -522,7 +605,7 @@ Course Skeleton (chronological list):
 ${JSON.stringify(rawTopicSummaries, null, 2)}
 
 Raw syllabus text snippet:
-${trimmedSyllabus}
+${trimmedSyllabus}${ragContextSection}
 
 Using this information, produce competency-based overviewTopics with fully populated atomic concept metadata.`;
 
@@ -601,6 +684,7 @@ Please return **only** a correct JSON object for the topic map, with no extra te
     return {
       overviewTopics: validated.overviewTopics,
       model: model || 'unknown',
+      rag_session_id: ragSessionId,
     };
   } finally {
     logTopicsUsage(usageStart);

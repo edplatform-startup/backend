@@ -39,6 +39,7 @@ Server will start at http://localhost:3000
 - `npm run render-build` - Render.com build command (runs npm ci + build)
 - `npm run render-start` - Render.com start command
 - `npm run postdeploy` - Post-deployment tasks (Prisma generation, etc.)
+- `node scripts/cleanupRagChunks.js` - Prune expired RAG chunks (run via cron)
 
 ## API
 

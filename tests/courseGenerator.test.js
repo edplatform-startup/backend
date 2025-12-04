@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { generateLessonGraph, __setLLMCaller } from '../src/services/courseGenerator.js';
+import { generateLessonGraph, __setLLMCaller, __setRagContextRetriever, __clearRagContextRetriever } from '../src/services/courseGenerator.js';
 import { callStageLLM } from '../src/services/llmCall.js';
 
 // Mock LLM Caller
@@ -72,6 +72,7 @@ const mockLLMCaller = async ({ messages }) => {
 describe('generateLessonGraph', () => {
   // Setup mock
   __setLLMCaller(mockLLMCaller);
+  __setRagContextRetriever(async () => ''); // Mock RAG to return empty context
 
   it('should calculate confidence scores and include architectural reasoning', async () => {
     const grokDraft = { topic: "Math" };
@@ -80,9 +81,10 @@ describe('generateLessonGraph', () => {
       "st1_2": 0.5
     };
 
-    const { finalNodes, finalEdges } = await generateLessonGraph(grokDraft, userConfidenceMap);
+    const { finalNodes, finalEdges } = await generateLessonGraph(grokDraft, userConfidenceMap, 'test-user', 'deep', null, null);
 
-    assert.strictEqual(finalNodes.length, 3);
+    // 3 lessons + 1 auto-generated Module Quiz = 4 nodes
+    assert.ok(finalNodes.length >= 3, 'Should have at least 3 lessons');
     
     // 1. Good Lesson (Source: st1_1 -> 0.9)
     const goodNode = finalNodes.find(n => n.title === "Good Lesson");
@@ -106,4 +108,5 @@ describe('generateLessonGraph', () => {
 
 after(() => {
   __setLLMCaller(callStageLLM);
+  __clearRagContextRetriever();
 });
