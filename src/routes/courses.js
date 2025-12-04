@@ -304,6 +304,36 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       },
     };
 
+    // Enrich quiz questions with ID and status from the quiz_questions table
+    // This applies regardless of whether format filtering is requested
+    if (response.lesson.content_payload?.quiz?.length > 0) {
+      const { data: dbQuestions, error: quizDbError } = await supabase
+        .schema('api')
+        .from('quiz_questions')
+        .select('id, question, status')
+        .eq('course_id', courseId)
+        .eq('node_id', nodeId)
+        .eq('user_id', userId);
+
+      if (!quizDbError && dbQuestions) {
+        // Create a map of question text to DB record for quick lookup
+        const questionMap = new Map();
+        dbQuestions.forEach(dbQ => {
+          questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status });
+        });
+
+        // Merge the ID and status into each quiz question
+        response.lesson.content_payload.quiz = response.lesson.content_payload.quiz.map(q => {
+          const dbRecord = questionMap.get(q.question);
+          return {
+            ...q,
+            id: dbRecord?.id || null,
+            status: dbRecord?.status || 'unattempted'
+          };
+        });
+      }
+    }
+
     // Filter content based on format if requested
     const { format } = req.query;
     if (format && response.lesson.content_payload) {
@@ -324,36 +354,8 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
           filteredData = { body: payload.reading };
           break;
         case 'quiz':
-          // Fetch quiz question IDs and statuses from the quiz_questions table
-          let quizQuestions = payload.quiz || [];
-          if (quizQuestions.length > 0) {
-            const { data: dbQuestions, error: quizDbError } = await supabase
-              .schema('api')
-              .from('quiz_questions')
-              .select('id, question, status')
-              .eq('course_id', courseId)
-              .eq('node_id', nodeId)
-              .eq('user_id', userId);
-
-            if (!quizDbError && dbQuestions) {
-              // Create a map of question text to DB record for quick lookup
-              const questionMap = new Map();
-              dbQuestions.forEach(dbQ => {
-                questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status });
-              });
-
-              // Merge the ID and status into each quiz question
-              quizQuestions = quizQuestions.map(q => {
-                const dbRecord = questionMap.get(q.question);
-                return {
-                  ...q,
-                  id: dbRecord?.id || null,
-                  status: dbRecord?.status || 'unattempted'
-                };
-              });
-            }
-          }
-          filteredData = { questions: quizQuestions };
+          // Quiz questions are already enriched with id and status above
+          filteredData = { questions: payload.quiz || [] };
           break;
         case 'flashcards':
           filteredData = { cards: payload.flashcards };
