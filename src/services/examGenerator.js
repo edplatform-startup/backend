@@ -564,6 +564,7 @@ Generate the ${examType} exam questions now. Remember:
     allowWeb: true,
     requestTimeoutMs: 600000, // 10m
     userId,
+    source: 'exam_generator',
   });
 
   let questionsBlock = sanitizeQuestionBlock(result.content);
@@ -598,6 +599,7 @@ Return the FULL corrected questions block, with no preamble or document wrappers
       maxTokens: 8192,
       requestTimeoutMs: 600000,
       userId,
+      source: 'exam_generator_repair',
     });
 
     questionsBlock = sanitizeQuestionBlock(repairResult.result.content);
@@ -678,6 +680,7 @@ Ensure each contains the proper commands and no environment is left empty.
           maxTokens: 8192,
           requestTimeoutMs: 600000,
           userId,
+          source: 'exam_generator_fix',
         });
 
         questionsBlock = sanitizeQuestionBlock(fixResult.result.content);

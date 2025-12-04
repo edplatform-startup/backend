@@ -11,6 +11,7 @@ export async function callStageLLM({
   requestTimeoutMs,
   plugins,
   userId,
+  source,
 }) {
   const {
     model,
@@ -48,6 +49,7 @@ export async function callStageLLM({
     requestTimeoutMs,
     plugins,
     userId,
+    source: source || stage?.toLowerCase() || 'unknown',
   });
 
   return { model: chosenModel, result: response };

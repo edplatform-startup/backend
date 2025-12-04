@@ -331,6 +331,7 @@ export async function synthesizeSyllabus({
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
       userId,
+      source: 'planner_syllabus',
     });
 
     const rawContent = result?.content;
@@ -388,6 +389,7 @@ Return corrected JSON only.`,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for repair call
       userId,
+      source: 'planner_syllabus_repair',
     });
 
     const repairedParsed = tryParseJson(repairedResult?.content);
@@ -532,6 +534,7 @@ Using this information, produce competency-based overviewTopics with fully popul
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for TOPICS
       userId,
+      source: 'hierarchical_topics',
     });
 
     let parsed = tryParseJson(result?.content);
@@ -569,7 +572,8 @@ Please return **only** a correct JSON object for the topic map, with no extra te
         maxTokens: 8192,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 120000,
-        userId
+        userId,
+        source: 'hierarchical_topics_repair',
       });
 
       parsed = tryParseJson(repairedResult?.content);

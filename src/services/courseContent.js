@@ -615,6 +615,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 60000,
         userId,
+        source: 'content_repair',
       });
 
       const raw = coerceModelText(content);
@@ -1045,6 +1046,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
       userId,
+      source: 'content_inline_question',
     });
 
     const content = response.content;
@@ -1134,6 +1136,7 @@ Return JSON: { "repaired_markdown": "string" }`;
             ],
             responseFormat: { type: 'json_object' },
             userId,
+            source: 'inline_question_repair',
           });
           const raw = coerceModelText(response.content);
           const parsed = parseJsonObject(raw, 'inline_repair');
@@ -1198,6 +1201,7 @@ Do not fix the code, just validate it.`
       ],
       responseFormat: { type: 'json_object' },
       userId,
+      source: 'mermaid_validation',
     });
 
     const raw = coerceModelText(response.content);
@@ -1236,6 +1240,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
         ],
         responseFormat: { type: 'json_object' },
         userId,
+        source: 'mermaid_repair',
       });
 
       const raw = coerceModelText(response.content);
@@ -1323,6 +1328,8 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
+      userId,
+      source: 'content_reading',
     });
     const raw = coerceModelText(content);
     let parsed;
@@ -1527,6 +1534,8 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'content_quiz',
   });
   const text = coerceModelText(content);
 
@@ -1642,6 +1651,8 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'content_practice_exam',
   });
 
   const text = coerceModelText(content);
@@ -1741,6 +1752,8 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'content_flashcards',
   });
   const text = coerceModelText(content);
 
@@ -1840,6 +1853,8 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
+      userId,
+      source: 'regenerate_reading',
     });
     const raw = coerceModelText(content);
     let parsed;
@@ -1950,6 +1965,8 @@ Rules:
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'regenerate_quiz',
   });
 
   const text = coerceModelText(content);
@@ -2023,6 +2040,8 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'regenerate_flashcards',
   });
 
   const text = coerceModelText(content);
@@ -2096,6 +2115,8 @@ Always respond with JSON:
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    userId,
+    source: 'regenerate_practice_exam',
   });
 
   const text = coerceModelText(content);
@@ -2226,6 +2247,7 @@ Select the best video index.`
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
         userId,
+        source: 'content_video_selection',
       });
 
       const raw = coerceModelText(response.content);
@@ -2419,6 +2441,7 @@ ${context}`
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
       userId,
+      source: `validation_${contentType}`,
     };
 
     // For JSON content, hint that we want JSON response format

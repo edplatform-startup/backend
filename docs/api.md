@@ -786,6 +786,37 @@ Base URL (production): https://api.kognolearn.com
     }
     ```
   - 500 Internal Server Error → Database error.
+- **Source Tags**: Every LLM call is tracked with a unique `source` tag identifying the content type:
+  - `chat` – General chat endpoint
+  - `planner_topics` – Initial topic generation
+  - `planner_topics_repair` – Topic generation JSON repair
+  - `planner_syllabus` – Syllabus synthesis
+  - `planner_syllabus_repair` – Syllabus synthesis repair
+  - `hierarchical_topics` – Hierarchical topic map generation
+  - `hierarchical_topics_repair` – Hierarchical topic repair
+  - `content_reading` – Reading material generation
+  - `content_quiz` – Quiz question generation
+  - `content_flashcards` – Flashcard generation
+  - `content_practice_exam` – Practice exam generation
+  - `content_inline_question` – Inline question generation
+  - `content_video_selection` – Video selection
+  - `content_repair` – Content array repair (broken JSON fix)
+  - `inline_question_repair` – Inline question markdown repair
+  - `mermaid_validation` – Mermaid diagram syntax validation
+  - `mermaid_repair` – Mermaid diagram repair
+  - `validation_reading` – Reading content validation
+  - `validation_quiz` – Quiz validation
+  - `validation_flashcards` – Flashcard validation
+  - `validation_practice_exam` – Practice exam validation
+  - `validation_inline_question` – Inline question validation
+  - `regenerate_reading` – Reading regeneration
+  - `regenerate_quiz` – Quiz regeneration
+  - `regenerate_flashcards` – Flashcard regeneration
+  - `regenerate_practice_exam` – Practice exam regeneration
+  - `exam_generator` – Practice exam LaTeX generation
+  - `exam_generator_repair` – Exam generator semantic repair
+  - `exam_generator_fix` – Exam generator compilation fix
+  - `exam_grader` – Exam grading
 
 ### GET /analytics/usage/summary
 - Purpose: Retrieve aggregated AI usage statistics (total spend, total tokens, etc.).
