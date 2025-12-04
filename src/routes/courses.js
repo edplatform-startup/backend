@@ -310,7 +310,7 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       const { data: dbQuestions, error: quizDbError } = await supabase
         .schema('api')
         .from('quiz_questions')
-        .select('id, question, status')
+        .select('id, question, status, selected_answer')
         .eq('course_id', courseId)
         .eq('node_id', nodeId)
         .eq('user_id', userId);
@@ -319,16 +319,17 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
         // Create a map of question text to DB record for quick lookup
         const questionMap = new Map();
         dbQuestions.forEach(dbQ => {
-          questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status });
+          questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status, selectedAnswer: dbQ.selected_answer });
         });
 
-        // Merge the ID and status into each quiz question
+        // Merge the ID, status, and selectedAnswer into each quiz question
         response.lesson.content_payload.quiz = response.lesson.content_payload.quiz.map(q => {
           const dbRecord = questionMap.get(q.question);
           return {
             ...q,
             id: dbRecord?.id || null,
-            status: dbRecord?.status || 'unattempted'
+            status: dbRecord?.status || 'unattempted',
+            selectedAnswer: dbRecord?.selectedAnswer ?? null
           };
         });
       }
@@ -1465,7 +1466,7 @@ router.get('/:courseId/questions', async (req, res) => {
 // PATCH /:courseId/questions
 router.patch('/:courseId/questions', async (req, res) => {
   const { courseId } = req.params;
-  const { userId, updates } = req.body; // updates: [{ id, status }]
+  const { userId, updates } = req.body; // updates: [{ id, status, selectedAnswer }]
 
   if (!userId) return res.status(400).json({ error: 'userId is required' });
   if (!updates || !Array.isArray(updates)) return res.status(400).json({ error: 'updates array is required' });
@@ -1481,16 +1482,31 @@ router.patch('/:courseId/questions', async (req, res) => {
     const errors = [];
 
     for (const update of updates) {
-      const { id, status } = update;
-      if (!id || !status) {
-        errors.push({ id, error: 'Missing id or status' });
+      const { id, status, selectedAnswer } = update;
+      if (!id) {
+        errors.push({ id, error: 'Missing id' });
+        continue;
+      }
+
+      // Build update object dynamically
+      const updateData = { updated_at: new Date().toISOString() };
+      if (status !== undefined) {
+        updateData.status = status;
+      }
+      if (selectedAnswer !== undefined) {
+        updateData.selected_answer = selectedAnswer;
+      }
+
+      // Must have at least one field to update besides updated_at
+      if (status === undefined && selectedAnswer === undefined) {
+        errors.push({ id, error: 'Missing status or selectedAnswer' });
         continue;
       }
 
       const { data, error } = await supabase
         .schema('api')
         .from('quiz_questions')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update(updateData)
         .eq('id', id)
         .eq('course_id', courseId)
         .eq('user_id', userId)
