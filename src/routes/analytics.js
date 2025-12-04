@@ -45,6 +45,40 @@ async function verifyAdminFromToken(supabase, authHeader) {
   return { isAdmin: !!adminRecord, userId: user.id, email: userEmail };
 }
 
+/**
+ * Helper function to fetch all pages from Supabase (bypasses 1000 row limit)
+ * @param {function} queryBuilder - Function that takes (from, to) range and returns a Supabase query
+ * @param {number} pageSize - Number of rows per page (default 1000)
+ * @returns {Promise<{data: Array, error: object|null}>}
+ */
+async function fetchAllPages(queryBuilder, pageSize = 1000) {
+  const allData = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const to = from + pageSize - 1;
+    const { data, error } = await queryBuilder(from, to);
+    
+    if (error) {
+      return { data: null, error };
+    }
+    
+    if (data && data.length > 0) {
+      allData.push(...data);
+      if (data.length < pageSize) {
+        hasMore = false;
+      } else {
+        from += pageSize;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return { data: allData, error: null };
+}
+
 // GET /analytics/usage
 // Query params: userId (optional), courseId (optional), source (optional), limit (optional, no default - returns all)
 router.get('/usage', async (req, res) => {
@@ -406,20 +440,34 @@ router.get('/usage-by-course', async (req, res) => {
     }
   }
 
-  let query = supabase
-    .schema('api')
-    .from('usage_stats')
-    .select('course_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, created_at')
-    .not('course_id', 'is', null)
-    .order('created_at', { ascending: false });
+  let data, error;
 
   if (hasDateRange) {
-    query = query.gte('created_at', startDate).lte('created_at', endDate);
+    // Use pagination to fetch all records in date range
+    const result = await fetchAllPages((from, to) => 
+      supabase
+        .schema('api')
+        .from('usage_stats')
+        .select('course_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, created_at')
+        .not('course_id', 'is', null)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false })
+        .range(from, to)
+    );
+    data = result.data;
+    error = result.error;
   } else if (hasLimit) {
-    query = query.limit(Number(limit));
+    const result = await supabase
+      .schema('api')
+      .from('usage_stats')
+      .select('course_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, created_at')
+      .not('course_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
+    data = result.data;
+    error = result.error;
   }
-
-  const { data, error } = await query;
 
   if (error) {
     console.error('Error fetching usage by course:', error);
@@ -521,19 +569,32 @@ router.get('/usage-by-user', async (req, res) => {
     }
   }
 
-  let query = supabase
-    .schema('api')
-    .from('usage_stats')
-    .select('user_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, course_id, created_at')
-    .order('created_at', { ascending: false });
+  let data, error;
 
   if (hasDateRange) {
-    query = query.gte('created_at', startDate).lte('created_at', endDate);
+    // Use pagination to fetch all records in date range
+    const result = await fetchAllPages((from, to) => 
+      supabase
+        .schema('api')
+        .from('usage_stats')
+        .select('user_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, course_id, created_at')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false })
+        .range(from, to)
+    );
+    data = result.data;
+    error = result.error;
   } else if (hasLimit) {
-    query = query.limit(Number(limit));
+    const result = await supabase
+      .schema('api')
+      .from('usage_stats')
+      .select('user_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, course_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
+    data = result.data;
+    error = result.error;
   }
-
-  const { data, error } = await query;
 
   if (error) {
     console.error('Error fetching usage by user:', error);
