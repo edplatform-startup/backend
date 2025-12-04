@@ -11,12 +11,6 @@ import { createRagSession, retrieveContext } from '../rag/index.js';
 const RAG_TOP_K = parseInt(process.env.RAG_TOP_K, 10) || 5;
 const RAG_MAX_CONTEXT_CHARS = parseInt(process.env.RAG_MAX_CONTEXT_CHARS, 10) || 4000;
 
-const FOCUS_CANONICAL = new Map([
-  ['conceptual', 'Conceptual'],
-  ['computational', 'Computational'],
-  ['memorization', 'Memorization'],
-]);
-
 const BLOOM_CANONICAL = new Map([
   ['remember', 'Remember'],
   ['understand', 'Understand'],
@@ -261,6 +255,41 @@ function coerceReasoning(value) {
   return 'Exam relevance not specified. Focus on past papers to validate.';
 }
 
+// Compute study time based on yield and bloom level
+function computeStudyMinutes(yieldScore, bloomLevel) {
+  // Base time by yield: High=60, Medium=45, Low=30
+  const yieldBase = { High: 60, Medium: 45, Low: 30 };
+  // Bloom level multiplier: higher cognitive = more time
+  const bloomMultiplier = {
+    Remember: 0.7,
+    Understand: 0.85,
+    Apply: 1.0,
+    Analyze: 1.15,
+    Evaluate: 1.3,
+  };
+  const base = yieldBase[yieldScore] || 45;
+  const mult = bloomMultiplier[bloomLevel] || 1.0;
+  const result = Math.round(base * mult);
+  return Math.min(MAX_STUDY_MINUTES, Math.max(MIN_STUDY_MINUTES, result));
+}
+
+// Compute importance based on yield and bloom level
+function computeImportance(yieldScore, bloomLevel) {
+  // Base importance by yield: High=9, Medium=6, Low=4
+  const yieldBase = { High: 9, Medium: 6, Low: 4 };
+  // Bloom level adds 0-1 points for higher cognitive levels
+  const bloomBonus = {
+    Remember: 0,
+    Understand: 0,
+    Apply: 0.5,
+    Analyze: 0.5,
+    Evaluate: 1,
+  };
+  const base = yieldBase[yieldScore] || 6;
+  const bonus = bloomBonus[bloomLevel] || 0;
+  return Math.min(10, Math.max(1, Math.round(base + bonus)));
+}
+
 function normalizeOverviewTopics(rawOverviewTopics, skeletonSummaries = []) {
   if (!Array.isArray(rawOverviewTopics)) return [];
   const normalized = [];
@@ -268,10 +297,8 @@ function normalizeOverviewTopics(rawOverviewTopics, skeletonSummaries = []) {
   rawOverviewTopics.forEach((ot, index) => {
     if (!ot || typeof ot !== 'object') return;
 
-    const id =
-      typeof ot.id === 'string' && ot.id.trim()
-        ? ot.id.trim()
-        : `overview_${index + 1}`;
+    // Always generate IDs - LLM should not provide them
+    const id = `overview_${index + 1}`;
     const title = coerceTopicString(ot.title, `Topic group ${index + 1}`);
     const skeletonHint =
       coerceTopicString(
@@ -285,24 +312,20 @@ function normalizeOverviewTopics(rawOverviewTopics, skeletonSummaries = []) {
 
     subtopicsRaw.forEach((st, subIdx) => {
       if (!st || typeof st !== 'object') return;
-      const sid =
-        typeof st.id === 'string' && st.id.trim()
-          ? st.id.trim()
-          : `${id}_subtopic_${subIdx + 1}`;
-      const overviewId = coerceTopicString(st.overviewId, id);
+      // Always generate IDs - LLM should not provide them
+      const sid = `${id}_subtopic_${subIdx + 1}`;
       const stTitle = coerceTopicString(st.title, `Subtopic ${subIdx + 1}`);
-      const focus = coerceEnumValue(st.focus, FOCUS_CANONICAL, 'Conceptual');
       const bloomLevel = coerceEnumValue(st.bloom_level ?? st.bloomLevel, BLOOM_CANONICAL, 'Understand');
-      const studyMinutes = coerceStudyMinutes(st.estimated_study_time_minutes ?? st.study_minutes);
-      const importance = coerceImportance(st.importance_score ?? st.importance ?? st.priority);
       const reasoning = coerceReasoning(st.exam_relevance_reasoning ?? st.reasoning);
       const yieldScore = coerceEnumValue(st.yield ?? st.exam_yield ?? st.yield_score, YIELD_CANONICAL, 'Medium');
+      // Compute study time and importance based on yield and bloom level
+      const studyMinutes = computeStudyMinutes(yieldScore, bloomLevel);
+      const importance = computeImportance(yieldScore, bloomLevel);
 
       subtopics.push({
         id: sid,
-        overviewId,
+        overviewId: id,
         title: stTitle,
-        focus,
         bloom_level: bloomLevel,
         estimated_study_time_minutes: studyMinutes,
         importance_score: importance,
@@ -564,7 +587,6 @@ CRITICAL RULES:
 6. GROUNDING: When authoritative excerpts are provided, use them to ground specific claims about topic coverage and exam relevance. Reference specific details from the excerpts in your exam_relevance_reasoning fields.
 
 ENUM VALUES (use ONLY these exact strings):
-- **focus**: "Conceptual" | "Computational" | "Memorization"
 - **bloom_level**: "Remember" | "Understand" | "Apply" | "Analyze" | "Evaluate"
 - **yield**: "High" | "Medium" | "Low"
 
@@ -572,18 +594,12 @@ OUTPUT JSON STRUCTURE:
 {
   "overviewTopics": [
     {
-      "id": "uuid",
       "title": "Limits & Continuity",
       "original_skeleton_ref": "Week 1",
       "subtopics": [
         {
-          "id": "uuid",
-          "overviewId": "uuid",
           "title": "The Epsilon-Delta Definition of a Limit",
-          "focus": "Conceptual",
           "bloom_level": "Understand",
-          "estimated_study_time_minutes": 45,
-          "importance_score": 9,
           "exam_relevance_reasoning": "Syllabus explicitly mentions proofs for limits.",
           "yield": "High"
         }
@@ -594,10 +610,9 @@ OUTPUT JSON STRUCTURE:
 
 Rules:
 - JSON must be valid (double quotes, no trailing commas, no comments).
-- IDs must be unique across overview topics and subtopics.
-- overviewId on each subtopic must match its parent overview topic id.
 - Provide at least 8 overview topics when possible, each with 4-8 atomic concepts.
-- Do not include extra keys or wrapper text.`;
+- Do not include extra keys or wrapper text.
+- Do NOT include "id", "overviewId", "estimated_study_time_minutes", or "importance_score" fields - these are added automatically.`;
 
     const userPrompt = `Course Details:
 Institution: ${coerceTopicString(university, 'Unknown institution')}

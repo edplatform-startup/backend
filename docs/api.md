@@ -248,10 +248,10 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned skeleton.
   - Summarizes skeleton units and prompts the `TOPICS` LLM stage to expand them into 8–16 overview topics, each with 4–8 competency-based “Atomic Concepts.”
   - Each concept includes:
-    - `focus`: `"Conceptual"` | `"Computational"` | `"Memorization"`
     - `bloom_level`: `"Remember"` | `"Understand"` | `"Apply"` | `"Analyze"` | `"Evaluate"`
-    - `estimated_study_time_minutes`, `importance_score` (1–10), `exam_relevance_reasoning`
+    - `exam_relevance_reasoning`
     - `yield`: `"High"` | `"Medium"` | `"Low"`
+  - The following fields are computed automatically based on yield/bloom: `id`, `overviewId`, `estimated_study_time_minutes`, `importance_score`
   - These fields power Deep vs. Cram study modes.
   - Normalizes IDs, fills in missing metadata, enforces `overviewId` relationships, and logs usage via Grok cost tracking as `[topicsV2]`.
 - Responses:
@@ -269,7 +269,6 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
               "id": "overview_1_sub_1",
               "overviewId": "overview_1",
               "title": "Proving Big-O bounds via limit comparison",
-              "focus": "Conceptual",
               "bloom_level": "Analyze",
               "estimated_study_time_minutes": 45,
               "importance_score": 9,

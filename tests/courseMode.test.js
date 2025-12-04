@@ -36,7 +36,6 @@ describe('Course Mode Logic', () => {
                                         id: 'sub-1',
                                         overviewId: 'topic-1',
                                         title: 'Subtopic 1',
-                                        focus: 'Conceptual',
                                         bloom_level: 'Understand',
                                         estimated_study_time_minutes: 30,
                                         importance_score: 8,

@@ -210,7 +210,6 @@ test('courses route validations and behaviors', async (t) => {
                   id: `overview_1_sub_${idx + 1}`,
                   overviewId: 'overview_1',
                   title: `Foundation Concept ${idx + 1}`,
-                  focus: idx % 2 === 0 ? 'Conceptual' : 'Computational',
                   bloom_level: idx % 2 === 0 ? 'Understand' : 'Analyze',
                   estimated_study_time_minutes: 45 + idx,
                   importance_score: 8,
@@ -249,7 +248,6 @@ test('courses route validations and behaviors', async (t) => {
     assert.equal(res.body.overviewTopics.length, 1);
     assert.equal(res.body.overviewTopics[0].subtopics.length, 4);
     assert.equal(res.body.overviewTopics[0].original_skeleton_ref, 'Week 1: Algorithm Foundations');
-    assert.ok(res.body.overviewTopics[0].subtopics[0].focus);
     assert.ok(res.body.overviewTopics[0].subtopics[0].bloom_level);
     assert.equal(res.body.model, 'mock-hier-topics');
     assert.ok(Array.isArray(synthOptions.attachments) && synthOptions.attachments.length >= 2);
@@ -283,7 +281,6 @@ test('courses route validations and behaviors', async (t) => {
               id: `ov_${oIdx + 1}_sub_${sIdx + 1}`,
               overviewId: `ov_${oIdx + 1}`,
               title: `Subtopic ${oIdx + 1}.${sIdx + 1}`,
-              focus: 'Computational',
               bloom_level: 'Apply',
               estimated_study_time_minutes: 30,
               importance_score: 7,
