@@ -2189,10 +2189,6 @@ export async function generateVideoSelection(queries, userId, courseId) {
 
   // Use the first query as requested
   const query = queries[0];
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('[VIDEO GENERATION] Starting video search');
-  console.log('[VIDEO GENERATION] Lesson Architect Query:', query);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logs.push(`Selected query for processing: "${query}"`);
 
   if (customYouTubeFetcher) {
@@ -2214,7 +2210,6 @@ export async function generateVideoSelection(queries, userId, courseId) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // 1. EXECUTE SEARCH MANUALLY
-      console.log(`[VIDEO GENERATION] Querying yt-search with: "${query}" (Attempt ${attempt + 1})`);
       logs.push(`Searching YouTube for: "${query}"`);
 
       const res = await yts(query);
@@ -2228,7 +2223,6 @@ export async function generateVideoSelection(queries, userId, courseId) {
         url: v.url
       }));
 
-      console.log('[VIDEO GENERATION] yt-search returned', searchResults.length, 'videos.');
       if (searchResults.length === 0) {
         logs.push('No videos found for this query.');
         if (attempt < maxRetries) {
@@ -2293,30 +2287,22 @@ Select the best video index.`
           url: selected.url,
         });
 
-        console.log('[VIDEO GENERATION] ✓ Selected Video:');
-        console.log('  Index:', selectedIndex);
-        console.log('  Title:', selected.title);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         logs.push(`Selected video index ${selectedIndex}: "${selected.title}"`);
 
         return { videos, logs }; // Success!
       } else if (selectedIndex === -1) {
-        console.log('[VIDEO GENERATION] LLM rejected all videos.');
         logs.push('LLM indicated no valid videos in this batch.');
         break;
       } else {
-        console.log('[VIDEO GENERATION] Invalid selection index:', selectedIndex);
         logs.push(`Invalid selection index: ${selectedIndex}`);
       }
 
     } catch (err) {
-      console.log('[VIDEO GENERATION] Error during attempt:', err.message);
       logs.push(`Error: ${err.message}`);
     }
   }
 
   if (videos.length === 0) {
-    console.log('[VIDEO GENERATION] ✗ No valid video selected');
     logs.push('Failed to select a video after retries.');
   }
 

@@ -100,12 +100,20 @@ export async function createRagSession(options = {}) {
   }
 
   if (allChunks.length === 0) {
+    console.log(`[RAG] Session ${sessionId}: no text to embed`);
     return { sessionId, counts };
   }
 
   // Embed all chunks
+  console.log(`[RAG] Session ${sessionId}: embedding ${allChunks.length} chunks (syllabus=${counts.syllabus}, exam=${counts.exam})`);
   const texts = allChunks.map(c => c.chunk_text);
-  const embeddings = await embed(texts);
+  let embeddings;
+  try {
+    embeddings = await embed(texts);
+  } catch (err) {
+    console.error(`[RAG] Session ${sessionId}: embedding failed -`, err.message);
+    throw err;
+  }
 
   // Prepare rows for insertion
   const rows = allChunks.map((chunk, i) => ({
@@ -126,9 +134,11 @@ export async function createRagSession(options = {}) {
     .insert(rows);
 
   if (error) {
+    console.error(`[RAG] Session ${sessionId}: DB insert failed -`, error.message);
     throw new Error(`Failed to insert RAG chunks: ${error.message}`);
   }
 
+  console.log(`[RAG] Session ${sessionId}: stored ${rows.length} chunks`);
   return { sessionId, counts };
 }
 
@@ -159,7 +169,13 @@ export async function retrieveContext(options = {}) {
   }
 
   // Embed query
-  const [queryVec] = await embed([queryText.trim()]);
+  let queryVec;
+  try {
+    [queryVec] = await embed([queryText.trim()]);
+  } catch (err) {
+    console.error(`[RAG] Retrieve ${sessionId}: query embedding failed -`, err.message);
+    throw err;
+  }
 
   // Fetch all chunks for session
   const supabase = getSupabaseClient();
@@ -169,15 +185,18 @@ export async function retrieveContext(options = {}) {
     .eq('session_id', sessionId);
 
   if (error) {
+    console.error(`[RAG] Retrieve ${sessionId}: DB fetch failed -`, error.message);
     throw new Error(`Failed to fetch RAG chunks: ${error.message}`);
   }
 
   if (!rows || rows.length === 0) {
+    console.log(`[RAG] Retrieve ${sessionId}: no chunks found`);
     return '';
   }
 
   // Rank by similarity
   const ranked = rankTopK(queryVec, rows, topK * 2); // Get extra for dedup
+  console.log(`[RAG] Retrieve ${sessionId}: ranked ${rows.length} chunks, top score=${ranked[0]?.score?.toFixed(3) || 'N/A'}`);
 
   // Deduplicate by chunk_text
   const seen = new Set();
