@@ -4,10 +4,46 @@ Base URL (production): https://api.kognolearn.com
 
 - Protocols: HTTPS (production), HTTP (local dev)
 - Media type: application/json; charset=utf-8
-- Authentication: None (public)
+- Authentication: JWT (Supabase Auth tokens required for all protected endpoints)
 - CORS: Enabled for all origins
 - Versioning: None (single, unversioned API)
 - Rate limiting: Not implemented
+
+## Authentication
+
+All endpoints except `/` (root) and `/healthz` require a valid JWT token issued by Supabase Auth.
+
+### How to authenticate
+
+1. **Obtain a JWT token** from Supabase Auth by signing in a user (e.g., via `supabase.auth.signInWithPassword()` or OAuth).
+2. **Include the token** in the `Authorization` header of every request:
+   ```
+   Authorization: Bearer <your_supabase_jwt_token>
+   ```
+
+### Authentication errors
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| 401 | `Authorization header is required` | No `Authorization` header provided |
+| 401 | `Invalid authorization format` | Header doesn't start with `Bearer ` |
+| 401 | `Token is required` | Empty token after `Bearer ` |
+| 401 | `Invalid or expired token` | Token failed Supabase verification |
+| 401 | `Invalid token` | Token didn't resolve to a valid user |
+| 500 | `Authentication service error` | Supabase auth service failure |
+
+### Example request with authentication
+
+```bash
+curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json"
+```
+
+### Public endpoints (no authentication required)
+
+- `GET /` – Health check / root
+- `GET /healthz` – Health check
 
 ## Request size limits
 
@@ -460,7 +496,10 @@ Base URL (production): https://api.kognolearn.com
                 "Incorrect. This would be q, therefore p.",
                 "Incorrect. This would be ~p, therefore ~q.",
                 "Incorrect. This would be ~q, therefore ~p."
-              ]
+              ],
+              "id": "02e0872e-2beb-4ee8-9d37-a571b10ae02b",
+              "status": "unattempted",
+              "selectedAnswer": null
             }
           ],
           "generation_plans": {
@@ -477,6 +516,10 @@ Base URL (production): https://api.kognolearn.com
   - `404 Not Found` → Course or lesson not found, or user doesn't have access
   - `500 Internal Server Error` → Database error
 - **Security**: Verifies that the user owns the course before returning lesson data.
+- **Quiz Enrichment**: Quiz questions in `content_payload.quiz` are automatically enriched with:
+  - `id` (string, UUID) – The unique identifier from the `quiz_questions` table, used to update the question status via `PATCH /courses/:courseId/questions`
+  - `status` (string) – Current answer status: `"unattempted"`, `"correct"`, `"incorrect"`, or `"correct/flag"`
+  - `selectedAnswer` (integer | null) – The index of the user's selected answer (0-based), or `null` if not yet answered
 - **Use Cases**:
   - Display reading material for a lesson
   - Load quiz questions for student assessment
@@ -670,7 +713,12 @@ Base URL (production): https://api.kognolearn.com
   - `courseId` (string, required) – UUID of the course
 - **Query parameters**:
   - `userId` (string, required) – UUID of the user
-  - `correctness` (string, optional) – Filter by status: `"correct"`, `"incorrect"`, or `"unattempted"`
+  - `correctness` (string, optional) – Filter by status:
+    - `"correct"` – Returns only correct questions
+    - `"incorrect"` – Returns only incorrect questions
+    - `"correct/flag"` – Returns only flagged-correct questions
+    - `"unattempted"` – Returns only unattempted questions
+    - `"needs_review"` – Returns both `"incorrect"` and `"correct/flag"` questions (for review)
   - `attempted` (boolean, optional) – If `true`, returns only questions that are NOT `"unattempted"`
   - `lessons` (string, optional) – Comma-separated list of lesson UUIDs to filter by
 - **Responses**:
@@ -694,14 +742,16 @@ Base URL (production): https://api.kognolearn.com
   - `500 Internal Server Error` → Database error
 
 ### PATCH /courses/:courseId/questions
-- **Purpose**: Bulk update the status (correct/incorrect) of quiz questions.
+- **Purpose**: Bulk update the status and/or selected answer of quiz questions.
 - **Path parameters**:
   - `courseId` (string, required) – UUID of the course
 - **Request body (JSON)**:
   - `userId` (string, required) – UUID of the user
   - `updates` (object[], required) – List of updates
     - `id` (string, required) – UUID of the quiz question
-    - `status` (string, required) – New status (`"correct"`, `"incorrect"`, `"unattempted"`)
+    - `status` (string, optional) – New status: `"correct"`, `"incorrect"`, `"correct/flag"`, or `"unattempted"`
+    - `selectedAnswer` (integer, optional) – Index of the selected answer (0-based)
+  - Note: At least one of `status` or `selectedAnswer` must be provided per update.
 - **Responses**:
   - `200 OK` →
     ```json
@@ -712,6 +762,7 @@ Base URL (production): https://api.kognolearn.com
         {
           "id": "...",
           "status": "correct",
+          "selected_answer": 1,
           "updated_at": "2024-..."
         }
       ],
@@ -1102,7 +1153,7 @@ Base URL (production): https://api.kognolearn.com
 
 ## Notes
 - Every response uses JSON.
-- Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
+- All protected endpoints require a valid Supabase JWT token in the `Authorization: Bearer <token>` header. The token is validated against Supabase Auth and the authenticated user's ID is verified against the `userId` in the request.
 - Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
 - RAG storage: `public.rag_chunks` stores embedded syllabus/exam chunks keyed by `session_id`. Expires after `RAG_SESSION_TTL_DAYS`.
 
@@ -1115,13 +1166,20 @@ Base URL (production): https://api.kognolearn.com
 | `RAG_SESSION_TTL_DAYS` | `7` | Days before cleanup deletes chunks |
 
 ## Examples
+
+All examples below require the `Authorization: Bearer <token>` header (omitted for brevity).
+
 - List user courses → `GET https://api.kognolearn.com/courses?userId=...`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
 - Fetch specific course → `GET https://api.kognolearn.com/courses?userId=...&courseId=...`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`
   - Response: `{ "success": true, "course": Course }`
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: see `/courses/topics` section.
   - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`

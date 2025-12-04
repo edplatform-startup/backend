@@ -1,4 +1,20 @@
-export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [], updateResponses = [], deleteResponses = [], storageListResponses = [], storageRemoveResponses = [] } = {}) {
+/**
+ * Valid test token for authentication in tests.
+ * Use this in the Authorization header: `Bearer ${TEST_AUTH_TOKEN}`
+ */
+export const TEST_AUTH_TOKEN = 'test-valid-jwt-token';
+
+/**
+ * Default test user returned by the auth stub when using TEST_AUTH_TOKEN
+ */
+export const TEST_USER = {
+  id: '22222222-2222-2222-2222-222222222222',
+  email: 'test@example.com',
+  role: 'authenticated',
+  user_metadata: {}
+};
+
+export function createSupabaseStub({ listResponses = [], singleResponses = [], insertResponses = [], updateResponses = [], deleteResponses = [], storageListResponses = [], storageRemoveResponses = [], authUser = null } = {}) {
   const listQueue = [...listResponses];
   const singleQueue = [...singleResponses];
   const insertQueue = [...insertResponses];
@@ -9,6 +25,36 @@ export function createSupabaseStub({ listResponses = [], singleResponses = [], i
   const defaultResponse = { data: null, error: null };
 
   const supabase = {
+    auth: {
+      getUser(token) {
+        // If authUser is provided, return it as authenticated user
+        // If token is 'invalid', return an error
+        if (token === 'invalid' || token === 'expired') {
+          return Promise.resolve({
+            data: { user: null },
+            error: { message: 'Invalid or expired token' }
+          });
+        }
+        if (authUser) {
+          return Promise.resolve({
+            data: { user: authUser },
+            error: null
+          });
+        }
+        // Default: return a mock authenticated user
+        return Promise.resolve({
+          data: {
+            user: {
+              id: '22222222-2222-2222-2222-222222222222',
+              email: 'test@example.com',
+              role: 'authenticated',
+              user_metadata: {}
+            }
+          },
+          error: null
+        });
+      }
+    },
     schema() {
       return supabase;
     },

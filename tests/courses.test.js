@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
-import { createSupabaseStub } from './helpers/supabaseStub.js';
+import { createSupabaseStub, TEST_AUTH_TOKEN } from './helpers/supabaseStub.js';
 import {
   __setSyllabusSynthesizer,
   __clearSyllabusSynthesizer,
@@ -19,7 +19,10 @@ import {
 import { __setLLMCaller } from '../src/services/courseGenerator.js';
 import { callStageLLM } from '../src/services/llmCall.js';
 
-const baseHeaders = { Accept: 'application/json' };
+const baseHeaders = { 
+  Accept: 'application/json',
+  Authorization: `Bearer ${TEST_AUTH_TOKEN}`
+};
 
 const sampleCourseSelection = { code: 'CSE142', title: 'Foundations of CS' };
 const sampleFinishByDate = '2025-12-01T00:00:00.000Z';
@@ -47,13 +50,30 @@ test('courses route validations and behaviors', async (t) => {
     __setLLMCaller(callStageLLM);
   });
 
+  await t.test('rejects requests without Authorization header', async () => {
+    const res = await request(app).get('/courses').set({ Accept: 'application/json' });
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /Authorization header is required/);
+  });
+
+  await t.test('rejects requests with invalid token', async () => {
+    setSupabaseClient(createSupabaseStub({}));
+    const res = await request(app)
+      .get('/courses')
+      .set({ Accept: 'application/json', Authorization: 'Bearer invalid' });
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /Invalid or expired token/);
+  });
+
   await t.test('rejects missing query parameters', async () => {
+    setSupabaseClient(createSupabaseStub({}));
     const res = await request(app).get('/courses').set(baseHeaders);
     assert.equal(res.status, 400);
     assert.match(res.body.error, /Missing required query parameters/);
   });
 
   await t.test('rejects invalid userId format', async () => {
+    setSupabaseClient(createSupabaseStub({}));
     const res = await request(app).get('/courses').query({ userId: 'not-a-uuid' }).set(baseHeaders);
     assert.equal(res.status, 400);
     assert.match(res.body.error, /Invalid userId format/);

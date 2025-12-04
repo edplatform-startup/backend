@@ -304,6 +304,37 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
       },
     };
 
+    // Enrich quiz questions with ID and status from the quiz_questions table
+    // This applies regardless of whether format filtering is requested
+    if (response.lesson.content_payload?.quiz?.length > 0) {
+      const { data: dbQuestions, error: quizDbError } = await supabase
+        .schema('api')
+        .from('quiz_questions')
+        .select('id, question, status, selected_answer')
+        .eq('course_id', courseId)
+        .eq('node_id', nodeId)
+        .eq('user_id', userId);
+
+      if (!quizDbError && dbQuestions) {
+        // Create a map of question text to DB record for quick lookup
+        const questionMap = new Map();
+        dbQuestions.forEach(dbQ => {
+          questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status, selectedAnswer: dbQ.selected_answer });
+        });
+
+        // Merge the ID, status, and selectedAnswer into each quiz question
+        response.lesson.content_payload.quiz = response.lesson.content_payload.quiz.map(q => {
+          const dbRecord = questionMap.get(q.question);
+          return {
+            ...q,
+            id: dbRecord?.id || null,
+            status: dbRecord?.status || 'unattempted',
+            selectedAnswer: dbRecord?.selectedAnswer ?? null
+          };
+        });
+      }
+    }
+
     // Filter content based on format if requested
     const { format } = req.query;
     if (format && response.lesson.content_payload) {
@@ -324,7 +355,8 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
           filteredData = { body: payload.reading };
           break;
         case 'quiz':
-          filteredData = { questions: payload.quiz };
+          // Quiz questions are already enriched with id and status above
+          filteredData = { questions: payload.quiz || [] };
           break;
         case 'flashcards':
           filteredData = { cards: payload.flashcards };
@@ -1409,7 +1441,12 @@ router.get('/:courseId/questions', async (req, res) => {
       .eq('user_id', userId);
 
     if (correctness) {
-      query = query.eq('status', correctness);
+      // Support filtering for review: 'incorrect' and 'correct/flag' are both "needs review"
+      if (correctness === 'needs_review') {
+        query = query.in('status', ['incorrect', 'correct/flag']);
+      } else {
+        query = query.eq('status', correctness);
+      }
     }
 
     if (attempted === 'true') {
@@ -1434,10 +1471,13 @@ router.get('/:courseId/questions', async (req, res) => {
 // PATCH /:courseId/questions
 router.patch('/:courseId/questions', async (req, res) => {
   const { courseId } = req.params;
-  const { userId, updates } = req.body; // updates: [{ id, status }]
+  const { userId, updates } = req.body; // updates: [{ id, status, selectedAnswer }]
 
   if (!userId) return res.status(400).json({ error: 'userId is required' });
   if (!updates || !Array.isArray(updates)) return res.status(400).json({ error: 'updates array is required' });
+
+  // Valid status values
+  const validStatuses = ['correct', 'incorrect', 'correct/flag', 'unattempted'];
 
   try {
     const supabase = getSupabase();
@@ -1450,16 +1490,37 @@ router.patch('/:courseId/questions', async (req, res) => {
     const errors = [];
 
     for (const update of updates) {
-      const { id, status } = update;
-      if (!id || !status) {
-        errors.push({ id, error: 'Missing id or status' });
+      const { id, status, selectedAnswer } = update;
+      if (!id) {
+        errors.push({ id, error: 'Missing id' });
+        continue;
+      }
+
+      // Validate status if provided
+      if (status !== undefined && !validStatuses.includes(status)) {
+        errors.push({ id, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+        continue;
+      }
+
+      // Build update object dynamically
+      const updateData = { updated_at: new Date().toISOString() };
+      if (status !== undefined) {
+        updateData.status = status;
+      }
+      if (selectedAnswer !== undefined) {
+        updateData.selected_answer = selectedAnswer;
+      }
+
+      // Must have at least one field to update besides updated_at
+      if (status === undefined && selectedAnswer === undefined) {
+        errors.push({ id, error: 'Missing status or selectedAnswer' });
         continue;
       }
 
       const { data, error } = await supabase
         .schema('api')
         .from('quiz_questions')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update(updateData)
         .eq('id', id)
         .eq('course_id', courseId)
         .eq('user_id', userId)

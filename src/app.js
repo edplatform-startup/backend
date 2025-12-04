@@ -5,6 +5,7 @@ import coursesRouter from './routes/courses.js';
 import chatRouter from './routes/chat.js';
 import analyticsRouter from './routes/analytics.js';
 import feedbackRouter from './routes/feedback.js';
+import { requireAuth } from './middleware/auth.js';
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '1gb' }));
 app.use(express.urlencoded({ extended: true, limit: process.env.REQUEST_BODY_LIMIT || '1gb' }));
 app.use(morgan('dev'));
 
+// Public endpoints (no auth required)
 app.get('/', (req, res) => {
   res.json({ name: 'edtech-backend-api', ok: true });
 });
@@ -22,10 +24,11 @@ app.get('/healthz', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.use('/courses', coursesRouter);
-app.use('/chat', chatRouter);
-app.use('/analytics', analyticsRouter);
-app.use('/feedback', feedbackRouter);
+// Protected endpoints (JWT auth required)
+app.use('/courses', requireAuth, coursesRouter);
+app.use('/chat', requireAuth, chatRouter);
+app.use('/analytics', requireAuth, analyticsRouter);
+app.use('/feedback', requireAuth, feedbackRouter);
 
 // 404 handler
 app.use((req, res) => {
