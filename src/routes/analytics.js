@@ -4,6 +4,47 @@ import { validateUuid } from '../utils/validation.js';
 
 const router = Router();
 
+/**
+ * Helper function to verify admin status from Authorization header token
+ * @param {object} supabase - Supabase client
+ * @param {string} authHeader - Authorization header value (e.g., "Bearer <token>")
+ * @returns {Promise<{isAdmin: boolean, userId: string|null, email: string|null}>}
+ */
+async function verifyAdminFromToken(supabase, authHeader) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { isAdmin: false, userId: null, email: null };
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+
+  // Verify the token and get the user
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  
+  if (authError || !user) {
+    console.error('Error verifying token:', authError);
+    return { isAdmin: false, userId: null, email: null };
+  }
+
+  const userEmail = user.email;
+  if (!userEmail) {
+    return { isAdmin: false, userId: user.id, email: null };
+  }
+
+  // Check if email is in the admins table
+  const { data: adminRecord, error: adminError } = await supabase
+    .schema('public')
+    .from('admins')
+    .select('email')
+    .eq('email', userEmail.toLowerCase())
+    .single();
+
+  if (adminError && adminError.code !== 'PGRST116') {
+    console.error('Error checking admin status:', adminError);
+  }
+
+  return { isAdmin: !!adminRecord, userId: user.id, email: userEmail };
+}
+
 // GET /analytics/usage
 // Query params: userId (optional), courseId (optional), source (optional), limit (optional, default 100)
 router.get('/usage', async (req, res) => {
@@ -324,12 +365,23 @@ router.get('/lookup', async (req, res) => {
 /**
  * GET /analytics/usage-by-course
  * Get aggregated API usage stats grouped by course
- * Query params: startDate, endDate, includeCourseName (boolean)
+ * Query params: admin (boolean), startDate, endDate, includeCourseName (boolean)
+ * When admin=true, verifies Authorization header token and returns all courses data
  */
 router.get('/usage-by-course', async (req, res) => {
-  const { startDate, endDate, includeCourseName } = req.query;
+  const { admin, startDate, endDate, includeCourseName } = req.query;
 
   const supabase = getSupabase();
+
+  // If admin=true, verify admin status from Authorization header
+  if (admin === 'true') {
+    const authHeader = req.headers.authorization;
+    const { isAdmin, email } = await verifyAdminFromToken(supabase, authHeader);
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+  }
 
   let query = supabase
     .schema('api')
@@ -381,8 +433,8 @@ router.get('/usage-by-course', async (req, res) => {
     sources: Array.from(c.sources)
   }));
 
-  // Optionally fetch course names
-  if (includeCourseName === 'true') {
+  // Optionally fetch course names (only when admin=true)
+  if (includeCourseName === 'true' && admin === 'true') {
     const courseIds = result.map(c => c.courseId);
     if (courseIds.length > 0) {
       const { data: courses, error: coursesError } = await supabase
@@ -414,12 +466,23 @@ router.get('/usage-by-course', async (req, res) => {
 /**
  * GET /analytics/usage-by-user
  * Get aggregated API usage stats grouped by user with optional course info
- * Query params: startDate, endDate, includeEmail (boolean)
+ * Query params: admin (boolean), startDate, endDate, includeEmail (boolean)
+ * When admin=true, verifies Authorization header token and returns all users data with emails
  */
 router.get('/usage-by-user', async (req, res) => {
-  const { startDate, endDate, includeEmail } = req.query;
+  const { admin, startDate, endDate, includeEmail } = req.query;
 
   const supabase = getSupabase();
+
+  // If admin=true, verify admin status from Authorization header
+  if (admin === 'true') {
+    const authHeader = req.headers.authorization;
+    const { isAdmin, email } = await verifyAdminFromToken(supabase, authHeader);
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+  }
 
   let query = supabase
     .schema('api')
@@ -473,10 +536,22 @@ router.get('/usage-by-user', async (req, res) => {
     sources: Array.from(u.sources)
   }));
 
-  // Optionally fetch emails
-  if (includeEmail === 'true') {
+  // Fetch emails for all users (only when admin=true)
+  if (includeEmail === 'true' && admin === 'true') {
     for (const user of result) {
       if (user.userId !== 'anonymous') {
+        // First try auth admin API for definitive email
+        try {
+          const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(user.userId);
+          if (!authError && authUser && authUser.user && authUser.user.email) {
+            user.email = authUser.user.email;
+            continue;
+          }
+        } catch (authErr) {
+          // Fall through to feedback lookup
+        }
+
+        // Fallback to feedback table
         const { data: feedback } = await supabase
           .schema('api')
           .from('feedback')

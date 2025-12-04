@@ -877,9 +877,14 @@ Base URL (production): https://api.kognolearn.com
 ### GET /analytics/usage-by-course
 - Purpose: Get aggregated API usage statistics grouped by course. Includes total costs, token counts, and lists of sources/stages used.
 - Query parameters:
+  - `admin` (string, optional) – Set to `"true"` to request admin-level access to all courses data.
   - `startDate` (string, optional ISO date) – Filter usage after this date.
   - `endDate` (string, optional ISO date) – Filter usage before this date.
-  - `includeCourseName` (string, optional) – Set to `"true"` to include course names (fetched from courses table).
+  - `includeCourseName` (string, optional) – Set to `"true"` to include course names (requires `admin=true`).
+- Headers:
+  - `Authorization` (required when `admin=true`) – Bearer token for the requesting user.
+- Authentication:
+  - When `admin=true`, the token is verified and the user's email must exist in the `public.admins` table.
 - Responses:
   - 200 OK →
     ```json
@@ -899,18 +904,24 @@ Base URL (production): https://api.kognolearn.com
       ]
     }
     ```
+  - 403 Forbidden → `admin=true` but user is not an admin.
+  - 500 Internal Server Error → Database error.
   - Notes:
-    - `courseName` is only included if `includeCourseName=true`
+    - `courseName` is only included if `admin=true` and `includeCourseName=true`
     - Only includes usage records that have a `course_id` (excludes anonymous/general usage)
     - `sources` lists all unique operation types used for this course
-  - 500 Internal Server Error → Database error.
 
 ### GET /analytics/usage-by-user
 - Purpose: Get aggregated API usage statistics grouped by user. Includes total costs, token counts, and lists of courses/sources used.
 - Query parameters:
+  - `admin` (string, optional) – Set to `"true"` to request admin-level access to all users data.
   - `startDate` (string, optional ISO date) – Filter usage after this date.
   - `endDate` (string, optional ISO date) – Filter usage before this date.
-  - `includeEmail` (string, optional) – Set to `"true"` to include user emails (fetched from feedback submissions).
+  - `includeEmail` (string, optional) – Set to `"true"` to include user emails (requires `admin=true`).
+- Headers:
+  - `Authorization` (required when `admin=true`) – Bearer token for the requesting user.
+- Authentication:
+  - When `admin=true`, the token is verified and the user's email must exist in the `public.admins` table.
 - Responses:
   - 200 OK →
     ```json
@@ -931,11 +942,13 @@ Base URL (production): https://api.kognolearn.com
       ]
     }
     ```
+  - 403 Forbidden → `admin=true` but user is not an admin.
+  - 500 Internal Server Error → Database error.
   - Notes:
-    - `email` is only included if `includeEmail=true` and user has submitted feedback with an email
+    - `email` is only included if `admin=true` and `includeEmail=true`
+    - Emails are fetched from Supabase auth (preferred) or feedback submissions (fallback)
     - `courses` lists all unique course IDs the user has generated content for
     - `sources` lists all unique operation types the user has performed
-  - 500 Internal Server Error → Database error.
 
 ### GET /analytics/events
 - Purpose: Retrieve raw user behavior events (e.g., `lesson_opened`, `course_created`) with filtering.
