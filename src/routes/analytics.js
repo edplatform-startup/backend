@@ -85,29 +85,43 @@ router.get('/usage', async (req, res) => {
   const { userId, courseId, source, limit } = req.query;
   const supabase = getSupabase();
 
-  let query = supabase
-    .schema('api')
-    .from('usage_stats')
-    .select('*')
-    .order('created_at', { ascending: false });
+  let data, error;
 
   if (limit !== undefined) {
-    query = query.limit(Number(limit));
-  }
+    // Use simple query with limit
+    let query = supabase
+      .schema('api')
+      .from('usage_stats')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Number(limit));
 
-  if (userId) {
-    query = query.eq('user_id', userId);
-  }
+    if (userId) query = query.eq('user_id', userId);
+    if (courseId) query = query.eq('course_id', courseId);
+    if (source) query = query.eq('source', source);
 
-  if (courseId) {
-    query = query.eq('course_id', courseId);
-  }
+    const result = await query;
+    data = result.data;
+    error = result.error;
+  } else {
+    // Use pagination to fetch all records
+    const result = await fetchAllPages((from, to) => {
+      let query = supabase
+        .schema('api')
+        .from('usage_stats')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
-  if (source) {
-    query = query.eq('source', source);
-  }
+      if (userId) query = query.eq('user_id', userId);
+      if (courseId) query = query.eq('course_id', courseId);
+      if (source) query = query.eq('source', source);
 
-  const { data, error } = await query;
+      return query;
+    });
+    data = result.data;
+    error = result.error;
+  }
 
   if (error) {
     console.error('Error fetching usage stats:', error);
@@ -196,43 +210,51 @@ router.get('/events', async (req, res) => {
   const { userId, eventTypes, courseId, startDate, endDate, limit, offset = 0 } = req.query;
 
   const supabase = getSupabase();
-  let query = supabase
-    .schema('api')
-    .from('analytics_events')
-    .select('*', { count: 'exact' });
+  const parsedEventTypes = eventTypes ? eventTypes.split(',').map(t => t.trim()) : null;
 
-  if (userId) {
-    query = query.eq('user_id', userId);
-  }
-
-  query = query.order('created_at', { ascending: false });
+  let data, error, count;
 
   if (limit !== undefined) {
-    query = query.range(Number(offset), Number(offset) + Number(limit) - 1);
-  } else if (Number(offset) > 0) {
-    // If offset but no limit, start from offset to end
-    query = query.range(Number(offset), Number(offset) + 999999);
-  }
+    // Use simple query with limit/offset
+    let query = supabase
+      .schema('api')
+      .from('analytics_events')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(Number(offset), Number(offset) + Number(limit) - 1);
 
-  if (eventTypes) {
-    const types = eventTypes.split(',').map(t => t.trim());
-    query = query.in('event_type', types);
-  }
+    if (userId) query = query.eq('user_id', userId);
+    if (parsedEventTypes) query = query.in('event_type', parsedEventTypes);
+    if (courseId) query = query.eq('details->>courseId', courseId);
+    if (startDate) query = query.gte('created_at', startDate);
+    if (endDate) query = query.lte('created_at', endDate);
 
-  if (courseId) {
-    // Filter by details->>courseId
-    query = query.eq('details->>courseId', courseId);
-  }
+    const result = await query;
+    data = result.data;
+    error = result.error;
+    count = result.count;
+  } else {
+    // Use pagination to fetch all records
+    const result = await fetchAllPages((from, to) => {
+      let query = supabase
+        .schema('api')
+        .from('analytics_events')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
-  if (startDate) {
-    query = query.gte('created_at', startDate);
-  }
+      if (userId) query = query.eq('user_id', userId);
+      if (parsedEventTypes) query = query.in('event_type', parsedEventTypes);
+      if (courseId) query = query.eq('details->>courseId', courseId);
+      if (startDate) query = query.gte('created_at', startDate);
+      if (endDate) query = query.lte('created_at', endDate);
 
-  if (endDate) {
-    query = query.lte('created_at', endDate);
+      return query;
+    });
+    data = result.data;
+    error = result.error;
+    count = data ? data.length : 0;
   }
-
-  const { data, error, count } = await query;
 
   if (error) {
     console.error('Error fetching analytics events:', error);
