@@ -37,13 +37,13 @@ export async function restructureCourse(courseId, userId, prompt, initialAffecte
     .select('title')
     .eq('id', courseId)
     .single();
-    
+
   const courseTitle = course?.title || 'Course';
 
   // 2. Identify Lessons to Change (Gemini 3 Pro via Lesson Architect stage)
   // We pass the list of all lessons and the user's prompt.
   const nodeSummaries = nodes.map(n => ({ id: n.id, title: n.title, module: n.module_ref }));
-  
+
   const selectionSystemPrompt = `You are the Course Architect. 
 The user wants to restructure/modify the course based on a prompt.
 You have a list of existing lessons.
@@ -96,7 +96,7 @@ Identify all lessons that need to change.`;
   // We do this in one batch or per lesson? 
   // Doing it per lesson might be better for context window, but batch is faster.
   // Let's do it per lesson to ensure high quality instructions.
-  
+
   const results = [];
 
   for (const lessonId of affectedIds) {
@@ -158,7 +158,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Reading
     if (changePlans.reading && payload.reading) {
       try {
-        const res = await regenerateReading(node.title, payload.reading, changePlans.reading, courseTitle, node.module_ref);
+        const res = await regenerateReading(node.title, payload.reading, changePlans.reading, courseTitle, node.module_ref, [], userId);
         newPayload.reading = res.data;
         updated = true;
       } catch (e) {
@@ -169,7 +169,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Quiz
     if (changePlans.quiz && payload.quiz) {
       try {
-        const res = await regenerateQuiz(node.title, payload.quiz, changePlans.quiz, courseTitle, node.module_ref);
+        const res = await regenerateQuiz(node.title, payload.quiz, changePlans.quiz, courseTitle, node.module_ref, [], userId);
         newPayload.quiz = res.data;
         updated = true;
       } catch (e) {
@@ -180,7 +180,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Flashcards
     if (changePlans.flashcards && payload.flashcards) {
       try {
-        const res = await regenerateFlashcards(node.title, payload.flashcards, changePlans.flashcards, courseTitle, node.module_ref);
+        const res = await regenerateFlashcards(node.title, payload.flashcards, changePlans.flashcards, courseTitle, node.module_ref, userId);
         newPayload.flashcards = res.data;
         updated = true;
       } catch (e) {
@@ -191,7 +191,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Practice Exam
     if (changePlans.practice_exam && payload.practice_exam) {
       try {
-        const res = await regeneratePracticeExam(node.title, payload.practice_exam, changePlans.practice_exam, courseTitle, node.module_ref);
+        const res = await regeneratePracticeExam(node.title, payload.practice_exam, changePlans.practice_exam, courseTitle, node.module_ref, userId);
         newPayload.practice_exam = res.data;
         updated = true;
       } catch (e) {
@@ -203,7 +203,7 @@ Return JSON ONLY (no markdown, no conversational text):
     if (changePlans.video && Array.isArray(changePlans.video) && changePlans.video.length > 0) {
       try {
         // For video, we just search again with the new query
-        const res = await generateVideoSelection(changePlans.video);
+        const res = await generateVideoSelection(changePlans.video, userId);
         newPayload.video = res.videos;
         newPayload.video_logs = res.logs;
         updated = true;
@@ -217,12 +217,12 @@ Return JSON ONLY (no markdown, no conversational text):
       const { error: updateError } = await supabase
         .schema('api')
         .from('course_nodes')
-        .update({ 
+        .update({
           content_payload: newPayload,
           updated_at: new Date().toISOString()
         })
         .eq('id', lessonId);
-        
+
       if (updateError) {
         console.error(`Failed to update node ${lessonId}`, updateError);
         results.push({ id: lessonId, status: 'failed', error: updateError.message });
