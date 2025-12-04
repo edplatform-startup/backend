@@ -217,8 +217,9 @@ async function runContentWorker(courseId, options = {}) {
 
   // Optimization: Fetch course title once if possible, or we can rely on it being passed or fetched inside.
   // Since we don't have it easily here without another query, let's fetch it once.
-  const { data: courseData } = await supabase.schema('api').from('courses').select('title').eq('id', courseId).single();
+  const { data: courseData } = await supabase.schema('api').from('courses').select('title, metadata').eq('id', courseId).single();
   const courseTitle = courseData?.title || 'Unknown Course';
+  const mode = courseData?.metadata?.mode || 'deep';
 
   // Fetch all nodes and edges to build dependency map for context injection
   const { data: allNodes } = await supabase
@@ -251,7 +252,7 @@ async function runContentWorker(courseId, options = {}) {
   const results = await runWithConcurrency(pendingNodes, limit, async (node) => {
     try {
       const prereqs = prereqMap.get(node.id) || [];
-      await processNode(node, supabase, courseTitle, prereqs);
+      await processNode(node, supabase, courseTitle, prereqs, mode);
       return { nodeId: node.id };
     } catch (error) {
       await markNodeError(node, supabase, error);
@@ -302,7 +303,7 @@ async function runContentWorker(courseId, options = {}) {
   return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
 }
 
-async function processNode(node, supabase, courseTitle, prereqs = []) {
+async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'deep') {
   const payload = isPlainObject(node.content_payload) ? { ...node.content_payload } : {};
   const plans = isPlainObject(payload.generation_plans) ? payload.generation_plans : null;
   if (!plans || Object.keys(plans).length === 0) {
@@ -328,11 +329,11 @@ async function processNode(node, supabase, courseTitle, prereqs = []) {
   };
 
   const readingPromise = plans.reading
-    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs), 'Reading')
+    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs, mode), 'Reading')
     : Promise.resolve(null);
 
   const quizPromise = plans.quiz
-    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs), 'Quiz')
+    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs, mode), 'Quiz')
     : Promise.resolve(null);
 
   const flashcardsPromise = plans.flashcards
@@ -1228,7 +1229,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
   return null; // Failed to repair
 }
 
-export async function generateReading(title, plan, courseName, moduleName, prereqs = []) {
+export async function generateReading(title, plan, courseName, moduleName, prereqs = [], mode = 'deep') {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites. They are now in the lesson [${title}] (this lesson). They have not yet learned topics from later lessons. Generate content accordingly.`
     : `Context: This is an introductory lesson with no prerequisites.`;
@@ -1238,6 +1239,7 @@ export async function generateReading(title, plan, courseName, moduleName, prere
     content: `You are an elite instructional designer producing concise, well-structured, easy-to-read learning content in Markdown.
 You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
 ${contextNote}
+${mode === 'cram' ? 'FOCUS: High-yield, exam-critical topics. Prioritize key definitions and concepts that appear frequently on exams.' : 'FOCUS: Comprehensive coverage. Include detailed examples, proofs (where applicable), and edge cases. Ensure deep understanding.'}
 
 Always respond with JSON shaped exactly as:
 {
@@ -1434,7 +1436,7 @@ function cleanupMarkdown(md) {
   return out.trim();
 }
 
-async function generateQuiz(title, plan, courseName, moduleName, prereqs = []) {
+export async function generateQuiz(title, plan, courseName, moduleName, prereqs = [], mode = 'deep') {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}]. Do not test concepts from future lessons.`
     : `Context: This is an introductory lesson.`;
@@ -1481,8 +1483,8 @@ Rules:
     },
     {
       role: 'user',
-      content: `Generate JSON with a 'quiz' array of **8-12 comprehensive multiple-choice questions** plus 1 extra "Challenge Question" (total 9-13 questions) for "${title}". 
-Follow the plan:
+      content: `Generate JSON with a 'quiz' array of **${mode === 'cram' ? '5-7' : (mode === 'deep' ? '12-15' : '8-12')} comprehensive multiple-choice questions** plus 1 extra "Challenge Question" (total ${mode === 'cram' ? '6-8' : (mode === 'deep' ? '13-16' : '9-13')} questions) for "${title}". 
+      Follow the plan:
 ${plan}
 
 Each question: 4 options, single correct_index, validation_check before finalizing, explanation array for all options. Ensure the last question is the Challenge Question.

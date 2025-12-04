@@ -48,7 +48,7 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * @param {Object} userConfidenceMap - Map of slug_id -> confidence_score (0-1).
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId) {
+export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep') {
 
   // Step 1: The Architect Call
   const systemPrompt = `You are the Lesson Architect. Your goal is to transform a rough course outline into a high-quality Directed Acyclic Graph (DAG) of Atomic Lessons.
@@ -67,16 +67,20 @@ CRITICAL RULES:
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
   - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
    - ALL content should flow in a logical learning order for maximum comprehension
+   - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
+   - ALL content should flow in a logical learning order for maximum comprehension
 6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
 7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
-   - **reading:** Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics. **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
-   - **video:** 2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.
+   - **reading:** ${mode === 'cram' ? 'Concise, high-yield focus. Emphasize exam-critical concepts and key definitions.' : 'Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
+   - **video:** ${mode === 'cram' ? 'Only include if the concept is exceptionally difficult or visual. 1-2 high-yield search queries.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
 8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
+11. **MODE: ${mode.toUpperCase()}**:
+    ${mode === 'cram' ? '- Structure for speed. Group topics aggressively. Fewer lessons. Focus on high-yield material.' : '- Granular lessons. Detailed breakdown. Ensure comprehensive coverage.'}
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -243,7 +247,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
       return `- Lesson: "${l.title}" (Focus: ${gist})`;
     }).join('\n');
 
-  const quizPrompt = `Create a comprehensive Module Quiz for the module "${moduleName}".
+    const quizPrompt = `Create a comprehensive Module Quiz for the module "${moduleName}".
 The quiz should cover the key concepts from the following lessons:
 ${lessonSummaries}
 

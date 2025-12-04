@@ -10,7 +10,7 @@ Minimal Node.js API that reads courses from a Supabase database.
 1. Copy environment file and fill in values:
    - `SUPABASE_URL`: Your Supabase project URL (https://xxxx.supabase.co)
    - `SUPABASE_SERVICE_KEY`: Your Supabase service role key
-   - `OPENROUTER_GROK_4_FAST_KEY`: API key for OpenRouter (Grok 4 Fast Reasoning)
+   - `OPENROUTER_API_KEY`: API key for OpenRouter (Grok 4 Fast Reasoning)
    - `PORT` (optional): Port to run the API (default 3000)
 
 ```bash
@@ -90,7 +90,7 @@ This repository is configured for seamless deployment to Render using the includ
    
    - `SUPABASE_URL` - Your Supabase project URL (e.g., https://xxxxx.supabase.co)
    - `SUPABASE_SERVICE_KEY` - Your Supabase service role key (from Project Settings → API)
-   - `OPENROUTER_GROK_4_FAST_KEY` - Your OpenRouter API key
+   - `OPENROUTER_API_KEY` - Your OpenRouter API key
    
    **Note:** `PORT` is automatically set by Render and doesn't need to be configured.
 

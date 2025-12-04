@@ -202,6 +202,7 @@ Base URL (production): https://api.kognolearn.com
   - `syllabusFiles` (FileMeta[], optional) – `{ name, type?, url? | data? }`, validated server-side
   - `examFormatDetails` (string, optional)
   - `examFiles` (FileMeta[], optional)
+  - `mode` (string, optional) – `"deep"` (default) or `"cram"`. Controls the depth and focus of topic generation.
 - Behavior:
   - Validates user/file metadata and normalizes course selection fields.
   - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned skeleton.
@@ -266,6 +267,7 @@ Base URL (production): https://api.kognolearn.com
   - `syllabusFiles` (array, optional) – Array of file objects for the syllabus.
   - `examFormatDetails` (string, optional) – Raw text of exam details.
   - `examFiles` (array, optional) – Array of file objects for exam details.
+  - `mode` (string, optional) – `"deep"` (default) or `"cram"`. Controls the depth of content generation (reading length, quiz size, video selection).
 - Behavior:
   1. Validates UUID fields and ensures `grok_draft` is an object.
   2. Calls `generateLessonGraph` (Gemini) to convert the draft into normalized nodes/edges.

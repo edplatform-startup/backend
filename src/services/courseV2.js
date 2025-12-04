@@ -416,6 +416,7 @@ export async function generateHierarchicalTopics(input = {}, userId) {
     examFormatDetails = null,
     attachments = [],
     finishByDate = null,
+    mode = 'deep',
   } = input || {};
 
   const usageStart = captureUsageTotals();
@@ -468,6 +469,8 @@ CRITICAL RULES:
 2. Bloom's Taxonomy: Ensure subtopics vary in cognitive depth (Definitions -> Application -> Analysis).
 3. Yield Scoring: Estimate how likely this topic is to appear on the exam (High/Medium/Low) based on the exam format provided.
 4. Metadata powers Deep vs. Cram study modes, so fill every field carefully.
+   - **MODE: ${mode.toUpperCase()}**
+   ${mode === 'cram' ? '- FOCUS: High-yield, exam-critical topics ONLY. Prune "nice-to-know" background info. Prioritize concepts that appear frequently on exams.' : '- FOCUS: Comprehensive coverage. Expand on all topics, including foundational and peripheral concepts. Ensure deep understanding.'}
 5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
 
 OUTPUT JSON STRUCTURE:

@@ -21,6 +21,6 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: OPENROUTER_GROK_4_FAST_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
       # Note: PORT is automatically set by Render

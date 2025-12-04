@@ -32,10 +32,10 @@ router.get('/:id/plan', async (req, res) => {
   try {
     const plan = await generateStudyPlan(id, userId);
     // Log study plan generation
-    await logUsageEvent(userId, 'study_plan_generated', { 
-      courseId: id, 
+    await logUsageEvent(userId, 'study_plan_generated', {
+      courseId: id,
       mode: plan.mode || 'standard',
-      totalModules: plan.modules?.length || 0 
+      totalModules: plan.modules?.length || 0
     });
     return res.json(plan);
   } catch (error) {
@@ -183,11 +183,11 @@ router.patch('/:courseId/nodes/:nodeId/progress', async (req, res) => {
     }
 
     // Log progress update
-    await logUsageEvent(userId, 'lesson_progress_updated', { 
-      courseId, 
-      lessonId: nodeId, 
-      mastery: result.mastery_status, 
-      familiarity: result.familiarity_score 
+    await logUsageEvent(userId, 'lesson_progress_updated', {
+      courseId,
+      lessonId: nodeId,
+      mastery: result.mastery_status,
+      familiarity: result.familiarity_score
     });
 
     return res.json({
@@ -350,11 +350,11 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
     }
 
     // Log lesson opened
-    await logUsageEvent(userId, 'lesson_opened', { 
-      courseId, 
-      lessonId: nodeId, 
-      title: node.title, 
-      reviewType: node.metadata?.review_type || null 
+    await logUsageEvent(userId, 'lesson_opened', {
+      courseId,
+      lessonId: nodeId,
+      title: node.title,
+      reviewType: node.metadata?.review_type || null
     });
 
     return res.json(response);
@@ -577,13 +577,14 @@ router.post('/topics', async (req, res) => {
       examFormatDetails: shared.examFormatDetails,
       attachments: shared.attachments,
       finishByDate: shared.finishByDateIso,
+      mode: req.body.mode || 'deep',
     }, shared.userId);
 
     // Log topics generation
     // Note: userId is extracted from body above
-    await logUsageEvent(userId, 'topics_generated', { 
-      university, 
-      courseTitle 
+    await logUsageEvent(userId, 'topics_generated', {
+      university,
+      courseTitle
     });
 
     return res.status(200).json({
@@ -629,10 +630,10 @@ router.post('/:courseId/review-modules', async (req, res) => {
     const contentResult = await generateCourseContent(courseId);
 
     // Log review module creation
-    await logUsageEvent(userId, 'review_module_created', { 
-      courseId, 
-      examType, 
-      newLessons: lessonGraph.finalNodes.length 
+    await logUsageEvent(userId, 'review_module_created', {
+      courseId,
+      examType,
+      newLessons: lessonGraph.finalNodes.length
     });
 
     return res.json({ success: true, nodeCount: lessonGraph.finalNodes.length, contentStatus: contentResult.status });
@@ -652,12 +653,12 @@ router.post('/:courseId/restructure', async (req, res) => {
 
   try {
     const result = await restructureCourse(courseId, userId, prompt, lessonIds);
-    
+
     // Log course restructure
-    await logUsageEvent(userId, 'course_restructured', { 
-      courseId, 
-      prompt, 
-      affectedLessonsCount: result.affected_lessons?.length || 0 
+    await logUsageEvent(userId, 'course_restructured', {
+      courseId,
+      prompt,
+      affectedLessonsCount: result.affected_lessons?.length || 0
     });
 
     return res.json(result);
@@ -696,9 +697,9 @@ router.get('/:courseId/review-modules', async (req, res) => {
     if (error) throw error;
 
     // Log review modules access
-    await logUsageEvent(userId, 'review_module_accessed', { 
-      courseId, 
-      filterType: type || 'all' 
+    await logUsageEvent(userId, 'review_module_accessed', {
+      courseId,
+      filterType: type || 'all'
     });
 
     return res.json({ success: true, modules: data });
@@ -736,12 +737,12 @@ router.post('/:courseId/exams/generate', async (req, res) => {
 
   try {
     const result = await generatePracticeExam(courseId, userId, lessons, type);
-    
+
     // Log practice exam generation
-    await logUsageEvent(userId, 'practice_exam_generated', { 
-      courseId, 
-      examType: type, 
-      coveredLessons: lessons.length 
+    await logUsageEvent(userId, 'practice_exam_generated', {
+      courseId,
+      examType: type,
+      coveredLessons: lessons.length
     });
 
     return res.json({ success: true, ...result });
@@ -820,9 +821,9 @@ router.get('/:courseId/exams/:type', async (req, res) => {
       .sort((a, b) => a.number - b.number);
 
     // Log practice exam list view
-    await logUsageEvent(userId, 'practice_exam_list_viewed', { 
-      courseId, 
-      examType: type 
+    await logUsageEvent(userId, 'practice_exam_list_viewed', {
+      courseId,
+      examType: type
     });
 
     return res.json({ success: true, exams });
@@ -890,11 +891,11 @@ router.post('/:courseId/grade-exam', upload.single('input_pdf'), async (req, res
     }
 
     // Log exam graded
-    await logUsageEvent(userId, 'practice_exam_graded', { 
-      courseId, 
-      examType: exam_type, 
-      examNumber: number, 
-      score: gradingResult.overall_score 
+    await logUsageEvent(userId, 'practice_exam_graded', {
+      courseId,
+      examType: exam_type,
+      examNumber: number,
+      score: gradingResult.overall_score
     });
 
     res.json({
@@ -968,6 +969,9 @@ router.post('/', async (req, res) => {
     // --- IMMEDIATE PERSISTENCE START ---
     const supabase = getSupabase();
     const normalizedMetadata = isPlainObject(courseMetadata) ? courseMetadata : {};
+    // Default mode to 'deep' if not provided
+    normalizedMetadata.mode = req.body.mode || normalizedMetadata.mode || 'deep';
+
     const title = deriveCourseTitle(grok_draft, normalizedMetadata);
 
     const combinedSyllabusText = parsedInputs.syllabusText ||
@@ -988,6 +992,7 @@ router.post('/', async (req, res) => {
       exam_details: combinedExamDetails,
       status: 'pending',
       seconds_to_complete: typeof finalSecondsToComplete === 'number' ? finalSecondsToComplete : null,
+      metadata: normalizedMetadata, // Ensure metadata (with mode) is saved
     };
 
     // Insert the course row immediately so it exists in "pending" state
@@ -1065,16 +1070,16 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {});
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode);
 
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);
 
     // Log course creation
-    await logUsageEvent(userId, 'course_created', { 
-      courseId, 
-      title, 
-      nodeCount: persistResult.nodeCount 
+    await logUsageEvent(userId, 'course_created', {
+      courseId,
+      title,
+      nodeCount: persistResult.nodeCount
     });
 
     return res.status(201).json({
@@ -1428,7 +1433,7 @@ router.patch('/:courseId/questions', async (req, res) => {
 
   try {
     const supabase = getSupabase();
-    
+
     // Verify course access
     const { data: courseAccess } = await supabase.schema('api').from('courses').select('id').eq('id', courseId).eq('user_id', userId).single();
     if (!courseAccess) return res.status(403).json({ error: 'Access denied' });
@@ -1442,7 +1447,7 @@ router.patch('/:courseId/questions', async (req, res) => {
         errors.push({ id, error: 'Missing id or status' });
         continue;
       }
-      
+
       const { data, error } = await supabase
         .schema('api')
         .from('quiz_questions')
@@ -1451,7 +1456,7 @@ router.patch('/:courseId/questions', async (req, res) => {
         .eq('course_id', courseId)
         .eq('user_id', userId)
         .select();
-        
+
       if (error) {
         errors.push({ id, error: error.message });
       } else if (!data || data.length === 0) {
@@ -1513,7 +1518,7 @@ router.patch('/:courseId/flashcards', async (req, res) => {
 
   try {
     const supabase = getSupabase();
-    
+
     // Verify course access
     const { data: courseAccess } = await supabase.schema('api').from('courses').select('id').eq('id', courseId).eq('user_id', userId).single();
     if (!courseAccess) return res.status(403).json({ error: 'Access denied' });

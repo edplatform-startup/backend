@@ -69,9 +69,7 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
   const captured = [];
   const originalError = console.error;
   const originalApiKey = process.env.OPENROUTER_API_KEY;
-  const originalFastKey = process.env.OPENROUTER_GROK_4_FAST_KEY;
   process.env.OPENROUTER_API_KEY = originalApiKey || 'test-key';
-  process.env.OPENROUTER_GROK_4_FAST_KEY = originalFastKey || process.env.OPENROUTER_API_KEY;
   console.error = (message, ...args) => captured.push([message, ...args].join(' '));
 
   try {
@@ -97,11 +95,6 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
       delete process.env.OPENROUTER_API_KEY;
     } else {
       process.env.OPENROUTER_API_KEY = originalApiKey;
-    }
-    if (originalFastKey === undefined) {
-      delete process.env.OPENROUTER_GROK_4_FAST_KEY;
-    } else {
-      process.env.OPENROUTER_GROK_4_FAST_KEY = originalFastKey;
     }
   }
 });

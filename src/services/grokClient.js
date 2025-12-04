@@ -28,9 +28,9 @@ export function clearOpenRouterChatExecutor() {
 }
 
 function resolveApiKey(explicitKey) {
-  const apiKey = explicitKey || process.env.OPENROUTER_GEMINI_KEY || process.env.OPENROUTER_API_KEY;
+  const apiKey = explicitKey || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error('Missing OpenRouter API key (set OPENROUTER_GEMINI_KEY or OPENROUTER_API_KEY)');
+    throw new Error('Missing OpenRouter API key (set OPENROUTER_API_KEY)');
   }
   return apiKey;
 }
@@ -616,7 +616,7 @@ export async function executeOpenRouterChat(options = {}) {
       console.error('[openrouter] Has choices?', !!payload?.choices);
       console.error('[openrouter] Choices length:', payload?.choices?.length);
       console.error('[openrouter] First choice:', JSON.stringify(payload?.choices?.[0], null, 2));
-      
+
       throw new Error('OpenRouter response missing message');
     }
 
@@ -856,7 +856,7 @@ async function accumulateUsage(model, usage, userId, source) {
   const total = Number(usage.total_tokens || prompt + completion || 0) || (prompt + completion);
   const price = getPriceForModel(model);
   const usd = (prompt * price.in + completion * price.out) / 1000;
-  
+
   // Update in-memory totals
   __usageTotals.prompt += prompt;
   __usageTotals.completion += completion;
