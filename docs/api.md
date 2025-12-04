@@ -769,7 +769,7 @@ Base URL (production): https://api.kognolearn.com
 - Query parameters:
   - `userId` (string, optional) – Filter by user UUID.
   - `courseId` (string, optional) – Filter by course UUID.
-  - `limit` (number, optional) – Number of records to return (default: 100).
+  - `limit` (number, optional) – Number of records to return. If omitted, returns all records.
 - Responses:
   - 200 OK →
     ```json
@@ -965,7 +965,7 @@ Base URL (production): https://api.kognolearn.com
   - `courseId` (string, optional) – Filter events related to a specific course.
   - `startDate` (string, optional ISO date) – Filter events after this date.
   - `endDate` (string, optional ISO date) – Filter events before this date.
-  - `limit` (number, optional) – Max records (default: 50).
+  - `limit` (number, optional) – Max records. If omitted, returns all records.
   - `offset` (number, optional) – Pagination offset (default: 0).
   
 ### GET /feedback

@@ -46,17 +46,20 @@ async function verifyAdminFromToken(supabase, authHeader) {
 }
 
 // GET /analytics/usage
-// Query params: userId (optional), courseId (optional), source (optional), limit (optional, default 100)
+// Query params: userId (optional), courseId (optional), source (optional), limit (optional, no default - returns all)
 router.get('/usage', async (req, res) => {
-  const { userId, courseId, source, limit = 100 } = req.query;
+  const { userId, courseId, source, limit } = req.query;
   const supabase = getSupabase();
 
   let query = supabase
     .schema('api')
     .from('usage_stats')
     .select('*')
-    .order('created_at', { ascending: false })
-    .limit(Number(limit));
+    .order('created_at', { ascending: false });
+
+  if (limit !== undefined) {
+    query = query.limit(Number(limit));
+  }
 
   if (userId) {
     query = query.eq('user_id', userId);
@@ -153,10 +156,10 @@ router.get('/usage/summary', async (req, res) => {
 // - courseId (optional)
 // - startDate (optional ISO)
 // - endDate (optional ISO)
-// - limit (optional, default 50)
+// - limit (optional, no default - returns all)
 // - offset (optional, default 0)
 router.get('/events', async (req, res) => {
-  const { userId, eventTypes, courseId, startDate, endDate, limit = 50, offset = 0 } = req.query;
+  const { userId, eventTypes, courseId, startDate, endDate, limit, offset = 0 } = req.query;
 
   const supabase = getSupabase();
   let query = supabase
@@ -168,9 +171,14 @@ router.get('/events', async (req, res) => {
     query = query.eq('user_id', userId);
   }
 
-  query = query
-    .order('created_at', { ascending: false })
-    .range(Number(offset), Number(offset) + Number(limit) - 1);
+  query = query.order('created_at', { ascending: false });
+
+  if (limit !== undefined) {
+    query = query.range(Number(offset), Number(offset) + Number(limit) - 1);
+  } else if (Number(offset) > 0) {
+    // If offset but no limit, start from offset to end
+    query = query.range(Number(offset), Number(offset) + 999999);
+  }
 
   if (eventTypes) {
     const types = eventTypes.split(',').map(t => t.trim());
