@@ -1441,7 +1441,12 @@ router.get('/:courseId/questions', async (req, res) => {
       .eq('user_id', userId);
 
     if (correctness) {
-      query = query.eq('status', correctness);
+      // Support filtering for review: 'incorrect' and 'correct/flag' are both "needs review"
+      if (correctness === 'needs_review') {
+        query = query.in('status', ['incorrect', 'correct/flag']);
+      } else {
+        query = query.eq('status', correctness);
+      }
     }
 
     if (attempted === 'true') {
@@ -1471,6 +1476,9 @@ router.patch('/:courseId/questions', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'userId is required' });
   if (!updates || !Array.isArray(updates)) return res.status(400).json({ error: 'updates array is required' });
 
+  // Valid status values
+  const validStatuses = ['correct', 'incorrect', 'correct/flag', 'unattempted'];
+
   try {
     const supabase = getSupabase();
 
@@ -1485,6 +1493,12 @@ router.patch('/:courseId/questions', async (req, res) => {
       const { id, status, selectedAnswer } = update;
       if (!id) {
         errors.push({ id, error: 'Missing id' });
+        continue;
+      }
+
+      // Validate status if provided
+      if (status !== undefined && !validStatuses.includes(status)) {
+        errors.push({ id, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
         continue;
       }
 

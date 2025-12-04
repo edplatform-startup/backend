@@ -477,7 +477,7 @@ Base URL (production): https://api.kognolearn.com
 - **Security**: Verifies that the user owns the course before returning lesson data.
 - **Quiz Enrichment**: Quiz questions in `content_payload.quiz` are automatically enriched with:
   - `id` (string, UUID) – The unique identifier from the `quiz_questions` table, used to update the question status via `PATCH /courses/:courseId/questions`
-  - `status` (string) – Current answer status: `"unattempted"`, `"correct"`, or `"incorrect"`
+  - `status` (string) – Current answer status: `"unattempted"`, `"correct"`, `"incorrect"`, or `"correct/flag"`
   - `selectedAnswer` (integer | null) – The index of the user's selected answer (0-based), or `null` if not yet answered
 - **Use Cases**:
   - Display reading material for a lesson
@@ -672,7 +672,12 @@ Base URL (production): https://api.kognolearn.com
   - `courseId` (string, required) – UUID of the course
 - **Query parameters**:
   - `userId` (string, required) – UUID of the user
-  - `correctness` (string, optional) – Filter by status: `"correct"`, `"incorrect"`, or `"unattempted"`
+  - `correctness` (string, optional) – Filter by status:
+    - `"correct"` – Returns only correct questions
+    - `"incorrect"` – Returns only incorrect questions
+    - `"correct/flag"` – Returns only flagged-correct questions
+    - `"unattempted"` – Returns only unattempted questions
+    - `"needs_review"` – Returns both `"incorrect"` and `"correct/flag"` questions (for review)
   - `attempted` (boolean, optional) – If `true`, returns only questions that are NOT `"unattempted"`
   - `lessons` (string, optional) – Comma-separated list of lesson UUIDs to filter by
 - **Responses**:
@@ -703,7 +708,7 @@ Base URL (production): https://api.kognolearn.com
   - `userId` (string, required) – UUID of the user
   - `updates` (object[], required) – List of updates
     - `id` (string, required) – UUID of the quiz question
-    - `status` (string, optional) – New status (`"correct"`, `"incorrect"`, `"unattempted"`)
+    - `status` (string, optional) – New status: `"correct"`, `"incorrect"`, `"correct/flag"`, or `"unattempted"`
     - `selectedAnswer` (integer, optional) – Index of the selected answer (0-based)
   - Note: At least one of `status` or `selectedAnswer` must be provided per update.
 - **Responses**:
