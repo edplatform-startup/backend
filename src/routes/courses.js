@@ -324,7 +324,36 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
           filteredData = { body: payload.reading };
           break;
         case 'quiz':
-          filteredData = { questions: payload.quiz };
+          // Fetch quiz question IDs and statuses from the quiz_questions table
+          let quizQuestions = payload.quiz || [];
+          if (quizQuestions.length > 0) {
+            const { data: dbQuestions, error: quizDbError } = await supabase
+              .schema('api')
+              .from('quiz_questions')
+              .select('id, question, status')
+              .eq('course_id', courseId)
+              .eq('node_id', nodeId)
+              .eq('user_id', userId);
+
+            if (!quizDbError && dbQuestions) {
+              // Create a map of question text to DB record for quick lookup
+              const questionMap = new Map();
+              dbQuestions.forEach(dbQ => {
+                questionMap.set(dbQ.question, { id: dbQ.id, status: dbQ.status });
+              });
+
+              // Merge the ID and status into each quiz question
+              quizQuestions = quizQuestions.map(q => {
+                const dbRecord = questionMap.get(q.question);
+                return {
+                  ...q,
+                  id: dbRecord?.id || null,
+                  status: dbRecord?.status || 'unattempted'
+                };
+              });
+            }
+          }
+          filteredData = { questions: quizQuestions };
           break;
         case 'flashcards':
           filteredData = { cards: payload.flashcards };
