@@ -82,7 +82,7 @@ router.post('/', async (req, res) => {
       tools,
       toolChoice: useWebSearch ? 'auto' : undefined,
       attachments,
-      reasoning,
+      reasoning: reasoning ?? 'medium',
       ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
       userId,
       source: 'chat',

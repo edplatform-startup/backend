@@ -12,6 +12,8 @@ export async function callStageLLM({
   plugins,
   userId,
   source,
+  courseId,
+  reasoning = 'high',
 }) {
   const {
     model,
@@ -48,8 +50,10 @@ export async function callStageLLM({
     attachments,
     requestTimeoutMs,
     plugins,
+    reasoning,
     userId,
     source: source || stage?.toLowerCase() || 'unknown',
+    courseId,
   });
 
   return { model: chosenModel, result: response };

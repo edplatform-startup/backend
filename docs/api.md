@@ -57,7 +57,7 @@ Base URL (production): https://api.kognolearn.com
   - `temperature` (optional) – Floating number controlling randomness; default `0.5`.
   - `maxTokens` (optional) – Maximum tokens to allow in model output; default `600`.
   - `attachments` (optional) – Array of file-like objects; each may include inline base64 `data` or a `url`.
-  - `reasoning` (optional) – Enable or configure model reasoning (boolean or structured object).
+  - `reasoning` (optional) – Enable or configure model reasoning (boolean or structured object). Default: `medium` for `POST /chat` unless explicitly set.
 - Responses:
   - 200 OK → Model response (JSON):
     ```json
@@ -68,6 +68,7 @@ Base URL (production): https://api.kognolearn.com
     ```
   - 400 Bad Request → Missing or invalid `system`, `user`, or `userId` (invalid UUID) or un-serializable `context`.
   - 500 Internal Server Error → Unexpected exception calling the model or server-side error. The body may include `details` and a `debug` block for troubleshooting (not recommended to rely on in production).
+  - Note: The `POST /chat` endpoint sets model reasoning to `medium` by default unless the caller provides an explicit `reasoning` setting in the body.
 - Examples:
   - Request:
     ```json
@@ -274,7 +275,7 @@ Base URL (production): https://api.kognolearn.com
   3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, and sets `status: "pending"` for downstream progress tracking.
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
-     - Calls LLMs (Grok 4 Fast, Gemini 3 Pro) to generate reading Markdown, quiz JSON, and flashcards JSON.
+     - Calls Grok 4 Fast with high reasoning enabled to generate reading Markdown, quiz JSON, inline questions, and flashcards JSON.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
      - Updates each node's `content_payload` to `{ reading, quiz, flashcards, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
     - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
@@ -764,6 +765,7 @@ Base URL (production): https://api.kognolearn.com
 - Purpose: Retrieve raw AI model usage logs (token counts, costs, models used).
 - Query parameters:
   - `userId` (string, optional) – Filter by user UUID.
+  - `courseId` (string, optional) – Filter by course UUID.
   - `limit` (number, optional) – Number of records to return (default: 100).
 - Responses:
   - 200 OK →
@@ -774,6 +776,7 @@ Base URL (production): https://api.kognolearn.com
         {
           "id": "...",
           "user_id": "...",
+          "course_id": "...",
           "model": "x-ai/grok-4-fast",
           "prompt_tokens": 150,
           "completion_tokens": 50,
@@ -786,20 +789,20 @@ Base URL (production): https://api.kognolearn.com
     }
     ```
   - 500 Internal Server Error → Database error.
-- **Source Tags**: Every LLM call is tracked with a unique `source` tag identifying the content type:
+- **Source Tags**: Every LLM call is tracked with a unique `source` tag identifying the content type, along with `user_id` and optional `course_id` for attribution:
   - `chat` – General chat endpoint
   - `planner_topics` – Initial topic generation
   - `planner_topics_repair` – Topic generation JSON repair
   - `planner_syllabus` – Syllabus synthesis
   - `planner_syllabus_repair` – Syllabus synthesis repair
-  - `hierarchical_topics` – Hierarchical topic map generation
-  - `hierarchical_topics_repair` – Hierarchical topic repair
-  - `content_reading` – Reading material generation
-  - `content_quiz` – Quiz question generation
-  - `content_flashcards` – Flashcard generation
-  - `content_practice_exam` – Practice exam generation
-  - `content_inline_question` – Inline question generation
-  - `content_video_selection` – Video selection
+  - `topics` – Hierarchical topic map generation
+  - `topics_repair` – Hierarchical topic repair
+  - `reading_generation` – Reading material generation
+  - `quiz_generation` – Quiz question generation
+  - `flashcards_generation` – Flashcard generation
+  - `practice_exam_generation` – Practice exam generation
+  - `inline_question` – Inline question generation
+  - `video_selection` – Video selection
   - `content_repair` – Content array repair (broken JSON fix)
   - `inline_question_repair` – Inline question markdown repair
   - `mermaid_validation` – Mermaid diagram syntax validation
@@ -809,19 +812,21 @@ Base URL (production): https://api.kognolearn.com
   - `validation_flashcards` – Flashcard validation
   - `validation_practice_exam` – Practice exam validation
   - `validation_inline_question` – Inline question validation
-  - `regenerate_reading` – Reading regeneration
-  - `regenerate_quiz` – Quiz regeneration
-  - `regenerate_flashcards` – Flashcard regeneration
-  - `regenerate_practice_exam` – Practice exam regeneration
+  - `reading_regeneration` – Reading regeneration
+  - `quiz_regeneration` – Quiz regeneration
+  - `flashcards_regeneration` – Flashcard regeneration
+  - `practice_exam_regeneration` – Practice exam regeneration
   - `exam_generator` – Practice exam LaTeX generation
   - `exam_generator_repair` – Exam generator semantic repair
   - `exam_generator_fix` – Exam generator compilation fix
   - `exam_grader` – Exam grading
+- **Course Tracking**: When `courseId` is available (e.g., during content generation), it is logged alongside each API call to enable per-course usage analysis.
 
 ### GET /analytics/usage/summary
 - Purpose: Retrieve aggregated AI usage statistics (total spend, total tokens, etc.).
 - Query parameters:
   - `userId` (string, optional) – Filter by user UUID.
+  - `courseId` (string, optional) – Filter by course UUID.
 - Responses:
   - 200 OK →
     ```json
@@ -836,6 +841,69 @@ Base URL (production): https://api.kognolearn.com
       }
     }
     ```
+  - 500 Internal Server Error → Database error.
+
+### GET /analytics/lookup
+- Purpose: Get user email and course name for given userId and/or courseId. Useful for admin dashboards and user support.
+- Query parameters:
+  - `userId` (string, optional) – UUID of the user to look up.
+  - `courseId` (string, optional) – UUID of the course to look up.
+  - At least one of `userId` or `courseId` is required.
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "user": {
+        "id": "...",
+        "email": "user@example.com",
+        "emailSource": "feedback"
+      },
+      "course": {
+        "id": "...",
+        "title": "Introduction to Calculus",
+        "userId": "...",
+        "createdAt": "2024-01-15T10:30:00.000Z"
+      }
+    }
+    ```
+  - Notes:
+    - `user` is `null` if `userId` not provided
+    - `course` is `null` if `courseId` not provided or course not found
+    - `emailSource` can be `"feedback"` (from feedback submissions), `"auth"` (from Supabase auth), or `null` if email not found
+  - 400 Bad Request → Neither userId nor courseId provided.
+  - 500 Internal Server Error → Database error.
+
+### GET /analytics/usage-by-user
+- Purpose: Get aggregated API usage statistics grouped by user. Includes total costs, token counts, and lists of courses/sources used.
+- Query parameters:
+  - `startDate` (string, optional ISO date) – Filter usage after this date.
+  - `endDate` (string, optional ISO date) – Filter usage before this date.
+  - `includeEmail` (string, optional) – Set to `"true"` to include user emails (fetched from feedback submissions).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "users": [
+        {
+          "userId": "...",
+          "email": "user@example.com",
+          "totalCost": 2.50,
+          "totalPromptTokens": 50000,
+          "totalCompletionTokens": 15000,
+          "totalTokens": 65000,
+          "requestCount": 150,
+          "courses": ["course-uuid-1", "course-uuid-2"],
+          "sources": ["reading_generation", "quiz_generation", "chat"]
+        }
+      ]
+    }
+    ```
+  - Notes:
+    - `email` is only included if `includeEmail=true` and user has submitted feedback with an email
+    - `courses` lists all unique course IDs the user has generated content for
+    - `sources` lists all unique operation types the user has performed
   - 500 Internal Server Error → Database error.
 
 ### GET /analytics/events

@@ -119,6 +119,7 @@ export async function gradeExam(courseId, userId, examType, examNumber, inputPdf
     requestTimeoutMs: 300000, // 5 minutes
     userId,
     source: 'exam_grader',
+    courseId,
   });
   console.log(`[examGrader] Received LLM response, content length: ${result.content?.length || 0}`);
 

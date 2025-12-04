@@ -353,24 +353,24 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
   };
 
   const readingPromise = plans.reading
-    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs, mode, node.user_id), 'Generating Reading')
+    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs, mode, node.user_id, node.course_id), 'Generating Reading')
     : Promise.resolve(null);
 
   const quizPromise = plans.quiz
-    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs, mode, node.user_id), 'Generating Quiz')
+    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs, mode, node.user_id, node.course_id), 'Generating Quiz')
     : Promise.resolve(null);
 
   const flashcardsPromise = plans.flashcards
-    ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName, node.user_id), 'Generating Flashcards')
+    ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Flashcards')
     : Promise.resolve(null);
 
   const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
   const practiceExamPromise = practiceExamPlan
-    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id), 'Generating Practice Exam')
+    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Practice Exam')
     : Promise.resolve(null);
 
   const videoPromise = plans.video
-    ? safeGenerate(generateVideoSelection(plans.video, node.user_id), 'Selecting Video')
+    ? safeGenerate(generateVideoSelection(plans.video, node.user_id, node.course_id), 'Selecting Video')
     : Promise.resolve({ videos: [], logs: [] });
 
   const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes] = await Promise.all([
@@ -562,7 +562,7 @@ function parseJsonObject(raw, label) {
   }
 }
 
-async function repairContentArray(items, validator, repairPromptBuilder, label, userId) {
+async function repairContentArray(items, validator, repairPromptBuilder, label, userId, courseId) {
   let currentItems = [...items];
   const maxRetries = 2;
 
@@ -614,8 +614,10 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
         ],
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 60000,
+        reasoning: 'high',
         userId,
         source: 'content_repair',
+        courseId,
       });
 
       const raw = coerceModelText(content);
@@ -1006,7 +1008,7 @@ function manualRepairInlineQuestion(markdown) {
   return repaired;
 }
 
-export async function generateInlineQuestion(chunkText, contextInfo = {}, userId) {
+export async function generateInlineQuestion(chunkText, contextInfo = {}, userId, courseId) {
 
 
   const systemPrompt = {
@@ -1040,13 +1042,15 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
 
   try {
     const response = await grokExecutor({
-      model: 'google/gemini-3-pro-preview',
+      model: 'x-ai/grok-4-fast',
       temperature: 0.3, // Slightly higher for creativity in question design
       maxTokens: 16384,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
+      reasoning: 'high',
       userId,
-      source: 'content_inline_question',
+      source: 'inline_question',
+      courseId,
     });
 
     const content = response.content;
@@ -1072,7 +1076,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     };
 
     // Wrap in array for the repair tool
-    const { items: repairedItems } = await repairContentArray([parsed], validator, repairPrompt, 'generateInlineQuestion', userId);
+    const { items: repairedItems } = await repairContentArray([parsed], validator, repairPrompt, 'generateInlineQuestion', userId, courseId);
 
     if (!repairedItems.length) return null;
     parsed = repairedItems[0];
@@ -1135,8 +1139,10 @@ Return JSON: { "repaired_markdown": "string" }`;
               { role: 'user', content: repairPrompt([validatedMd], [formatCheck.error]) }
             ],
             responseFormat: { type: 'json_object' },
+            reasoning: 'high',
             userId,
             source: 'inline_question_repair',
+            courseId,
           });
           const raw = coerceModelText(response.content);
           const parsed = parseJsonObject(raw, 'inline_repair');
@@ -1163,7 +1169,7 @@ Return JSON: { "repaired_markdown": "string" }`;
 
     // --- CONTENT VALIDATION STEP ---
     const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
-    const contentValidatedMd = await validateContent('inline_question', validatedMd, validationContext, userId);
+    const contentValidatedMd = await validateContent('inline_question', validatedMd, validationContext, userId, courseId);
 
     // Verify content validation didn't break format
     const finalCheck = validateInlineQuestionFormat(contentValidatedMd);
@@ -1183,7 +1189,7 @@ Return JSON: { "repaired_markdown": "string" }`;
 /**
  * Validates Mermaid code using an LLM.
  */
-async function validateMermaidBlock(code, userId) {
+async function validateMermaidBlock(code, userId, courseId) {
   try {
     const response = await grokExecutor({
       model: 'x-ai/grok-4-fast',
@@ -1200,8 +1206,10 @@ Do not fix the code, just validate it.`
         { role: 'user', content: code }
       ],
       responseFormat: { type: 'json_object' },
+      reasoning: 'high',
       userId,
       source: 'mermaid_validation',
+      courseId,
     });
 
     const raw = coerceModelText(response.content);
@@ -1216,7 +1224,7 @@ Do not fix the code, just validate it.`
 /**
  * Repairs Mermaid code using an LLM loop.
  */
-async function repairMermaidBlock(code, error, userId) {
+async function repairMermaidBlock(code, error, userId, courseId) {
   let currentCode = code;
   let currentError = error;
 
@@ -1239,8 +1247,10 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
           }
         ],
         responseFormat: { type: 'json_object' },
+        reasoning: 'high',
         userId,
         source: 'mermaid_repair',
+        courseId,
       });
 
       const raw = coerceModelText(response.content);
@@ -1249,7 +1259,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
       if (parsed && parsed.repaired_code) {
         currentCode = parsed.repaired_code;
         // Re-validate
-        const validation = await validateMermaidBlock(currentCode);
+        const validation = await validateMermaidBlock(currentCode, userId, courseId);
         if (validation.valid) {
           return currentCode;
         }
@@ -1263,7 +1273,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
   return null; // Failed to repair
 }
 
-export async function generateReading(title, plan, courseName, moduleName, prereqs = [], mode = 'deep', userId) {
+export async function generateReading(title, plan, courseName, moduleName, prereqs = [], mode = 'deep', userId, courseId) {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites. They are now in the lesson [${title}] (this lesson). They have not yet learned topics from later lessons. Generate content accordingly.`
     : `Context: This is an introductory lesson with no prerequisites.`;
@@ -1328,8 +1338,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
+      reasoning: 'high',
       userId,
-      source: 'content_reading',
+      source: 'reading_generation',
+      courseId,
     });
     const raw = coerceModelText(content);
     let parsed;
@@ -1380,10 +1392,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     // For simplicity, we'll iterate and replace.
 
     for (const item of replacements) {
-      const validation = await validateMermaidBlock(item.code, userId);
+      const validation = await validateMermaidBlock(item.code, userId, courseId);
       if (!validation.valid) {
         console.log(`Found invalid Mermaid block. Error: ${validation.error}. Attempting repair...`);
-        const repairedCode = await repairMermaidBlock(item.code, validation.error, userId);
+        const repairedCode = await repairMermaidBlock(item.code, validation.error, userId, courseId);
         if (repairedCode) {
           console.log('Mermaid block repaired successfully.');
           // Replace the *exact* full match with the repaired version
@@ -1472,7 +1484,7 @@ function cleanupMarkdown(md) {
   return out.trim();
 }
 
-export async function generateQuiz(title, plan, courseName, moduleName, prereqs = [], mode = 'deep', userId) {
+export async function generateQuiz(title, plan, courseName, moduleName, prereqs = [], mode = 'deep', userId, courseId) {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}]. Do not test concepts from future lessons.`
     : `Context: This is an introductory lesson.`;
@@ -1534,8 +1546,10 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'content_quiz',
+    source: 'quiz_generation',
+    courseId,
   });
   const text = coerceModelText(content);
 
@@ -1563,7 +1577,7 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
       return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has a 'question', 'options' (array of 4 strings), 'correct_index' (0-3), and 'explanation' (array of 4 strings).`;
     };
 
-    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz', userId);
+    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz', userId, courseId);
 
     if (!repairedQuestions.length) {
       throw new Error('Quiz generator returned no valid questions after repair');
@@ -1571,7 +1585,7 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId);
+    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId, courseId);
 
     return { data: validatedQuestions, stats };
   } catch (err) {
@@ -1608,7 +1622,7 @@ function normalizeQuizItem(item, index) {
   };
 }
 
-async function generatePracticeExam(title, plan, courseName, moduleName, userId) {
+async function generatePracticeExam(title, plan, courseName, moduleName, userId, courseId) {
   const messages = [
     {
       role: 'system',
@@ -1651,8 +1665,10 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'content_practice_exam',
+    source: 'practice_exam_generation',
+    courseId,
   });
 
   const text = coerceModelText(content);
@@ -1678,7 +1694,7 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
       return `The following practice exam items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has 'question', 'answer_key', 'rubric', and 'estimated_minutes'.`;
     };
 
-    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'generatePracticeExam', userId);
+    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'generatePracticeExam', userId, courseId);
 
     if (!repairedItems.length) {
       throw new Error('Practice exam generator returned no valid problems after repair');
@@ -1686,7 +1702,7 @@ Each problem should require 15-25 minutes, may include labeled subparts (a, b, .
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId);
+    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId, courseId);
 
     return { data: validatedItems, stats };
   } catch (err) {
@@ -1715,7 +1731,7 @@ function normalizePracticeExamItem(item, index) {
   };
 }
 
-export async function generateFlashcards(title, plan, courseName, moduleName, userId) {
+export async function generateFlashcards(title, plan, courseName, moduleName, userId, courseId) {
   const messages = [
     {
       role: 'system',
@@ -1752,8 +1768,10 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'content_flashcards',
+    source: 'flashcards_generation',
+    courseId,
   });
   const text = coerceModelText(content);
 
@@ -1778,7 +1796,7 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
       return `The following flashcards are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has 'front' and 'back'.`;
     };
 
-    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'generateFlashcards', userId);
+    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'generateFlashcards', userId, courseId);
 
     if (!repairedCards.length) {
       throw new Error('Flashcard generator returned no valid cards after repair');
@@ -1786,7 +1804,7 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId);
+    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId, courseId);
 
     return { data: validatedCards, stats };
   } catch (err) {
@@ -1803,7 +1821,7 @@ function normalizeFlashcard(card, index) {
   return { front, back };
 }
 
-export async function regenerateReading(title, currentContent, changeInstruction, courseName, moduleName, prereqs = [], userId) {
+export async function regenerateReading(title, currentContent, changeInstruction, courseName, moduleName, prereqs = [], userId, courseId) {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}] and other prerequisites.`
     : `Context: This is an introductory lesson with no prerequisites.`;
@@ -1853,8 +1871,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
+      reasoning: 'high',
       userId,
-      source: 'regenerate_reading',
+      source: 'reading_regeneration',
+      courseId,
     });
     const raw = coerceModelText(content);
     let parsed;
@@ -1910,7 +1930,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
   };
 }
 
-export async function regenerateQuiz(title, currentQuiz, changeInstruction, courseName, moduleName, prereqs = [], userId) {
+export async function regenerateQuiz(title, currentQuiz, changeInstruction, courseName, moduleName, prereqs = [], userId, courseId) {
   const contextNote = prereqs.length
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}].`
     : `Context: This is an introductory lesson.`;
@@ -1965,8 +1985,10 @@ Rules:
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'regenerate_quiz',
+    source: 'quiz_regeneration',
+    courseId,
   });
 
   const text = coerceModelText(content);
@@ -1992,13 +2014,13 @@ Rules:
       return `Regenerate these invalid quiz items:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}`;
     };
 
-    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'regenerateQuiz', userId);
+    const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'regenerateQuiz', userId, courseId);
 
     if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId);
+    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId, courseId);
 
     return { data: validatedQuestions, stats };
   } catch (err) {
@@ -2006,7 +2028,7 @@ Rules:
   }
 }
 
-export async function regenerateFlashcards(title, currentCards, changeInstruction, courseName, moduleName, userId) {
+export async function regenerateFlashcards(title, currentCards, changeInstruction, courseName, moduleName, userId, courseId) {
   const messages = [
     {
       role: 'system',
@@ -2040,8 +2062,10 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'regenerate_flashcards',
+    source: 'flashcards_regeneration',
+    courseId,
   });
 
   const text = coerceModelText(content);
@@ -2062,13 +2086,13 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     };
 
     const repairPrompt = (brokenItems, errors) => `Regenerate invalid flashcards:\n${JSON.stringify(brokenItems)}`;
-    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'regenerateFlashcards', userId);
+    const { items: repairedCards, stats } = await repairContentArray(flashcards, validator, repairPrompt, 'regenerateFlashcards', userId, courseId);
 
     if (!repairedCards.length) throw new Error('Flashcard regenerator returned no valid cards');
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId);
+    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId, courseId);
 
     return { data: validatedCards, stats };
   } catch (err) {
@@ -2076,7 +2100,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
   }
 }
 
-export async function regeneratePracticeExam(title, currentExam, changeInstruction, courseName, moduleName, userId) {
+export async function regeneratePracticeExam(title, currentExam, changeInstruction, courseName, moduleName, userId, courseId) {
   const messages = [
     {
       role: 'system',
@@ -2115,8 +2139,10 @@ Always respond with JSON:
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
+    reasoning: 'high',
     userId,
-    source: 'regenerate_practice_exam',
+    source: 'practice_exam_regeneration',
+    courseId,
   });
 
   const text = coerceModelText(content);
@@ -2137,13 +2163,13 @@ Always respond with JSON:
     };
 
     const repairPrompt = (brokenItems, errors) => `Regenerate invalid practice exam items:\n${JSON.stringify(brokenItems)}`;
-    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'regeneratePracticeExam', userId);
+    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'regeneratePracticeExam', userId, courseId);
 
     if (!repairedItems.length) throw new Error('Practice exam regenerator returned no valid problems');
 
     // --- VALIDATION STEP ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId);
+    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId, courseId);
 
     return { data: validatedItems, stats };
   } catch (err) {
@@ -2151,7 +2177,7 @@ Always respond with JSON:
   }
 }
 
-export async function generateVideoSelection(queries, userId) {
+export async function generateVideoSelection(queries, userId, courseId) {
   const logs = [];
   const videos = [];
 
@@ -2246,8 +2272,10 @@ Select the best video index.`
         messages,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
+        reasoning: 'high',
         userId,
-        source: 'content_video_selection',
+        source: 'video_selection',
+        courseId,
       });
 
       const raw = coerceModelText(response.content);
@@ -2363,7 +2391,7 @@ function mergeValidatedArray(original, validated, contentType) {
  * @param {string} context - Additional context (e.g., lesson title, plan)
  * @returns {Promise<any>} - The validated (and possibly fixed) content
  */
-async function validateContent(contentType, content, context, userId) {
+async function validateContent(contentType, content, context, userId, courseId) {
   const modelConfig = pickModel(STAGES.VALIDATOR);
 
   let contentStr = '';
@@ -2440,8 +2468,10 @@ ${context}`
       maxTokens: 8192, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
+      reasoning: 'high',
       userId,
       source: `validation_${contentType}`,
+      courseId,
     };
 
     // For JSON content, hint that we want JSON response format

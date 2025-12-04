@@ -52,6 +52,30 @@ test('POST /chat returns model and content, passes options through', async () =>
   // tools included when useWebSearch=true
   assert.ok(Array.isArray(capturedOptions.tools));
   assert.ok(capturedOptions.tools.length >= 1);
+  // Default reasoning should be 'medium' when not specified
+  assert.equal(capturedOptions.reasoning, 'medium');
+
+  clearOpenRouterChatExecutor();
+});
+
+test('POST /chat allows overriding reasoning', async () => {
+  let capturedOptions = null;
+  setOpenRouterChatExecutor(async (options) => {
+    capturedOptions = options;
+    return { content: 'Override' };
+  });
+
+  const body = {
+    system: 'You are helpful.',
+    user: 'Say hi',
+    userId: '22222222-2222-2222-2222-222222222222',
+    reasoning: 'high',
+  };
+
+  const res = await request(app).post('/chat').send(body);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.content, 'Override');
+  assert.equal(capturedOptions.reasoning, 'high');
 
   clearOpenRouterChatExecutor();
 });

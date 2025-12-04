@@ -495,6 +495,7 @@ export async function executeOpenRouterChat(options = {}) {
     plugins,
     userId,
     source,
+    courseId,
   } = options;
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -605,7 +606,7 @@ export async function executeOpenRouterChat(options = {}) {
       if (timer) clearTimeout(timer);
     }
     try {
-      accumulateUsage(effectiveModel, payload?.usage || payload?.meta?.usage || {}, userId, source || options?.stage);
+      accumulateUsage(effectiveModel, payload?.usage || payload?.meta?.usage || {}, userId, source || options?.stage, courseId);
     } catch { }
     const message = payload?.choices?.[0]?.message;
 
@@ -849,7 +850,7 @@ export function getCostTotals() {
 
 import { getSupabase } from '../supabaseClient.js';
 
-async function accumulateUsage(model, usage, userId, source) {
+async function accumulateUsage(model, usage, userId, source, courseId) {
   if (!usage) return;
   const prompt = Number(usage.prompt_tokens || usage.input_tokens || 0) || 0;
   const completion = Number(usage.completion_tokens || usage.output_tokens || 0) || 0;
@@ -888,6 +889,7 @@ async function accumulateUsage(model, usage, userId, source) {
           total_tokens: total,
           cost_usd: Number(usd.toFixed(6)),
           source: source || 'unknown',
+          course_id: courseId || null,
         }])
         .then(({ error }) => {
           if (error) console.error('[usage_stats] Insert failed:', error);
@@ -944,6 +946,7 @@ export async function generateStudyTopics(input, userId) {
     attachments,
     attachmentsInlineOptions: { maxPerFileChars: 4000, maxTotalChars: 12000 },
     messages: primaryMessages,
+    reasoning: 'high',
     userId,
     source: 'planner_topics',
   };
@@ -1007,6 +1010,7 @@ export async function generateStudyTopics(input, userId) {
       temperature: 0.2,
       maxTokens: 400,
       messages: repairMessages,
+      reasoning: 'high',
       userId,
       source: 'planner_topics_repair',
     });
