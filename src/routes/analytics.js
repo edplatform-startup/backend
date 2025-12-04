@@ -365,11 +365,26 @@ router.get('/lookup', async (req, res) => {
 /**
  * GET /analytics/usage-by-course
  * Get aggregated API usage stats grouped by course
- * Query params: admin (boolean), startDate, endDate, includeCourseName (boolean)
+ * Query params: admin (boolean), startDate, endDate, limit, includeCourseName (boolean)
+ * Must provide either (startDate AND endDate) OR limit, but not both
  * When admin=true, verifies Authorization header token and returns all courses data
  */
 router.get('/usage-by-course', async (req, res) => {
-  const { admin, startDate, endDate, includeCourseName } = req.query;
+  const { admin, startDate, endDate, limit, includeCourseName } = req.query;
+
+  // Validate: must have (startDate AND endDate) XOR limit
+  const hasDateRange = startDate && endDate;
+  const hasLimit = limit !== undefined;
+  
+  if (!hasDateRange && !hasLimit) {
+    return res.status(400).json({ error: 'Must provide either (startDate and endDate) or limit' });
+  }
+  if (hasDateRange && hasLimit) {
+    return res.status(400).json({ error: 'Cannot provide both date range and limit. Use one or the other.' });
+  }
+  if ((startDate && !endDate) || (!startDate && endDate)) {
+    return res.status(400).json({ error: 'Both startDate and endDate are required when using date range' });
+  }
 
   const supabase = getSupabase();
 
@@ -387,14 +402,13 @@ router.get('/usage-by-course', async (req, res) => {
     .schema('api')
     .from('usage_stats')
     .select('course_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, created_at')
-    .not('course_id', 'is', null);
+    .not('course_id', 'is', null)
+    .order('created_at', { ascending: false });
 
-  if (startDate) {
-    query = query.gte('created_at', startDate);
-  }
-
-  if (endDate) {
-    query = query.lte('created_at', endDate);
+  if (hasDateRange) {
+    query = query.gte('created_at', startDate).lte('created_at', endDate);
+  } else if (hasLimit) {
+    query = query.limit(Number(limit));
   }
 
   const { data, error } = await query;
@@ -466,11 +480,26 @@ router.get('/usage-by-course', async (req, res) => {
 /**
  * GET /analytics/usage-by-user
  * Get aggregated API usage stats grouped by user with optional course info
- * Query params: admin (boolean), startDate, endDate, includeEmail (boolean)
+ * Query params: admin (boolean), startDate, endDate, limit, includeEmail (boolean)
+ * Must provide either (startDate AND endDate) OR limit, but not both
  * When admin=true, verifies Authorization header token and returns all users data with emails
  */
 router.get('/usage-by-user', async (req, res) => {
-  const { admin, startDate, endDate, includeEmail } = req.query;
+  const { admin, startDate, endDate, limit, includeEmail } = req.query;
+
+  // Validate: must have (startDate AND endDate) XOR limit
+  const hasDateRange = startDate && endDate;
+  const hasLimit = limit !== undefined;
+  
+  if (!hasDateRange && !hasLimit) {
+    return res.status(400).json({ error: 'Must provide either (startDate and endDate) or limit' });
+  }
+  if (hasDateRange && hasLimit) {
+    return res.status(400).json({ error: 'Cannot provide both date range and limit. Use one or the other.' });
+  }
+  if ((startDate && !endDate) || (!startDate && endDate)) {
+    return res.status(400).json({ error: 'Both startDate and endDate are required when using date range' });
+  }
 
   const supabase = getSupabase();
 
@@ -487,14 +516,13 @@ router.get('/usage-by-user', async (req, res) => {
   let query = supabase
     .schema('api')
     .from('usage_stats')
-    .select('user_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, course_id, created_at');
+    .select('user_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, course_id, created_at')
+    .order('created_at', { ascending: false });
 
-  if (startDate) {
-    query = query.gte('created_at', startDate);
-  }
-
-  if (endDate) {
-    query = query.lte('created_at', endDate);
+  if (hasDateRange) {
+    query = query.gte('created_at', startDate).lte('created_at', endDate);
+  } else if (hasLimit) {
+    query = query.limit(Number(limit));
   }
 
   const { data, error } = await query;

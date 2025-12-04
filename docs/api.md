@@ -881,9 +881,11 @@ Base URL (production): https://api.kognolearn.com
 - Purpose: Get aggregated API usage statistics grouped by course. Includes total costs, token counts, and lists of sources/stages used.
 - Query parameters:
   - `admin` (string, optional) – Set to `"true"` to request admin-level access to all courses data.
-  - `startDate` (string, optional ISO date) – Filter usage after this date.
-  - `endDate` (string, optional ISO date) – Filter usage before this date.
+  - `startDate` (string, required if no limit) – Filter usage after this date (ISO format). Must be used with `endDate`.
+  - `endDate` (string, required if no limit) – Filter usage before this date (ISO format). Must be used with `startDate`.
+  - `limit` (number, required if no date range) – Return the most recent N entries. Cannot be used with date range.
   - `includeCourseName` (string, optional) – Set to `"true"` to include course names (requires `admin=true`).
+- **Validation**: Must provide either (`startDate` AND `endDate`) OR `limit`, but not both.
 - Headers:
   - `Authorization` (required when `admin=true`) – Bearer token for the requesting user.
 - Authentication:
@@ -918,9 +920,11 @@ Base URL (production): https://api.kognolearn.com
 - Purpose: Get aggregated API usage statistics grouped by user. Includes total costs, token counts, and lists of courses/sources used.
 - Query parameters:
   - `admin` (string, optional) – Set to `"true"` to request admin-level access to all users data.
-  - `startDate` (string, optional ISO date) – Filter usage after this date.
-  - `endDate` (string, optional ISO date) – Filter usage before this date.
+  - `startDate` (string, required if no limit) – Filter usage after this date (ISO format). Must be used with `endDate`.
+  - `endDate` (string, required if no limit) – Filter usage before this date (ISO format). Must be used with `startDate`.
+  - `limit` (number, required if no date range) – Return the most recent N entries. Cannot be used with date range.
   - `includeEmail` (string, optional) – Set to `"true"` to include user emails (requires `admin=true`).
+- **Validation**: Must provide either (`startDate` AND `endDate`) OR `limit`, but not both.
 - Headers:
   - `Authorization` (required when `admin=true`) – Bearer token for the requesting user.
 - Authentication:
