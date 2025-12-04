@@ -563,6 +563,11 @@ CRITICAL RULES:
 5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
 6. GROUNDING: When authoritative excerpts are provided, use them to ground specific claims about topic coverage and exam relevance. Reference specific details from the excerpts in your exam_relevance_reasoning fields.
 
+ENUM VALUES (use ONLY these exact strings):
+- **focus**: "Conceptual" | "Computational" | "Memorization"
+- **bloom_level**: "Remember" | "Understand" | "Apply" | "Analyze" | "Evaluate"
+- **yield**: "High" | "Medium" | "Low"
+
 OUTPUT JSON STRUCTURE:
 {
   "overviewTopics": [

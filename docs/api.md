@@ -211,7 +211,12 @@ Base URL (production): https://api.kognolearn.com
   - Validates user/file metadata and normalizes course selection fields.
   - Runs the CourseV2 `synthesizeSyllabus` stage (same pipeline as full course generation) to obtain an exam-aligned skeleton.
   - Summarizes skeleton units and prompts the `TOPICS` LLM stage to expand them into 8–16 overview topics, each with 4–8 competency-based “Atomic Concepts.”
-  - Each concept includes `focus` (Conceptual/Computational/Memorization), `bloom_level`, `estimated_study_time_minutes`, `importance_score` (1–10), `exam_relevance_reasoning`, and `yield` (High/Medium/Low) to power Deep vs. Cram study modes.
+  - Each concept includes:
+    - `focus`: `"Conceptual"` | `"Computational"` | `"Memorization"`
+    - `bloom_level`: `"Remember"` | `"Understand"` | `"Apply"` | `"Analyze"` | `"Evaluate"`
+    - `estimated_study_time_minutes`, `importance_score` (1–10), `exam_relevance_reasoning`
+    - `yield`: `"High"` | `"Medium"` | `"Low"`
+  - These fields power Deep vs. Cram study modes.
   - Normalizes IDs, fills in missing metadata, enforces `overviewId` relationships, and logs usage via Grok cost tracking as `[topicsV2]`.
 - Responses:
   - 200 OK →
