@@ -73,6 +73,8 @@ Identify all lessons that need to change.`;
     ],
     responseFormat: { type: 'json_object' },
     userId,
+    courseId,
+    source: 'course_restructure_selection',
   });
 
   let affectedIds = [];
@@ -136,6 +138,8 @@ Return JSON ONLY (no markdown, no conversational text):
       messages: [{ role: 'user', content: `Generate change instructions for lesson "${node.title}".` }],
       responseFormat: { type: 'json_object' },
       userId,
+      courseId,
+      source: 'course_restructure_instructions',
     });
 
     let changePlans = {};
@@ -158,7 +162,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Reading
     if (changePlans.reading && payload.reading) {
       try {
-        const res = await regenerateReading(node.title, payload.reading, changePlans.reading, courseTitle, node.module_ref, [], userId);
+        const res = await regenerateReading(node.title, payload.reading, changePlans.reading, courseTitle, node.module_ref, [], userId, courseId);
         newPayload.reading = res.data;
         updated = true;
       } catch (e) {
@@ -169,7 +173,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Quiz
     if (changePlans.quiz && payload.quiz) {
       try {
-        const res = await regenerateQuiz(node.title, payload.quiz, changePlans.quiz, courseTitle, node.module_ref, [], userId);
+        const res = await regenerateQuiz(node.title, payload.quiz, changePlans.quiz, courseTitle, node.module_ref, [], userId, courseId);
         newPayload.quiz = res.data;
         updated = true;
       } catch (e) {
@@ -180,7 +184,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Flashcards
     if (changePlans.flashcards && payload.flashcards) {
       try {
-        const res = await regenerateFlashcards(node.title, payload.flashcards, changePlans.flashcards, courseTitle, node.module_ref, userId);
+        const res = await regenerateFlashcards(node.title, payload.flashcards, changePlans.flashcards, courseTitle, node.module_ref, userId, courseId);
         newPayload.flashcards = res.data;
         updated = true;
       } catch (e) {
@@ -191,7 +195,7 @@ Return JSON ONLY (no markdown, no conversational text):
     // Practice Exam
     if (changePlans.practice_exam && payload.practice_exam) {
       try {
-        const res = await regeneratePracticeExam(node.title, payload.practice_exam, changePlans.practice_exam, courseTitle, node.module_ref, userId);
+        const res = await regeneratePracticeExam(node.title, payload.practice_exam, changePlans.practice_exam, courseTitle, node.module_ref, userId, courseId);
         newPayload.practice_exam = res.data;
         updated = true;
       } catch (e) {
@@ -203,7 +207,7 @@ Return JSON ONLY (no markdown, no conversational text):
     if (changePlans.video && Array.isArray(changePlans.video) && changePlans.video.length > 0) {
       try {
         // For video, we just search again with the new query
-        const res = await generateVideoSelection(changePlans.video, userId);
+        const res = await generateVideoSelection(changePlans.video, userId, courseId);
         newPayload.video = res.videos;
         newPayload.video_logs = res.logs;
         updated = true;

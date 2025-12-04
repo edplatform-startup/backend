@@ -299,6 +299,7 @@ export async function synthesizeSyllabus({
   topics,
   attachments = [],
   userId,
+  courseId,
 }) {
   if (customSyllabusSynthesizer) {
     return customSyllabusSynthesizer({
@@ -309,6 +310,7 @@ export async function synthesizeSyllabus({
       topics,
       attachments,
       userId,
+      courseId,
     });
   }
 
@@ -331,6 +333,7 @@ export async function synthesizeSyllabus({
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
       userId,
+      courseId,
       source: 'planner_syllabus',
     });
 
@@ -389,6 +392,7 @@ Return corrected JSON only.`,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for repair call
       userId,
+      courseId,
       source: 'planner_syllabus_repair',
     });
 
@@ -410,7 +414,7 @@ Return corrected JSON only.`,
 /**
  * Hierarchical topic generation (already working well; do not touch its use).
  */
-export async function generateHierarchicalTopics(input = {}, userId) {
+export async function generateHierarchicalTopics(input = {}, userId, courseId = null) {
   const {
     university = null,
     courseTitle = 'Custom course',
@@ -431,6 +435,7 @@ export async function generateHierarchicalTopics(input = {}, userId) {
       topics: [],
       attachments: attachments || [],
       userId,
+      courseId,
     });
 
     const skeletonUnits = Array.isArray(syllabus?.skeleton) ? syllabus.skeleton : [];
@@ -534,6 +539,7 @@ Using this information, produce competency-based overviewTopics with fully popul
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000, // 2 minutes for TOPICS
       userId,
+      courseId,
       source: 'hierarchical_topics',
     });
 
@@ -573,6 +579,7 @@ Please return **only** a correct JSON object for the topic map, with no extra te
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 120000,
         userId,
+        courseId,
         source: 'hierarchical_topics_repair',
       });
 

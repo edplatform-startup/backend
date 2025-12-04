@@ -901,7 +901,7 @@ async function accumulateUsage(model, usage, userId, source, courseId) {
   }
 }
 
-export async function generateStudyTopics(input, userId) {
+export async function generateStudyTopics(input, userId, courseId = null) {
   if (customStudyTopicsGenerator) {
     return await customStudyTopicsGenerator(input);
   }
@@ -949,6 +949,7 @@ export async function generateStudyTopics(input, userId) {
     reasoning: 'high',
     userId,
     source: 'planner_topics',
+    courseId,
   };
 
   const first = await executeOpenRouterChat(chatArgs);
@@ -1013,6 +1014,7 @@ export async function generateStudyTopics(input, userId) {
       reasoning: 'high',
       userId,
       source: 'planner_topics_repair',
+      courseId,
     });
     const repairText = Array.isArray(repair.content)
       ? repair.content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim()

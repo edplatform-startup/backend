@@ -46,9 +46,12 @@ import { tryParseJson } from '../utils/jsonUtils.js';
  * Generates a DAG of atomic lessons from a rough course draft.
  * @param {Object} grokDraftJson - The rough draft JSON from Grok.
  * @param {Object} userConfidenceMap - Map of slug_id -> confidence_score (0-1).
+ * @param {string} userId - The user ID for tracking.
+ * @param {string} mode - 'deep' or 'cram' mode.
+ * @param {string} courseId - The course ID for usage tracking.
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep') {
+export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep', courseId = null) {
 
   // Step 1: The Architect Call
   const systemPrompt = `You are the Lesson Architect. Your goal is to transform a rough course outline into a high-quality Directed Acyclic Graph (DAG) of Atomic Lessons.
@@ -120,6 +123,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
     allowWeb: true,
     maxToolIterations: 16,
     userId,
+    courseId,
+    source: 'lesson_architect',
   });
 
   let lessonGraph;
@@ -190,6 +195,8 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 1800000, // 30 minutes for repair call as well
         userId,
+        courseId,
+        source: 'lesson_architect_repair',
       });
 
       const corrections = tryParseJson(repairResult.content, 'LessonArchitect Repair');
@@ -358,9 +365,11 @@ Requirements:
  * Generates a Review Module based on a list of graded topics.
  * @param {Array<{topic: string, grade: number, explanation: string}>} topics - List of topics with grades and feedback.
  * @param {string} type - 'midterm' or 'final'.
+ * @param {string} userId - The user ID for tracking.
+ * @param {string} courseId - The course ID for usage tracking.
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateReviewModule(topics, type, userId) {
+export async function generateReviewModule(topics, type, userId, courseId = null) {
   const systemPrompt = `You are the Lesson Architect. Your goal is to create a Review Module for a ${type} exam based on the provided graded topics.
 
 INPUT: A list of topics with student grades (1-5 scale) and explanations of their performance.
@@ -409,6 +418,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 600000,
     userId,
+    courseId,
+    source: 'review_module_architect',
   });
 
   let lessonGraph;

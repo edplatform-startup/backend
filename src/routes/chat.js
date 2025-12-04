@@ -29,6 +29,7 @@ router.post('/', async (req, res) => {
     attachments = [],
     reasoning,
     userId,
+    courseId,
   } = req.body || {};
 
   if (!system || typeof system !== 'string' || !system.trim()) {
@@ -58,7 +59,8 @@ router.post('/', async (req, res) => {
   // Log chat usage
   await logUsageEvent(userId, 'chat_used', { 
     promptChars: user?.length || 0, 
-    useWebSearch 
+    useWebSearch,
+    courseId: courseId || null
   });
 
   try {
@@ -86,6 +88,7 @@ router.post('/', async (req, res) => {
       ...(shouldRequestJson ? { responseFormat: { type: 'json_object' } } : {}),
       userId,
       source: 'chat',
+      courseId: courseId || null,
     });
 
     // Normalize content to string for convenience

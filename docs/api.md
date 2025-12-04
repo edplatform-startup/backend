@@ -36,6 +36,7 @@ Base URL (production): https://api.kognolearn.com
     "system": "string (required)",
     "user": "string (required)",
     "userId": "string (required, UUID)",
+    "courseId": "string (optional, UUID)",
     "context": "string | object | array (optional)",
     "useWebSearch": "boolean (optional, default: false)",
     "responseFormat": "text | json (optional, default: \"text\")",
@@ -51,6 +52,7 @@ Base URL (production): https://api.kognolearn.com
   - `system` (string, required) – System prompt / instructions for the model.
   - `user` (string, required) – The user's message or question.
   - `userId` (string, required) – Caller identity; must be a valid UUID (validated server-side).
+  - `courseId` (string, optional) – UUID of the course for usage tracking; links API usage to a specific course.
   - `context` (optional) – Additional context to include with the system prompt. May be a string or any JSON-serializable object/array.
   - `useWebSearch` (optional) – When true, the server enables a web search tool for the model.
   - `responseFormat` (optional) – `"text"` (default) returns a plain text string; `"json"` requests a JSON object response when supported. When `useWebSearch` is true the backend skips strict JSON enforcement due to OpenRouter limitations, so the model is prompted—but not forced—to return JSON.
@@ -76,6 +78,7 @@ Base URL (production): https://api.kognolearn.com
       "system": "You are a helpful tutor.",
       "user": "Explain the difference between supervised and unsupervised learning.",
       "userId": "550e8400-e29b-41d4-a716-446655440000",
+      "courseId": "660e8400-e29b-41d4-a716-446655440001",
       "context": { "course": "Machine Learning" },
       "useWebSearch": true,
       "responseFormat": "text"

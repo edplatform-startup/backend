@@ -1458,7 +1458,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
   // --- VALIDATION STEP ---
   const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-  const validatedText = await validateContent('reading', resultText, validationContext, userId);
+  const validatedText = await validateContent('reading', resultText, validationContext, userId, courseId);
 
   return {
     data: validatedText,
@@ -1922,7 +1922,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
 
   // --- VALIDATION STEP ---
   const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-  const validatedText = await validateContent('reading', resultText, validationContext, userId);
+  const validatedText = await validateContent('reading', resultText, validationContext, userId, courseId);
 
   return {
     data: validatedText,
