@@ -874,6 +874,37 @@ Base URL (production): https://api.kognolearn.com
   - 400 Bad Request → Neither userId nor courseId provided.
   - 500 Internal Server Error → Database error.
 
+### GET /analytics/usage-by-course
+- Purpose: Get aggregated API usage statistics grouped by course. Includes total costs, token counts, and lists of sources/stages used.
+- Query parameters:
+  - `startDate` (string, optional ISO date) – Filter usage after this date.
+  - `endDate` (string, optional ISO date) – Filter usage before this date.
+  - `includeCourseName` (string, optional) – Set to `"true"` to include course names (fetched from courses table).
+- Responses:
+  - 200 OK →
+    ```json
+    {
+      "success": true,
+      "courses": [
+        {
+          "courseId": "abc12345-1234-5678-abcd-1234567890ab",
+          "courseName": "Introduction to Machine Learning",
+          "totalCost": 2.45678,
+          "totalPromptTokens": 500000,
+          "totalCompletionTokens": 450000,
+          "totalTokens": 950000,
+          "requestCount": 245,
+          "sources": ["PLANNER", "TOPICS", "lesson_architect", "content_reading", "content_quiz"]
+        }
+      ]
+    }
+    ```
+  - Notes:
+    - `courseName` is only included if `includeCourseName=true`
+    - Only includes usage records that have a `course_id` (excludes anonymous/general usage)
+    - `sources` lists all unique operation types used for this course
+  - 500 Internal Server Error → Database error.
+
 ### GET /analytics/usage-by-user
 - Purpose: Get aggregated API usage statistics grouped by user. Includes total costs, token counts, and lists of courses/sources used.
 - Query parameters:

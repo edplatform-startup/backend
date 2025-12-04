@@ -322,6 +322,96 @@ router.get('/lookup', async (req, res) => {
 });
 
 /**
+ * GET /analytics/usage-by-course
+ * Get aggregated API usage stats grouped by course
+ * Query params: startDate, endDate, includeCourseName (boolean)
+ */
+router.get('/usage-by-course', async (req, res) => {
+  const { startDate, endDate, includeCourseName } = req.query;
+
+  const supabase = getSupabase();
+
+  let query = supabase
+    .schema('api')
+    .from('usage_stats')
+    .select('course_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, source, created_at')
+    .not('course_id', 'is', null);
+
+  if (startDate) {
+    query = query.gte('created_at', startDate);
+  }
+
+  if (endDate) {
+    query = query.lte('created_at', endDate);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Error fetching usage by course:', error);
+    return res.status(500).json({ error: 'Failed to fetch usage by course', details: error.message });
+  }
+
+  // Aggregate by course
+  const courseStats = {};
+  for (const row of data) {
+    const cid = row.course_id;
+    if (!courseStats[cid]) {
+      courseStats[cid] = {
+        courseId: cid,
+        totalCost: 0,
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalTokens: 0,
+        requestCount: 0,
+        sources: new Set()
+      };
+    }
+    courseStats[cid].totalCost += row.cost_usd || 0;
+    courseStats[cid].totalPromptTokens += row.prompt_tokens || 0;
+    courseStats[cid].totalCompletionTokens += row.completion_tokens || 0;
+    courseStats[cid].totalTokens += row.total_tokens || 0;
+    courseStats[cid].requestCount++;
+    if (row.source) courseStats[cid].sources.add(row.source);
+  }
+
+  // Convert Sets to arrays for JSON serialization
+  const result = Object.values(courseStats).map(c => ({
+    ...c,
+    sources: Array.from(c.sources)
+  }));
+
+  // Optionally fetch course names
+  if (includeCourseName === 'true') {
+    const courseIds = result.map(c => c.courseId);
+    if (courseIds.length > 0) {
+      const { data: courses, error: coursesError } = await supabase
+        .schema('api')
+        .from('courses')
+        .select('id, title')
+        .in('id', courseIds);
+
+      if (!coursesError && courses) {
+        const courseNameMap = {};
+        for (const course of courses) {
+          courseNameMap[course.id] = course.title;
+        }
+        for (const course of result) {
+          course.courseName = courseNameMap[course.courseId] || null;
+        }
+      } else {
+        // If fetch fails, set courseName to null
+        for (const course of result) {
+          course.courseName = null;
+        }
+      }
+    }
+  }
+
+  return res.json({ success: true, courses: result });
+});
+
+/**
  * GET /analytics/usage-by-user
  * Get aggregated API usage stats grouped by user with optional course info
  * Query params: startDate, endDate, includeEmail (boolean)
