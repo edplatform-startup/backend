@@ -31,16 +31,13 @@ test('generateCourseContent injects prerequisite context into prompts', async ()
 
   const stub = createSupabaseStub({
     listResponses: [
-      { data: [nodes[1]], error: null }, // 1. pendingNodes
-      { data: [], error: null },         // 2. courseData (unused list)
-      { data: nodes, error: null },      // 3. allNodes
-      { data: edges, error: null },      // 4. allEdges
+      { data: [nodes[1]], error: null }, // 1. pendingNodes query
+      { data: null, error: null },       // 2. courses query (consumed by .from() but .single() used)
+      { data: nodes, error: null },      // 3. allNodes query
+      { data: edges, error: null },      // 4. allEdges query
     ],
     singleResponses: [
-       { data: null, error: null },                 // 1. pendingNodes (unused single)
-       { data: { title: 'Math Course' }, error: null }, // 2. courseData
-       { data: null, error: null },                 // 3. allNodes (unused single)
-       { data: null, error: null },                 // 4. allEdges (unused single)
+       { data: { title: 'Math Course', metadata: { mode: 'deep' }, user_id: 'user-test' }, error: null }, // courseData
     ],
     updateResponses: [
       { data: { id: 'node-child' }, error: null },

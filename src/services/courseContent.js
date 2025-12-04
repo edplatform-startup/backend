@@ -217,9 +217,20 @@ async function runContentWorker(courseId, options = {}) {
 
   // Optimization: Fetch course title once if possible, or we can rely on it being passed or fetched inside.
   // Since we don't have it easily here without another query, let's fetch it once.
-  const { data: courseData } = await supabase.schema('api').from('courses').select('title, metadata').eq('id', courseId).single();
+  const { data: courseData } = await supabase.schema('api').from('courses').select('title, metadata, user_id').eq('id', courseId).single();
   const courseTitle = courseData?.title || 'Unknown Course';
   const mode = courseData?.metadata?.mode || 'deep';
+  const userName = courseData?.metadata?.user_name || courseData?.user_id || 'Unknown User';
+
+  // Progress tracking for logging
+  let completedNodes = 0;
+  const totalNodes = pendingNodes.length;
+  const logProgress = (stage) => {
+    const percent = Math.round((completedNodes / totalNodes) * 100);
+    console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | ${stage} | ${percent}% complete`);
+  };
+
+  logProgress('Starting content generation');
 
   // Fetch all nodes and edges to build dependency map for context injection
   const { data: allNodes } = await supabase
@@ -249,13 +260,17 @@ async function runContentWorker(courseId, options = {}) {
     });
   }
 
-  const results = await runWithConcurrency(pendingNodes, limit, async (node) => {
+  const results = await runWithConcurrency(pendingNodes, limit, async (node, index) => {
     try {
       const prereqs = prereqMap.get(node.id) || [];
-      await processNode(node, supabase, courseTitle, prereqs, mode);
+      await processNode(node, supabase, courseTitle, prereqs, mode, userName);
+      completedNodes++;
+      logProgress(`Completed node ${completedNodes}/${totalNodes}: "${node.title}"`);
       return { nodeId: node.id };
     } catch (error) {
       await markNodeError(node, supabase, error);
+      completedNodes++;
+      logProgress(`Failed node ${completedNodes}/${totalNodes}: "${node.title}"`);
       throw error;
     }
   });
@@ -300,10 +315,13 @@ async function runContentWorker(courseId, options = {}) {
   const courseStatus = failures.length ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
   await updateCourseStatus(supabase, courseId, courseStatus);
 
+  // Final completion log
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | 100% complete | ${pendingNodes.length - failures.length}/${pendingNodes.length} nodes successful`);
+
   return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
 }
 
-async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'deep') {
+async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'deep', userName = 'Unknown User') {
   const payload = isPlainObject(node.content_payload) ? { ...node.content_payload } : {};
   const plans = isPlainObject(payload.generation_plans) ? payload.generation_plans : null;
   if (!plans || Object.keys(plans).length === 0) {
@@ -319,8 +337,14 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
   const moduleName = node.module_ref || 'General Module';
   const lessonName = node.title || 'Untitled Lesson';
 
+  // Helper for logging stage progress
+  const logStage = (stage) => {
+    console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Lesson: "${lessonName}" | Stage: ${stage}`);
+  };
+
   // Wrap each generator in a try-catch to prevent one failure from blocking the whole node
   const safeGenerate = async (promise, label) => {
+    logStage(label);
     try {
       return await promise;
     } catch (error) {
@@ -329,24 +353,24 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
   };
 
   const readingPromise = plans.reading
-    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs, mode, node.user_id), 'Reading')
+    ? safeGenerate(generateReading(lessonName, plans.reading, courseTitle, moduleName, prereqs, mode, node.user_id), 'Generating Reading')
     : Promise.resolve(null);
 
   const quizPromise = plans.quiz
-    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs, mode, node.user_id), 'Quiz')
+    ? safeGenerate(generateQuiz(lessonName, plans.quiz, courseTitle, moduleName, prereqs, mode, node.user_id), 'Generating Quiz')
     : Promise.resolve(null);
 
   const flashcardsPromise = plans.flashcards
-    ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName, node.user_id), 'Flashcards')
+    ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName, node.user_id), 'Generating Flashcards')
     : Promise.resolve(null);
 
   const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
   const practiceExamPromise = practiceExamPlan
-    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id), 'Practice Exam')
+    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id), 'Generating Practice Exam')
     : Promise.resolve(null);
 
   const videoPromise = plans.video
-    ? safeGenerate(generateVideoSelection(plans.video, node.user_id), 'Video')
+    ? safeGenerate(generateVideoSelection(plans.video, node.user_id), 'Selecting Video')
     : Promise.resolve({ videos: [], logs: [] });
 
   const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes] = await Promise.all([
@@ -1017,7 +1041,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     const response = await grokExecutor({
       model: 'google/gemini-3-pro-preview',
       temperature: 0.3, // Slightly higher for creativity in question design
-      maxTokens: 4096,
+      maxTokens: 16384,
       messages: [systemPrompt, userPrompt],
       responseFormat: { type: 'json_object' },
       userId,

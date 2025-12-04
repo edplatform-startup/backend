@@ -109,7 +109,15 @@ test('generateCourseContent fills node payloads and marks course ready', async (
   const nodeUpdates = [];
   const courseUpdates = [];
   const stub = createSupabaseStub({
-    listResponses: [{ data: pendingNodes, error: null }],
+    listResponses: [
+      { data: pendingNodes, error: null },  // Initial pending nodes fetch
+      { data: pendingNodes, error: null },  // All nodes fetch for prereq map
+      { data: [], error: null },            // All edges fetch for prereq map
+    ],
+    singleResponses: [
+      // Response for course data query (title, metadata, user_id)
+      { data: { title: 'Test Course', metadata: { mode: 'deep', user_name: 'Test User' }, user_id: 'user-123' }, error: null },
+    ],
     updateResponses: [
       { data: { id: 'node-a' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },
       { data: { id: 'node-b' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },

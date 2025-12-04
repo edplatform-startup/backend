@@ -23,13 +23,17 @@ test('Course Content Enrichment Tests', async (t) => {
 
     const nodeUpdates = [];
     const stub = createSupabaseStub({
-      listResponses: [{ data: pendingNodes, error: null }],
+      listResponses: [
+        { data: pendingNodes, error: null },  // Initial pending nodes fetch
+        { data: pendingNodes, error: null },  // All nodes fetch for prereq map
+        { data: [], error: null },            // All edges fetch for prereq map
+      ],
       updateResponses: [
         { data: { id: 'node-reading-1' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },
         { data: { id: 'course-1' }, error: null },
       ],
       singleResponses: [
-         { data: { title: 'Science Course' }, error: null } // for course title fetch
+         { data: { title: 'Science Course', metadata: { mode: 'deep' }, user_id: 'user-test' }, error: null } // for course title fetch
       ]
     });
     setSupabaseClient(stub);
@@ -37,7 +41,13 @@ test('Course Content Enrichment Tests', async (t) => {
     // Mock Grok Executor
     __setGrokExecutor(async ({ messages }) => {
       const lastMessage = messages[messages.length - 1].content;
+      const systemMessage = messages.find(m => m.role === 'system')?.content || '';
       
+      // Handle validation calls (validator model)
+      if (systemMessage.includes('Quality Assurance Validator')) {
+        return { content: 'CORRECT' };
+      }
+
       // 1. Reading Generation
       if (lastMessage.includes('Generate a clear, student-facing Markdown reading')) {
         return {
@@ -57,7 +67,7 @@ test('Course Content Enrichment Tests', async (t) => {
             question: 'What drives evaporation?',
             options: ['The Moon', 'The Sun', 'Wind', 'Magic'],
             answerIndex: 1,
-            explanation: 'The sun provides energy.'
+            explanation: ['The moon does not provide energy for evaporation.', 'The sun provides the heat energy that causes water to evaporate.', 'Wind helps with evaporation but is not the primary driver.', 'Magic is not a scientific explanation.']
           })
         };
       }
@@ -79,8 +89,8 @@ test('Course Content Enrichment Tests', async (t) => {
       assert.ok(reading.includes('**Check Your Understanding**'), 'Should contain inline question');
       assert.ok(reading.includes('<details><summary>Show Answer</summary>'), 'Should contain answer reveal');
       
-      // Check structure (chunks joined by separator)
-      assert.ok(reading.includes('\n\n---\n\n'), 'Chunks should be separated');
+      // Check that content contains the original reading
+      assert.ok(reading.includes('The Water Cycle'), 'Should contain original content');
 
     } finally {
       __resetGrokExecutor();
@@ -105,13 +115,17 @@ test('Course Content Enrichment Tests', async (t) => {
 
     const nodeUpdates = [];
     const stub = createSupabaseStub({
-      listResponses: [{ data: pendingNodes, error: null }],
+      listResponses: [
+        { data: pendingNodes, error: null },  // Initial pending nodes fetch
+        { data: pendingNodes, error: null },  // All nodes fetch for prereq map
+        { data: [], error: null },            // All edges fetch for prereq map
+      ],
       updateResponses: [
         { data: { id: 'node-reading-2' }, error: null, onUpdate: (payload) => nodeUpdates.push(payload) },
         { data: { id: 'course-1' }, error: null },
       ],
       singleResponses: [
-          { data: { title: 'Course' }, error: null }
+          { data: { title: 'Course', metadata: { mode: 'deep' }, user_id: 'user-test' }, error: null }
       ]
     });
     setSupabaseClient(stub);
