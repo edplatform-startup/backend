@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
-import { createSupabaseStub } from './helpers/supabaseStub.js';
+import { createSupabaseStub, TEST_AUTH_TOKEN } from './helpers/supabaseStub.js';
 
-const baseHeaders = { Accept: 'application/json' };
+const baseHeaders = { 
+  Accept: 'application/json',
+  Authorization: `Bearer ${TEST_AUTH_TOKEN}`
+};
 
 test('content and course data routes', async (t) => {
   t.afterEach(() => clearSupabaseClient());

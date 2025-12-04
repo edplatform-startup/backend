@@ -3,21 +3,30 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import app from '../src/app.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
-import { createSupabaseStub } from './helpers/supabaseStub.js';
+import { createSupabaseStub, TEST_AUTH_TOKEN } from './helpers/supabaseStub.js';
+
+const authHeaders = { Authorization: `Bearer ${TEST_AUTH_TOKEN}` };
 
 test('DELETE /courses', async (t) => {
   t.afterEach(() => clearSupabaseClient());
 
+  await t.test('rejects requests without auth', async () => {
+    const res = await request(app).delete('/courses').query({});
+    assert.equal(res.status, 401);
+  });
+
   await t.test('requires userId and courseId', async () => {
-    const res1 = await request(app).delete('/courses').query({});
+    setSupabaseClient(createSupabaseStub({}));
+    const res1 = await request(app).delete('/courses').query({}).set(authHeaders);
     assert.equal(res1.status, 400);
 
-    const res2 = await request(app).delete('/courses').query({ userId: '22222222-2222-2222-2222-222222222222' });
+    const res2 = await request(app).delete('/courses').query({ userId: '22222222-2222-2222-2222-222222222222' }).set(authHeaders);
     assert.equal(res2.status, 400);
   });
 
   await t.test('validates UUID format', async () => {
-    const res = await request(app).delete('/courses').query({ userId: 'invalid', courseId: '11111111-1111-1111-1111-111111111111' });
+    setSupabaseClient(createSupabaseStub({}));
+    const res = await request(app).delete('/courses').query({ userId: 'invalid', courseId: '11111111-1111-1111-1111-111111111111' }).set(authHeaders);
     assert.equal(res.status, 400);
   });
 
@@ -30,7 +39,8 @@ test('DELETE /courses', async (t) => {
 
     const res = await request(app)
       .delete('/courses')
-      .query({ userId: '22222222-2222-2222-2222-222222222222', courseId: '11111111-1111-1111-1111-111111111111' });
+      .query({ userId: '22222222-2222-2222-2222-222222222222', courseId: '11111111-1111-1111-1111-111111111111' })
+      .set(authHeaders);
 
     assert.equal(res.status, 404);
     assert.match(res.body.error, /not found/i);
@@ -48,7 +58,8 @@ test('DELETE /courses', async (t) => {
 
     const res = await request(app)
       .delete('/courses')
-      .query({ userId: '22222222-2222-2222-2222-222222222222', courseId: '11111111-1111-1111-1111-111111111111' });
+      .query({ userId: '22222222-2222-2222-2222-222222222222', courseId: '11111111-1111-1111-1111-111111111111' })
+      .set(authHeaders);
 
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);

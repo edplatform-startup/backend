@@ -4,10 +4,46 @@ Base URL (production): https://api.kognolearn.com
 
 - Protocols: HTTPS (production), HTTP (local dev)
 - Media type: application/json; charset=utf-8
-- Authentication: None (public)
+- Authentication: JWT (Supabase Auth tokens required for all protected endpoints)
 - CORS: Enabled for all origins
 - Versioning: None (single, unversioned API)
 - Rate limiting: Not implemented
+
+## Authentication
+
+All endpoints except `/` (root) and `/healthz` require a valid JWT token issued by Supabase Auth.
+
+### How to authenticate
+
+1. **Obtain a JWT token** from Supabase Auth by signing in a user (e.g., via `supabase.auth.signInWithPassword()` or OAuth).
+2. **Include the token** in the `Authorization` header of every request:
+   ```
+   Authorization: Bearer <your_supabase_jwt_token>
+   ```
+
+### Authentication errors
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| 401 | `Authorization header is required` | No `Authorization` header provided |
+| 401 | `Invalid authorization format` | Header doesn't start with `Bearer ` |
+| 401 | `Token is required` | Empty token after `Bearer ` |
+| 401 | `Invalid or expired token` | Token failed Supabase verification |
+| 401 | `Invalid token` | Token didn't resolve to a valid user |
+| 500 | `Authentication service error` | Supabase auth service failure |
+
+### Example request with authentication
+
+```bash
+curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json"
+```
+
+### Public endpoints (no authentication required)
+
+- `GET /` – Health check / root
+- `GET /healthz` – Health check
 
 ## Request size limits
 
@@ -1112,7 +1148,7 @@ Base URL (production): https://api.kognolearn.com
 
 ## Notes
 - Every response uses JSON.
-- Readers should supply their own authentication/authorization in front of this API; it trusts the provided UUIDs.
+- All protected endpoints require a valid Supabase JWT token in the `Authorization: Bearer <token>` header. The token is validated against Supabase Auth and the authenticated user's ID is verified against the `userId` in the request.
 - Supabase schema: reads from and writes to `api.courses` (title/status/timeline metadata) plus `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state` for DAG persistence.
 - RAG storage: `public.rag_chunks` stores embedded syllabus/exam chunks keyed by `session_id`. Expires after `RAG_SESSION_TTL_DAYS`.
 
@@ -1125,13 +1161,20 @@ Base URL (production): https://api.kognolearn.com
 | `RAG_SESSION_TTL_DAYS` | `7` | Days before cleanup deletes chunks |
 
 ## Examples
+
+All examples below require the `Authorization: Bearer <token>` header (omitted for brevity).
+
 - List user courses → `GET https://api.kognolearn.com/courses?userId=...`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`
   - Response: `{ "success": true, "count": 1, "courses": [Course] }`
 - Fetch specific course → `GET https://api.kognolearn.com/courses?userId=...&courseId=...`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`
   - Response: `{ "success": true, "course": Course }`
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: see `/courses/topics` section.
   - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
+  - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.
   - Response: `{ "courseId": "<uuid>" }`

@@ -3,16 +3,29 @@ import test from 'node:test';
 import request from 'supertest';
 import app from '../src/app.js';
 import { setOpenRouterChatExecutor, clearOpenRouterChatExecutor } from '../src/services/grokClient.js';
+import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
+import { createSupabaseStub, TEST_AUTH_TOKEN } from './helpers/supabaseStub.js';
+
+const authHeaders = { Authorization: `Bearer ${TEST_AUTH_TOKEN}` };
+
+test('POST /chat rejects requests without auth', async () => {
+  const res = await request(app).post('/chat').send({});
+  assert.equal(res.statusCode, 401);
+  assert.match(res.body.error, /Authorization header is required/);
+});
 
 test('POST /chat rejects missing fields', async () => {
-  const res1 = await request(app).post('/chat').send({});
+  setSupabaseClient(createSupabaseStub({}));
+  const res1 = await request(app).post('/chat').send({}).set(authHeaders);
   assert.equal(res1.statusCode, 400);
 
-  const res2 = await request(app).post('/chat').send({ system: 's' });
+  const res2 = await request(app).post('/chat').send({ system: 's' }).set(authHeaders);
   assert.equal(res2.statusCode, 400);
+  clearSupabaseClient();
 });
 
 test('POST /chat returns model and content, passes options through', async () => {
+  setSupabaseClient(createSupabaseStub({}));
   let capturedOptions = null;
   setOpenRouterChatExecutor(async (options) => {
     capturedOptions = options;
@@ -30,7 +43,7 @@ test('POST /chat returns model and content, passes options through', async () =>
     maxTokens: 128,
   };
 
-  const res = await request(app).post('/chat').send(body);
+  const res = await request(app).post('/chat').send(body).set(authHeaders);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.model, 'x-ai/grok-4-fast');
   assert.equal(res.body.content, 'Hello world');
@@ -56,9 +69,11 @@ test('POST /chat returns model and content, passes options through', async () =>
   assert.equal(capturedOptions.reasoning, 'medium');
 
   clearOpenRouterChatExecutor();
+  clearSupabaseClient();
 });
 
 test('POST /chat allows overriding reasoning', async () => {
+  setSupabaseClient(createSupabaseStub({}));
   let capturedOptions = null;
   setOpenRouterChatExecutor(async (options) => {
     capturedOptions = options;
@@ -72,10 +87,11 @@ test('POST /chat allows overriding reasoning', async () => {
     reasoning: 'high',
   };
 
-  const res = await request(app).post('/chat').send(body);
+  const res = await request(app).post('/chat').send(body).set(authHeaders);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.content, 'Override');
   assert.equal(capturedOptions.reasoning, 'high');
 
   clearOpenRouterChatExecutor();
+  clearSupabaseClient();
 });
