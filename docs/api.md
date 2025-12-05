@@ -873,7 +873,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `mermaid_validation` – Mermaid diagram syntax validation
   - `mermaid_repair` – Mermaid diagram repair
   - `validation_reading` – Reading content validation
-  - `validation_quiz` – Quiz validation
+  - `validation_quiz` – Quiz validation (per-question validation with retry on incomplete explanations)
   - `validation_flashcards` – Flashcard validation
   - `validation_practice_exam` – Practice exam validation
   - `validation_inline_question` – Inline question validation

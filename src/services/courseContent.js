@@ -1583,9 +1583,22 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
       throw new Error('Quiz generator returned no valid questions after repair');
     }
 
-    // --- VALIDATION STEP ---
+    // --- VALIDATION STEP (Per-Question) ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId, courseId);
+    const { validatedQuestions, stats: validationStats } = await validateQuizQuestionsIndividually(
+      repairedQuestions,
+      validationContext,
+      userId,
+      courseId
+    );
+
+    // Merge validation stats into repair stats
+    stats.validation = validationStats;
+
+    // Log warning if any questions failed validation
+    if (validationStats.failedValidation > 0) {
+      console.warn(`[generateQuiz] ${validationStats.failedValidation} questions could not be fully validated for "${title}"`);
+    }
 
     return { data: validatedQuestions, stats };
   } catch (err) {
@@ -2018,9 +2031,20 @@ Rules:
 
     if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
 
-    // --- VALIDATION STEP ---
+    // --- VALIDATION STEP (Per-Question) ---
     const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedQuestions = await validateContent('quiz', repairedQuestions, validationContext, userId, courseId);
+    const { validatedQuestions, stats: validationStats } = await validateQuizQuestionsIndividually(
+      repairedQuestions,
+      validationContext,
+      userId,
+      courseId
+    );
+
+    stats.validation = validationStats;
+
+    if (validationStats.failedValidation > 0) {
+      console.warn(`[regenerateQuiz] ${validationStats.failedValidation} questions could not be fully validated for "${title}"`);
+    }
 
     return { data: validatedQuestions, stats };
   } catch (err) {
@@ -2375,9 +2399,12 @@ function mergeValidatedArray(original, validated, contentType) {
  * @param {string} contentType - 'reading', 'quiz', 'flashcards', 'practice_exam', 'inline_question'
  * @param {any} content - The content to validate
  * @param {string} context - Additional context (e.g., lesson title, plan)
+ * @param {object} options - Additional options
+ * @param {boolean} options.throwOnFailure - If true, throw instead of returning original on failure
  * @returns {Promise<any>} - The validated (and possibly fixed) content
  */
-async function validateContent(contentType, content, context, userId, courseId) {
+async function validateContent(contentType, content, context, userId, courseId, options = {}) {
+  const { throwOnFailure = false } = options;
   const modelConfig = pickModel(STAGES.VALIDATOR);
 
   let contentStr = '';
@@ -2408,6 +2435,12 @@ Check for and remove any references to figures, graphs, or images that are not p
 
 Also, ensure that quiz questions DO NOT test concepts that are not present in the provided context (lesson content + prerequisites). If a question asks about a topic that hasn't been taught yet, remove or replace it.
 
+CRITICAL QUALITY REQUIREMENTS:
+- Every quiz question MUST have a complete "explanation" array with 4 meaningful strings (one per option).
+- If any option lacks an explanation, has a placeholder like "...", or has only trivial text, that is a MAJOR quality issue - fix it by providing a correct, substantive rationale.
+- Each explanation must clearly state WHY the option is correct or incorrect.
+- Missing or incomplete rationales are NEVER acceptable.
+
 STRICT FORMATTING RULES:
 ${contentType === 'inline_question' ? `
 - You MUST preserve the exact Markdown format:
@@ -2423,7 +2456,7 @@ ${contentType === 'reading' ? `
 ` : ''}
 ${contentType === 'quiz' ? `
 - Return a JSON ARRAY of objects.
-- Each object must have: "question", "options" (array of 4 strings), "correct_index" (0-3), "explanation" (array of 4 strings).
+- Each object must have: "question", "options" (array of 4 strings), "correct_index" (0-3), "explanation" (array of 4 NON-EMPTY strings explaining each option).
 - Do not wrap the array in a "quiz" key.
 ` : ''}
 ${contentType === 'flashcards' ? `
@@ -2531,6 +2564,9 @@ ${context}`
           console.error(`[validateContent] Failed to parse JSON for ${contentType}. Raw response length: ${cleaned.length}`);
           console.error(`[validateContent] First 500 chars of response:`, cleaned.substring(0, 500));
           console.error(`[validateContent] Parse error:`, parseError.message);
+          if (throwOnFailure) {
+            throw new Error(`Validation parse failure for ${contentType}: ${parseError.message}`);
+          }
           console.warn(`[validateContent] Returning original content due to parse failure.`);
           return content;
         }
@@ -2542,6 +2578,96 @@ ${context}`
 
   } catch (error) {
     console.error(`[validateContent] Error validating ${contentType}:`, error);
+    if (throwOnFailure) {
+      throw error;
+    }
     return content; // Fallback to original
   }
+}
+
+/**
+ * Validates quiz questions individually for more reliable error isolation.
+ * Each question is validated separately, and failures are retried or flagged.
+ * @param {Array} questions - Array of quiz question objects
+ * @param {string} context - Validation context
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{validatedQuestions: Array, stats: object}>}
+ */
+async function validateQuizQuestionsIndividually(questions, context, userId, courseId) {
+  const stats = {
+    total: questions.length,
+    passed: 0,
+    fixed: 0,
+    failedValidation: 0,
+    retried: 0
+  };
+
+  const validatedQuestions = [];
+
+  for (let i = 0; i < questions.length; i++) {
+    const question = questions[i];
+    const questionContext = `${context}\nQuestion ${i + 1} of ${questions.length}`;
+
+    // Check if question has incomplete explanations (a quality issue we want to catch)
+    const hasIncompleteExplanation = !question.explanation ||
+      !Array.isArray(question.explanation) ||
+      question.explanation.length < 4 ||
+      question.explanation.some(exp => !exp || exp.trim().length < 10 || exp === '...');
+
+    let validated = null;
+    let attempts = 0;
+    const maxAttempts = hasIncompleteExplanation ? 2 : 1; // Retry if we detect incomplete content
+
+    while (attempts < maxAttempts && validated === null) {
+      attempts++;
+      try {
+        // Wrap single question in array for validateContent, then unwrap
+        const result = await validateContent('quiz', [question], questionContext, userId, courseId, { throwOnFailure: true });
+
+        if (Array.isArray(result) && result.length > 0) {
+          const validatedQ = result[0];
+
+          // Verify the validated question has complete explanations
+          if (validatedQ.explanation &&
+              Array.isArray(validatedQ.explanation) &&
+              validatedQ.explanation.length >= 4 &&
+              validatedQ.explanation.every(exp => exp && exp.trim().length >= 10)) {
+            validated = validatedQ;
+            if (JSON.stringify(validatedQ) !== JSON.stringify(question)) {
+              stats.fixed++;
+            } else {
+              stats.passed++;
+            }
+          } else if (attempts < maxAttempts) {
+            // Still incomplete, will retry
+            stats.retried++;
+            console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} still has incomplete explanations after validation, retrying...`);
+          }
+        }
+      } catch (error) {
+        console.error(`[validateQuizQuestionsIndividually] Failed to validate Q${i + 1} (attempt ${attempts}):`, error.message);
+        if (attempts < maxAttempts) {
+          stats.retried++;
+        }
+      }
+    }
+
+    if (validated) {
+      validatedQuestions.push(validated);
+    } else {
+      // Validation failed after retries - flag but include with warning
+      console.error(`[validateQuizQuestionsIndividually] Q${i + 1} could not be validated after ${maxAttempts} attempts. Marking for review.`);
+      stats.failedValidation++;
+      // Add the original but flag it
+      validatedQuestions.push({
+        ...question,
+        _validationFailed: true,
+        _validationNote: 'This question could not be fully validated. Review recommended.'
+      });
+    }
+  }
+
+  console.log(`[validateQuizQuestionsIndividually] Stats: ${JSON.stringify(stats)}`);
+  return { validatedQuestions, stats: stats };
 }
