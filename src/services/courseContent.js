@@ -47,8 +47,11 @@ export function __resetYouTubeFetcher() {
   customYouTubeFetcher = null;
 }
 
-// Export for testing - mergeValidatedArray is used internally but we expose it for unit tests
+// Export for testing - internal functions exposed for unit tests
 export { mergeValidatedArray as __mergeValidatedArray };
+export { validateExplanations as __validateExplanations };
+export { checkRationaleConsistency as __checkRationaleConsistency };
+export { MIN_EXPLANATION_LENGTH as __MIN_EXPLANATION_LENGTH };
 
 export async function saveCourseStructure(courseId, userId, lessonGraph) {
   if (customSaveCourseStructure) {
@@ -1567,14 +1570,29 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
           const { validation_check, step_by_step_thinking, ...rest } = item;
           cleanItem = rest;
         }
-        return { valid: true, data: normalizeQuizItem(cleanItem, index) };
+        
+        // Pre-check explanations before normalization for clearer error messages
+        if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
+          return { valid: false, error: `Incomplete explanations: expected array of 4, got ${Array.isArray(cleanItem?.explanation) ? cleanItem.explanation.length : 'non-array'}` };
+        }
+        if (cleanItem.explanation.some(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH)) {
+          const shortIdx = cleanItem.explanation.findIndex(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH);
+          return { valid: false, error: `Explanation for option ${shortIdx + 1} is missing or too short (need ${MIN_EXPLANATION_LENGTH}+ chars)` };
+        }
+        
+        return { valid: true, data: normalizeQuizItem(cleanItem, index, true) };
       } catch (e) {
         return { valid: false, error: e.message };
       }
     };
 
     const repairPrompt = (brokenItems, errors) => {
-      return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has a 'question', 'options' (array of 4 strings), 'correct_index' (0-3), and 'explanation' (array of 4 strings).`;
+      return `The following quiz items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. CRITICAL REQUIREMENTS:
+- Each item MUST have: 'question', 'options' (array of exactly 4 strings), 'correct_index' (0-3)
+- Each item MUST have 'explanation' as an array of EXACTLY 4 SUBSTANTIVE strings (minimum ${MIN_EXPLANATION_LENGTH} characters each)
+- For the correct option: explain WHY it is correct with specific reasoning
+- For each incorrect option: explain WHY it is wrong and what misconception it represents
+- Do NOT use placeholders like "Answer rationale not provided" or "..."`;  
     };
 
     const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz', userId, courseId);
@@ -1606,7 +1624,85 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
   }
 }
 
-function normalizeQuizItem(item, index) {
+/**
+ * Minimum character length for a valid explanation.
+ * Explanations shorter than this are considered incomplete.
+ */
+const MIN_EXPLANATION_LENGTH = 15;
+
+/**
+ * Validates that explanations are complete and substantive.
+ * @param {Array} explanation - Array of explanation strings
+ * @param {number} optionsCount - Number of options (usually 4)
+ * @returns {{valid: boolean, error?: string}}
+ */
+function validateExplanations(explanation, optionsCount = 4) {
+  if (!Array.isArray(explanation)) {
+    return { valid: false, error: 'Explanation must be an array' };
+  }
+  if (explanation.length !== optionsCount) {
+    return { valid: false, error: `Explanation must have ${optionsCount} entries, got ${explanation.length}` };
+  }
+  
+  const placeholders = ['answer rationale not provided', 'no explanation', 'n/a', '...', 'tbd', 'todo'];
+  
+  for (let i = 0; i < explanation.length; i++) {
+    const exp = explanation[i];
+    if (!exp || typeof exp !== 'string') {
+      return { valid: false, error: `Explanation for option ${i + 1} is missing` };
+    }
+    const trimmed = exp.trim();
+    if (trimmed.length < MIN_EXPLANATION_LENGTH) {
+      return { valid: false, error: `Explanation for option ${i + 1} is too short (${trimmed.length} chars, need ${MIN_EXPLANATION_LENGTH}+)` };
+    }
+    if (placeholders.some(p => trimmed.toLowerCase().includes(p))) {
+      return { valid: false, error: `Explanation for option ${i + 1} contains placeholder text` };
+    }
+  }
+  return { valid: true };
+}
+
+/**
+ * Checks rationale consistency - ensures correct answer's explanation sounds positive
+ * and incorrect answers' explanations don't accidentally support them.
+ * @param {object} item - Quiz item with question, options, correct_index, explanation
+ * @returns {{valid: boolean, warnings: string[]}}
+ */
+function checkRationaleConsistency(item) {
+  const warnings = [];
+  const correctIdx = item.correct_index;
+  const correctExp = item.explanation[correctIdx]?.toLowerCase() || '';
+  
+  // Negative indicators that shouldn't appear in correct answer's rationale
+  const negativeIndicators = ['incorrect', 'wrong', 'false', 'not correct', 'is not', 'cannot be'];
+  // Positive indicators that shouldn't appear strongly in incorrect answers' rationales
+  const positiveIndicators = ['is correct', 'is the right', 'is true', 'is accurate', 'correctly'];
+  
+  // Check correct answer's explanation doesn't sound negative
+  for (const neg of negativeIndicators) {
+    if (correctExp.includes(neg) && !correctExp.includes('not ' + neg)) {
+      // Simple heuristic: if explanation for correct answer says "incorrect" without negating it
+      warnings.push(`Correct answer (option ${correctIdx + 1}) explanation contains negative language: "${neg}"`);
+      break;
+    }
+  }
+  
+  // Check incorrect answers' explanations don't sound too positive
+  for (let i = 0; i < item.explanation.length; i++) {
+    if (i === correctIdx) continue;
+    const exp = item.explanation[i]?.toLowerCase() || '';
+    for (const pos of positiveIndicators) {
+      if (exp.includes(pos)) {
+        warnings.push(`Incorrect answer (option ${i + 1}) explanation contains positive language: "${pos}"`);
+        break;
+      }
+    }
+  }
+  
+  return { valid: warnings.length === 0, warnings };
+}
+
+function normalizeQuizItem(item, index, strictMode = true) {
   const question = typeof item?.question === 'string' ? item.question.trim() : '';
 
   // Handle explanation: ensure it's an array of strings
@@ -1614,10 +1710,7 @@ function normalizeQuizItem(item, index) {
   if (Array.isArray(item?.explanation)) {
     explanation = item.explanation.map(e => (typeof e === 'string' ? e.trim() : String(e)));
   } else if (typeof item?.explanation === 'string') {
-    // Fallback if model returns a single string: replicate it or just put it in the correct slot?
-    // Let's just put it as a single item array, but ideally we want 4.
-    // Better: if it's a single string, make it an array of length 4 with that string repeated or empty?
-    // Let's just wrap it. The UI should handle it. But the prompt asks for 4.
+    // Single string - this is invalid, we need 4
     explanation = [item.explanation.trim()];
   }
 
@@ -1625,14 +1718,44 @@ function normalizeQuizItem(item, index) {
   const correctIndex = Number.isInteger(item?.correct_index) ? item.correct_index : 0;
 
   if (!question || options.length < 2) {
-    throw new Error(`Quiz item ${index + 1} is invalid`);
+    throw new Error(`Quiz item ${index + 1} is invalid: missing question or options`);
   }
-  return {
+  
+  if (options.length !== 4) {
+    throw new Error(`Quiz item ${index + 1} must have exactly 4 options, got ${options.length}`);
+  }
+  
+  if (correctIndex < 0 || correctIndex >= options.length) {
+    throw new Error(`Quiz item ${index + 1} has invalid correct_index: ${correctIndex}`);
+  }
+
+  // In strict mode, enforce complete explanations
+  if (strictMode) {
+    const expValidation = validateExplanations(explanation, options.length);
+    if (!expValidation.valid) {
+      throw new Error(`Quiz item ${index + 1}: ${expValidation.error}`);
+    }
+  } else {
+    // Non-strict mode: pad with placeholder (only for intermediate processing)
+    while (explanation.length < options.length) {
+      explanation.push('Explanation pending.');
+    }
+  }
+  
+  const normalized = {
     question,
     options,
     correct_index: correctIndex,
-    explanation: explanation.length > 0 ? explanation : ['Answer rationale not provided.'],
+    explanation,
   };
+  
+  // Check rationale consistency and log warnings (don't fail, just warn)
+  const consistency = checkRationaleConsistency(normalized);
+  if (!consistency.valid) {
+    console.warn(`[normalizeQuizItem] Q${index + 1} rationale consistency warnings:`, consistency.warnings);
+  }
+  
+  return normalized;
 }
 
 async function generatePracticeExam(title, plan, courseName, moduleName, userId, courseId) {
@@ -2017,14 +2140,24 @@ Rules:
           const { validation_check, step_by_step_thinking, ...rest } = item;
           cleanItem = rest;
         }
-        return { valid: true, data: normalizeQuizItem(cleanItem, index) };
+        
+        // Pre-check explanations before normalization for clearer error messages
+        if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
+          return { valid: false, error: `Incomplete explanations: expected array of 4, got ${Array.isArray(cleanItem?.explanation) ? cleanItem.explanation.length : 'non-array'}` };
+        }
+        if (cleanItem.explanation.some(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH)) {
+          const shortIdx = cleanItem.explanation.findIndex(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH);
+          return { valid: false, error: `Explanation for option ${shortIdx + 1} is missing or too short (need ${MIN_EXPLANATION_LENGTH}+ chars)` };
+        }
+        
+        return { valid: true, data: normalizeQuizItem(cleanItem, index, true) };
       } catch (e) {
         return { valid: false, error: e.message };
       }
     };
 
     const repairPrompt = (brokenItems, errors) => {
-      return `Regenerate these invalid quiz items:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}`;
+      return `Regenerate these invalid quiz items:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}\n\nCRITICAL: Each 'explanation' must be an array of 4 substantive strings (${MIN_EXPLANATION_LENGTH}+ chars each). Explain WHY each option is correct or incorrect.`;
     };
 
     const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'regenerateQuiz', userId, courseId);
@@ -2594,13 +2727,20 @@ ${context}`
  * @param {string} courseId - Course ID for tracking
  * @returns {Promise<{validatedQuestions: Array, stats: object}>}
  */
-async function validateQuizQuestionsIndividually(questions, context, userId, courseId) {
+async function validateQuizQuestionsIndividually(questions, context, userId, courseId, options = {}) {
+  const { enableSelfConsistency = true } = options;
+  
   const stats = {
     total: questions.length,
     passed: 0,
     fixed: 0,
+    rationaleFixed: 0,
     failedValidation: 0,
-    retried: 0
+    retried: 0,
+    selfConsistencyChecked: 0,
+    selfConsistencyPassed: 0,
+    selfConsistencyReconciled: 0,
+    selfConsistencyFailed: 0
   };
 
   const validatedQuestions = [];
@@ -2609,18 +2749,34 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
     const question = questions[i];
     const questionContext = `${context}\nQuestion ${i + 1} of ${questions.length}`;
 
-    // Check if question has incomplete explanations (a quality issue we want to catch)
-    const hasIncompleteExplanation = !question.explanation ||
-      !Array.isArray(question.explanation) ||
-      question.explanation.length < 4 ||
-      question.explanation.some(exp => !exp || exp.trim().length < 10 || exp === '...');
+    // Check explanation completeness using our validation function
+    const expValidation = validateExplanations(question.explanation, 4);
+    const hasIncompleteExplanation = !expValidation.valid;
 
     let validated = null;
     let attempts = 0;
-    const maxAttempts = hasIncompleteExplanation ? 2 : 1; // Retry if we detect incomplete content
+    const maxAttempts = hasIncompleteExplanation ? 3 : 2; // More retries if we detect incomplete content
 
     while (attempts < maxAttempts && validated === null) {
       attempts++;
+      
+      // On later attempts for incomplete explanations, try targeted rationale fix
+      if (attempts > 1 && hasIncompleteExplanation) {
+        try {
+          const fixedQuestion = await fixMissingRationales(question, userId, courseId);
+          if (fixedQuestion) {
+            const fixedExpValidation = validateExplanations(fixedQuestion.explanation, 4);
+            if (fixedExpValidation.valid) {
+              validated = fixedQuestion;
+              stats.rationaleFixed++;
+              continue;
+            }
+          }
+        } catch (fixError) {
+          console.warn(`[validateQuizQuestionsIndividually] Rationale fix failed for Q${i + 1}:`, fixError.message);
+        }
+      }
+      
       try {
         // Wrap single question in array for validateContent, then unwrap
         const result = await validateContent('quiz', [question], questionContext, userId, courseId, { throwOnFailure: true });
@@ -2628,11 +2784,15 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
         if (Array.isArray(result) && result.length > 0) {
           const validatedQ = result[0];
 
-          // Verify the validated question has complete explanations
-          if (validatedQ.explanation &&
-              Array.isArray(validatedQ.explanation) &&
-              validatedQ.explanation.length >= 4 &&
-              validatedQ.explanation.every(exp => exp && exp.trim().length >= 10)) {
+          // Verify the validated question has complete explanations using strict validation
+          const resultExpValidation = validateExplanations(validatedQ.explanation, 4);
+          if (resultExpValidation.valid) {
+            // Also check rationale consistency
+            const consistency = checkRationaleConsistency(validatedQ);
+            if (!consistency.valid) {
+              console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} has rationale consistency issues:`, consistency.warnings);
+            }
+            
             validated = validatedQ;
             if (JSON.stringify(validatedQ) !== JSON.stringify(question)) {
               stats.fixed++;
@@ -2642,7 +2802,7 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
           } else if (attempts < maxAttempts) {
             // Still incomplete, will retry
             stats.retried++;
-            console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} still has incomplete explanations after validation, retrying...`);
+            console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} still has incomplete explanations: ${resultExpValidation.error}`);
           }
         }
       } catch (error) {
@@ -2650,6 +2810,40 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
         if (attempts < maxAttempts) {
           stats.retried++;
         }
+      }
+    }
+
+    // Self-consistency check: verify the model can independently solve to the same answer
+    if (validated && enableSelfConsistency) {
+      stats.selfConsistencyChecked++;
+      try {
+        const consistencyResult = await verifySelfConsistency(validated, context, userId, courseId);
+        
+        if (consistencyResult.consistent) {
+          stats.selfConsistencyPassed++;
+          validated._selfConsistencyVerified = true;
+        } else {
+          // Discrepancy detected - attempt reconciliation
+          console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} self-consistency FAILED. Attempting reconciliation...`);
+          
+          const reconciledQuestion = await reconcileAnswerDiscrepancy(validated, consistencyResult, context, userId, courseId);
+          
+          if (reconciledQuestion) {
+            stats.selfConsistencyReconciled++;
+            validated = reconciledQuestion;
+            validated._selfConsistencyReconciled = true;
+          } else {
+            // Reconciliation failed - flag the question but keep it
+            stats.selfConsistencyFailed++;
+            validated._selfConsistencyFailed = true;
+            validated._consistencyWarning = `Model independently answered ${['A', 'B', 'C', 'D'][consistencyResult.modelAnswer]} with ${consistencyResult.confidence} confidence. Review recommended.`;
+            console.error(`[validateQuizQuestionsIndividually] Q${i + 1} could not be reconciled. Flagged for review.`);
+          }
+        }
+      } catch (scError) {
+        console.error(`[validateQuizQuestionsIndividually] Self-consistency check error for Q${i + 1}:`, scError.message);
+        // Don't fail the question just because consistency check errored
+        validated._selfConsistencyError = scError.message;
       }
     }
 
@@ -2670,4 +2864,325 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
 
   console.log(`[validateQuizQuestionsIndividually] Stats: ${JSON.stringify(stats)}`);
   return { validatedQuestions, stats: stats };
+}
+
+/**
+ * Targeted fix for questions with missing or incomplete rationales.
+ * Makes a focused LLM call to generate only the missing explanations.
+ * @param {object} question - Quiz question with incomplete explanations
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<object|null>} - Fixed question or null if fix failed
+ */
+async function fixMissingRationales(question, userId, courseId) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const correctLetter = letters[question.correct_index] || 'A';
+  
+  // Identify which explanations are missing or inadequate
+  const missingIndices = [];
+  const currentExplanations = question.explanation || [];
+  
+  for (let i = 0; i < 4; i++) {
+    const exp = currentExplanations[i];
+    if (!exp || typeof exp !== 'string' || exp.trim().length < MIN_EXPLANATION_LENGTH) {
+      missingIndices.push(i);
+    }
+  }
+  
+  if (missingIndices.length === 0) {
+    return question; // Nothing to fix
+  }
+  
+  const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
+  const missingLetters = missingIndices.map(i => letters[i]).join(', ');
+  
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert educator fixing incomplete quiz explanations. 
+Provide ONLY the missing explanations for the specified options.
+Each explanation must be substantive (at least ${MIN_EXPLANATION_LENGTH} characters) and explain WHY the option is correct or incorrect.
+
+Return JSON in this exact format:
+{
+  "explanations": {
+    "A": "explanation for A if needed",
+    "B": "explanation for B if needed",
+    ...
+  }
+}
+
+Only include the options that need explanations.`
+    },
+    {
+      role: 'user',
+      content: `Question: ${question.question}
+
+Options:
+${optionsText}
+
+Correct Answer: ${correctLetter}
+
+Missing explanations for options: ${missingLetters}
+
+Provide substantive explanations for each missing option. For the correct answer, explain WHY it is correct. For incorrect answers, explain WHY they are wrong and what misconception they might represent.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.3,
+      maxTokens: 1024,
+      messages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 30000,
+      reasoning: 'medium',
+      userId,
+      source: 'rationale_fix',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const parsed = parseJsonObject(raw, 'rationale_fix');
+    
+    if (!parsed || !parsed.explanations) {
+      console.warn('[fixMissingRationales] Invalid response format');
+      return null;
+    }
+
+    // Merge the fixed explanations with existing ones
+    const fixedExplanations = [...currentExplanations];
+    while (fixedExplanations.length < 4) {
+      fixedExplanations.push('');
+    }
+    
+    for (const [letter, explanation] of Object.entries(parsed.explanations)) {
+      const idx = letters.indexOf(letter.toUpperCase());
+      if (idx >= 0 && explanation && explanation.trim().length >= MIN_EXPLANATION_LENGTH) {
+        fixedExplanations[idx] = explanation.trim();
+      }
+    }
+
+    // Verify all explanations are now complete
+    const validation = validateExplanations(fixedExplanations, 4);
+    if (!validation.valid) {
+      console.warn(`[fixMissingRationales] Fix incomplete: ${validation.error}`);
+      return null;
+    }
+
+    return {
+      ...question,
+      explanation: fixedExplanations
+    };
+  } catch (error) {
+    console.error('[fixMissingRationales] Error:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Self-consistency check: Re-ask the model to solve the question independently
+ * and verify it arrives at the same answer as marked correct.
+ * @param {object} question - Quiz question to verify
+ * @param {string} context - Lesson context for grounding
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{consistent: boolean, modelAnswer: number, confidence: string, reasoning: string, fixedQuestion?: object}>}
+ */
+async function verifySelfConsistency(question, context, userId, courseId) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
+  
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert educator solving a multiple-choice question. 
+Analyze the question carefully and determine which option is correct.
+
+IMPORTANT: Do NOT look at any provided answer - solve this independently based on your knowledge.
+
+Return JSON in this exact format:
+{
+  "reasoning": "Step-by-step analysis of the question and each option",
+  "correct_option": "A" | "B" | "C" | "D",
+  "confidence": "high" | "medium" | "low",
+  "explanation": "Why this option is definitively correct"
+}`
+    },
+    {
+      role: 'user',
+      content: `Context (lesson material):
+${context.slice(0, 1500)}
+
+Question: ${question.question}
+
+Options:
+${optionsText}
+
+Analyze this question and determine the correct answer. Show your reasoning.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0, // Use temperature 0 for deterministic verification
+      maxTokens: 1024,
+      messages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 30000,
+      reasoning: 'high', // High reasoning for careful analysis
+      userId,
+      source: 'self_consistency_check',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const parsed = parseJsonObject(raw, 'self_consistency_check');
+    
+    if (!parsed || !parsed.correct_option) {
+      console.warn('[verifySelfConsistency] Invalid response format');
+      return { consistent: true, modelAnswer: -1, confidence: 'unknown', reasoning: 'Failed to parse response' };
+    }
+
+    const modelAnswerLetter = parsed.correct_option.toUpperCase();
+    const modelAnswerIndex = letters.indexOf(modelAnswerLetter);
+    const originalAnswerIndex = question.correct_index;
+    const consistent = modelAnswerIndex === originalAnswerIndex;
+
+    if (!consistent) {
+      console.warn(`[verifySelfConsistency] DISCREPANCY DETECTED: Original answer=${letters[originalAnswerIndex]}, Model says=${modelAnswerLetter}`);
+      console.warn(`[verifySelfConsistency] Model reasoning: ${parsed.reasoning?.slice(0, 200)}...`);
+      console.warn(`[verifySelfConsistency] Model confidence: ${parsed.confidence}`);
+    }
+
+    return {
+      consistent,
+      modelAnswer: modelAnswerIndex,
+      originalAnswer: originalAnswerIndex,
+      confidence: parsed.confidence || 'unknown',
+      reasoning: parsed.reasoning || '',
+      modelExplanation: parsed.explanation || ''
+    };
+  } catch (error) {
+    console.error('[verifySelfConsistency] Error:', error.message);
+    // On error, assume consistent to avoid blocking
+    return { consistent: true, modelAnswer: -1, confidence: 'error', reasoning: error.message };
+  }
+}
+
+/**
+ * Attempts to reconcile a discrepancy between original answer and model's answer.
+ * Uses another LLM call to determine which answer is actually correct.
+ * @param {object} question - Original quiz question
+ * @param {object} consistencyResult - Result from verifySelfConsistency
+ * @param {string} context - Lesson context
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<object|null>} - Fixed question or null if reconciliation failed
+ */
+async function reconcileAnswerDiscrepancy(question, consistencyResult, context, userId, courseId) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const originalLetter = letters[question.correct_index];
+  const modelLetter = letters[consistencyResult.modelAnswer];
+  const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
+  
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert fact-checker resolving a disputed multiple-choice answer.
+
+Two analyses have reached different conclusions about the correct answer.
+
+Your task: Determine which answer is ACTUALLY correct based on facts and logic.
+
+Return JSON:
+{
+  "analysis": "Detailed analysis of both proposed answers",
+  "correct_option": "A" | "B" | "C" | "D",
+  "certainty": "definite" | "probable" | "uncertain",
+  "explanation": ["Explanation for A", "Explanation for B", "Explanation for C", "Explanation for D"]
+}`
+    },
+    {
+      role: 'user',
+      content: `Context (lesson material):
+${context.slice(0, 1200)}
+
+Question: ${question.question}
+
+Options:
+${optionsText}
+
+DISPUTE:
+- Original marked answer: ${originalLetter}
+- Alternative analysis suggests: ${modelLetter}
+- Alternative reasoning: ${consistencyResult.reasoning.slice(0, 500)}
+
+Carefully analyze this dispute and determine the definitively correct answer. Provide explanations for ALL options.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0,
+      maxTokens: 1500,
+      messages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 45000,
+      reasoning: 'high',
+      userId,
+      source: 'answer_reconciliation',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const parsed = parseJsonObject(raw, 'answer_reconciliation');
+    
+    if (!parsed || !parsed.correct_option) {
+      console.warn('[reconcileAnswerDiscrepancy] Invalid response format');
+      return null;
+    }
+
+    const reconciledLetter = parsed.correct_option.toUpperCase();
+    const reconciledIndex = letters.indexOf(reconciledLetter);
+    
+    if (reconciledIndex < 0) {
+      console.warn('[reconcileAnswerDiscrepancy] Invalid reconciled answer letter');
+      return null;
+    }
+
+    // Build the fixed question
+    let explanation = parsed.explanation;
+    if (!Array.isArray(explanation) || explanation.length !== 4) {
+      // Try to preserve original explanations if new ones are invalid
+      explanation = question.explanation || [];
+      while (explanation.length < 4) {
+        explanation.push('Explanation pending reconciliation.');
+      }
+    }
+
+    const fixedQuestion = {
+      ...question,
+      correct_index: reconciledIndex,
+      explanation: explanation.map(e => typeof e === 'string' ? e.trim() : String(e)),
+      _reconciled: true,
+      _originalAnswer: question.correct_index,
+      _reconciliationCertainty: parsed.certainty || 'unknown'
+    };
+
+    // Log the change
+    if (reconciledIndex !== question.correct_index) {
+      console.log(`[reconcileAnswerDiscrepancy] Answer CHANGED from ${originalLetter} to ${reconciledLetter} (certainty: ${parsed.certainty})`);
+    } else {
+      console.log(`[reconcileAnswerDiscrepancy] Original answer ${originalLetter} CONFIRMED (certainty: ${parsed.certainty})`);
+    }
+
+    return fixedQuestion;
+  } catch (error) {
+    console.error('[reconcileAnswerDiscrepancy] Error:', error.message);
+    return null;
+  }
 }

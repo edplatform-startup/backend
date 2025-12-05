@@ -869,11 +869,14 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `inline_question` – Inline question generation
   - `video_selection` – Video selection
   - `content_repair` – Content array repair (broken JSON fix)
+  - `rationale_fix` – Targeted fix for missing/incomplete quiz explanations
+  - `self_consistency_check` – Re-ask model to solve question independently and verify answer matches
+  - `answer_reconciliation` – Arbitrate discrepancies between original answer and model's verification answer
   - `inline_question_repair` – Inline question markdown repair
   - `mermaid_validation` – Mermaid diagram syntax validation
   - `mermaid_repair` – Mermaid diagram repair
   - `validation_reading` – Reading content validation
-  - `validation_quiz` – Quiz validation (per-question validation with retry on incomplete explanations)
+  - `validation_quiz` – Quiz validation (per-question validation with self-consistency check)
   - `validation_flashcards` – Flashcard validation
   - `validation_practice_exam` – Practice exam validation
   - `validation_inline_question` – Inline question validation
@@ -886,6 +889,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `exam_generator_fix` – Exam generator compilation fix
   - `exam_grader` – Exam grading
 - **Course Tracking**: When `courseId` is available (e.g., during content generation), it is logged alongside each API call to enable per-course usage analysis.
+
 
 ### GET /analytics/usage/summary
 - Purpose: Retrieve aggregated AI usage statistics (total spend, total tokens, etc.).
