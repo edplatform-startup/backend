@@ -1617,7 +1617,7 @@ export async function generateReading(title, plan, courseName, moduleName, prere
     content: `You are an elite instructional designer producing concise, well-structured, easy-to-read learning content in Markdown.
 You are building a reading lesson for "${title}" in module "${moduleName}" of course "${courseName}".
 ${contextNote}
-${mode === 'cram' ? 'FOCUS: High-yield, exam-critical topics. Prioritize key definitions and concepts that appear frequently on exams.' : 'FOCUS: Comprehensive coverage. Include detailed examples, proofs (where applicable), and edge cases. Ensure deep understanding.'}
+${mode === 'cram' ? 'FOCUS: MAXIMIZE EXAM VALUE. Only cover high-yield, exam-critical topics. Prioritize key definitions, formulas, and concepts that appear frequently on exams. Be concise—omit background context and nice-to-know details.' : 'FOCUS: MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Provide comprehensive, detailed coverage that explores all nuances, edge cases, proofs (where applicable), intuitive explanations, and interconnections. Build deep, lasting knowledge that creates true mastery of the material.'}
 
 Always respond with JSON shaped exactly as:
 {
@@ -2646,7 +2646,7 @@ Plan: ${plans.reading || 'Generate comprehensive reading content'}`;
     content: `You are an elite instructional designer producing learning content for module "${moduleName}" in course "${courseName}".
 Generate readings for ALL ${lessons.length} lessons below in a SINGLE response.
 
-${mode === 'cram' ? 'FOCUS: High-yield, exam-critical topics. Concise but complete.' : 'FOCUS: Comprehensive coverage with detailed examples.'}
+${mode === 'cram' ? 'FOCUS: MAXIMIZE EXAM VALUE. Only high-yield, exam-critical topics. Be concise—every sentence must directly support exam preparation.' : 'FOCUS: MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Comprehensive coverage with detailed examples, nuances, and interconnections that build lasting mastery.'}
 
 OUTPUT FORMAT:
 - Start each lesson reading with: ===LESSON:lesson_id===

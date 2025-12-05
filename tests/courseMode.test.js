@@ -58,7 +58,7 @@ describe('Course Mode Logic', () => {
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
             expect(systemPrompt).toContain('MODE: CRAM');
-            expect(systemPrompt).toContain('FOCUS: High-yield, exam-critical topics ONLY');
+            expect(systemPrompt).toContain('MAXIMIZE EXAM VALUE');
         });
 
         it('should include Deep Mode instructions in system prompt', async () => {
@@ -67,7 +67,7 @@ describe('Course Mode Logic', () => {
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
             expect(systemPrompt).toContain('MODE: DEEP');
-            expect(systemPrompt).toContain('FOCUS: Comprehensive coverage');
+            expect(systemPrompt).toContain('MAXIMAL UNDERSTANDING AND DEEP RETENTION');
         });
     });
 
@@ -91,9 +91,9 @@ describe('Course Mode Logic', () => {
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
             expect(systemPrompt).toContain('MODE: CRAM');
-            expect(systemPrompt).toContain('Structure for speed');
-            expect(systemPrompt).toContain('Concise, high-yield focus'); // Reading plan instruction
-            expect(systemPrompt).toContain('Only include if the concept is exceptionally difficult'); // Video plan instruction
+            expect(systemPrompt).toContain('MAXIMIZE EXAM VALUE');
+            expect(systemPrompt).toContain('laser-focused on exam-critical concepts'); // Reading plan instruction
+            expect(systemPrompt).toContain('Only include if absolutely essential'); // Video plan instruction
         });
 
         it('should include Deep Mode instructions in system prompt', async () => {
@@ -102,8 +102,8 @@ describe('Course Mode Logic', () => {
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
             expect(systemPrompt).toContain('MODE: DEEP');
-            expect(systemPrompt).toContain('Granular lessons');
-            expect(systemPrompt).toContain('Highly detailed prompt for a writer'); // Reading plan instruction
+            expect(systemPrompt).toContain('MAXIMIZE UNDERSTANDING AND DEEP RETENTION');
+            expect(systemPrompt).toContain('explore all nuances'); // Reading plan instruction
         });
     });
 
@@ -150,7 +150,7 @@ describe('Course Mode Logic', () => {
             const callArgs = mockExecutor.mock.calls[0][0];
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
-            expect(systemPrompt).toContain('FOCUS: High-yield, exam-critical topics');
+            expect(systemPrompt).toContain('MAXIMIZE EXAM VALUE');
         });
 
         it('should include comprehensive focus for Deep Mode reading', async () => {
@@ -158,7 +158,7 @@ describe('Course Mode Logic', () => {
             const callArgs = mockExecutor.mock.calls[0][0];
             const systemPrompt = callArgs.messages.find(m => m.role === 'system').content;
 
-            expect(systemPrompt).toContain('FOCUS: Comprehensive coverage');
+            expect(systemPrompt).toContain('MAXIMIZE UNDERSTANDING AND DEEP RETENTION');
         });
     });
 });

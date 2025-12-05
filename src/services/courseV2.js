@@ -582,7 +582,7 @@ CRITICAL RULES:
 3. Yield Scoring: Estimate how likely this topic is to appear on the exam (High/Medium/Low) based on the exam format provided.
 4. Metadata powers Deep vs. Cram study modes, so fill every field carefully.
    - **MODE: ${mode.toUpperCase()}**
-   ${mode === 'cram' ? '- FOCUS: High-yield, exam-critical topics ONLY. Prune "nice-to-know" background info. Prioritize concepts that appear frequently on exams.' : '- FOCUS: Comprehensive coverage. Expand on all topics, including foundational and peripheral concepts. Ensure deep understanding.'}
+   ${mode === 'cram' ? '- FOCUS: MAXIMIZE EXAM VALUE. Generate FEWER topics overall—only high-yield, exam-critical concepts. Aggressively prune "nice-to-know" and peripheral information. Every topic must directly contribute to exam performance.' : '- FOCUS: MAXIMAL UNDERSTANDING AND DEEP RETENTION. Generate comprehensive topics that explore all details, nuances, edge cases, and interconnections. Include foundational concepts, theoretical underpinnings, and extended examples. Prioritize building lasting, transferable knowledge over exam shortcuts.'}
 5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
 6. GROUNDING: When authoritative excerpts are provided, use them to ground specific claims about topic coverage and exam relevance. Reference specific details from the excerpts in your exam_relevance_reasoning fields.
 

@@ -25,11 +25,11 @@ import { tryParseJson } from '../utils/jsonUtils.js';
 function extractTopicTitles(grokDraft) {
   const titles = [];
   if (!grokDraft || typeof grokDraft !== 'object') return titles;
-  
+
   // Handle various draft structures
   if (grokDraft.course_title) titles.push(grokDraft.course_title);
   if (grokDraft.title) titles.push(grokDraft.title);
-  
+
   const topics = grokDraft.topics || grokDraft.overviewTopics || grokDraft.modules || [];
   for (const topic of topics) {
     if (typeof topic === 'string') {
@@ -143,15 +143,15 @@ CRITICAL RULES:
    - NOTE: Do NOT include practice_problems in individual lessons. Practice problems are automatically added to Module Quizzes.
 6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
 7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
-   - **reading:** ${mode === 'cram' ? 'Concise, high-yield focus. Emphasize exam-critical concepts and key definitions.' : 'Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
-   - **video:** ${mode === 'cram' ? 'Only include if the concept is exceptionally difficult or visual. 1-2 high-yield search queries.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.'}
+   - **reading:** ${mode === 'cram' ? 'MAXIMIZE EXAM VALUE. Concise, laser-focused on exam-critical concepts only. Omit background context and nice-to-know details. Every sentence should directly support exam preparation.' : 'MAXIMIZE UNDERSTANDING AND RETENTION. Provide highly detailed prompts for a writer that explore all nuances, edge cases, intuitive explanations, real-world analogies (e.g., "Use a gear analogy," "Focus on formal proofs"), and interconnections between concepts. Build deep, lasting comprehension.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
+   - **video:** ${mode === 'cram' ? 'MINIMIZE VIDEO COUNT. Only include if absolutely essential for a concept that cannot be understood through text. Maximum 1 high-yield search query.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). Include videos that deepen understanding beyond text. Only include if the concept benefits from visual/dynamic explanation.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
 8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
 11. **MODE: ${mode.toUpperCase()}**:
-    ${mode === 'cram' ? '- Structure for speed. Group topics aggressively. Fewer lessons. Focus on high-yield material.' : '- Granular lessons. Detailed breakdown. Ensure comprehensive coverage.'}
+    ${mode === 'cram' ? '- MAXIMIZE EXAM VALUE. Structure for speed. Aggressively merge and prune lessons. Generate FEWER lessons overall. Eliminate nice-to-know content. Every lesson must directly contribute to exam performance.' : '- MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Create granular, detailed lessons that explore all nuances. Ensure comprehensive coverage of edge cases, exceptions, and interconnections. Build deep, lasting knowledge that transfers beyond the exam.'}
 12. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
 
 Output STRICT VALID JSON format (no markdown, no comments):
