@@ -62,17 +62,12 @@ test('generateHierarchicalTopics: creates RAG session and injects context into p
         content: JSON.stringify({
           overviewTopics: [
             {
-              id: 'topic-1',
               title: 'Limits',
               original_skeleton_ref: 'Limits',
               subtopics: [
                 {
-                  id: 'sub-1',
-                  overviewId: 'topic-1',
                   title: 'Epsilon-Delta Definition',
                   bloom_level: 'Understand',
-                  estimated_study_time_minutes: 45,
-                  importance_score: 9,
                   exam_relevance_reasoning: 'Per syllabus chapter 1.',
                   yield: 'High',
                 },
@@ -162,17 +157,12 @@ test('generateHierarchicalTopics: continues without RAG if session creation fail
       content: JSON.stringify({
         overviewTopics: [
           {
-            id: 'topic-1',
             title: 'Topic A',
             original_skeleton_ref: 'Topic A',
             subtopics: [
               {
-                id: 'sub-1',
-                overviewId: 'topic-1',
                 title: 'Concept 1',
                 bloom_level: 'Understand',
-                estimated_study_time_minutes: 30,
-                importance_score: 7,
                 exam_relevance_reasoning: 'Standard topic.',
                 yield: 'Medium',
               },
@@ -218,17 +208,12 @@ test('generateHierarchicalTopics: no RAG when no syllabus/exam text provided', a
       content: JSON.stringify({
         overviewTopics: [
           {
-            id: 't1',
             title: 'Unit 1',
             original_skeleton_ref: 'Unit 1',
             subtopics: [
               {
-                id: 's1',
-                overviewId: 't1',
                 title: 'Subtopic 1',
                 bloom_level: 'Remember',
-                estimated_study_time_minutes: 20,
-                importance_score: 5,
                 exam_relevance_reasoning: 'Basic topic.',
                 yield: 'Low',
               },

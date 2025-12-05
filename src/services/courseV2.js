@@ -4,7 +4,7 @@ import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
 import { getCostTotals } from './grokClient.js';
 import { plannerSyllabus } from './prompts/courseV2Prompts.js';
-import { CourseSkeletonSchema, TopicMapSchema } from '../schemas/courseV2.js';
+import { CourseSkeletonSchema, TopicMapSchema, RawTopicMapSchema } from '../schemas/courseV2.js';
 import { createRagSession, retrieveContext } from '../rag/index.js';
 
 // RAG configuration
@@ -649,9 +649,9 @@ Using this information, produce competency-based overviewTopics with fully popul
     let parsed = tryParseJson(result?.content);
     let validationError = null;
 
-    // Initial validation
+    // Initial validation - use RawTopicMapSchema since LLM doesn't produce id/overviewId/computed fields
     if (parsed && typeof parsed === 'object') {
-      const check = TopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
+      const check = RawTopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
       if (!check.success) {
         validationError = check.error.toString();
       }
@@ -691,15 +691,16 @@ Please return **only** a correct JSON object for the topic map, with no extra te
         throw new Error('Topic generation returned invalid JSON after repair attempt.');
       }
 
-      // Re-validate
-      const recheck = TopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
+      // Re-validate with RawTopicMapSchema
+      const recheck = RawTopicMapSchema.safeParse({ overviewTopics: parsed.overviewTopics });
       if (!recheck.success) {
         throw new Error(`Topic generation failed validation after repair: ${recheck.error.toString()}`);
       }
     }
 
+    // Normalize adds id, overviewId, estimated_study_time_minutes, importance_score
     const overviewTopics = normalizeOverviewTopics(parsed.overviewTopics, rawTopicSummaries);
-    // Final safe parse to ensure normalization didn't break anything (though normalize handles most things)
+    // Final validation with full schema to ensure normalization produced valid output
     const validated = TopicMapSchema.parse({ overviewTopics });
     return {
       overviewTopics: validated.overviewTopics,

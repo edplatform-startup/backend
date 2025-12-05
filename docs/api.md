@@ -253,7 +253,8 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
     - `yield`: `"High"` | `"Medium"` | `"Low"`
   - The following fields are computed automatically based on yield/bloom: `id`, `overviewId`, `estimated_study_time_minutes`, `importance_score`
   - These fields power Deep vs. Cram study modes.
-  - Normalizes IDs, fills in missing metadata, enforces `overviewId` relationships, and logs usage via Grok cost tracking as `[topicsV2]`.
+  - Generates IDs (`overview_N`, `overview_N_subtopic_M`) and computes `estimated_study_time_minutes`/`importance_score` based on yield and bloom level.
+  - Logs usage via Grok cost tracking as `[topicsV2]`.
 - Responses:
   - 200 OK →
     ```json

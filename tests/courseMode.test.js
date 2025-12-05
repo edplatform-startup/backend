@@ -29,16 +29,11 @@ describe('Course Mode Logic', () => {
                         result: {
                             content: JSON.stringify({
                                 overviewTopics: [{
-                                    id: 'topic-1',
                                     title: 'Topic 1',
                                     original_skeleton_ref: 'Unit 1',
                                     subtopics: [{
-                                        id: 'sub-1',
-                                        overviewId: 'topic-1',
                                         title: 'Subtopic 1',
                                         bloom_level: 'Understand',
-                                        estimated_study_time_minutes: 30,
-                                        importance_score: 8,
                                         exam_relevance_reasoning: 'Reason',
                                         yield: 'High'
                                     }]

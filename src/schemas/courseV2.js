@@ -23,6 +23,26 @@ export const SyllabusSchema = CourseSkeletonSchema;
 const BloomLevelSchema = z.enum(['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate']);
 const YieldSchema = z.enum(['High', 'Medium', 'Low']);
 
+// Schema for raw LLM output (before normalization adds computed fields)
+const RawSubtopicSchema = z.object({
+  title: z.string().min(1),
+  bloom_level: BloomLevelSchema,
+  exam_relevance_reasoning: z.string().min(1),
+  yield: YieldSchema,
+});
+
+const RawOverviewTopicSchema = z.object({
+  title: z.string().min(1),
+  original_skeleton_ref: z.string().min(1),
+  subtopics: z.array(RawSubtopicSchema).min(1),
+});
+
+// Schema for validating raw LLM output (no id, overviewId, estimated_study_time_minutes, importance_score)
+export const RawTopicMapSchema = z.object({
+  overviewTopics: z.array(RawOverviewTopicSchema).min(1),
+});
+
+// Full schema for final output (after normalization adds computed fields)
 export const CompetencySubtopicSchema = z.object({
   id: z.string().min(1),
   overviewId: z.string().min(1),
