@@ -1,6 +1,7 @@
 import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat, getCostTotals } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
+import { validateAndRepairLatex } from '../utils/latexUtils.js';
 import {
   csvToQuiz,
   csvToFlashcards,
@@ -2035,14 +2036,13 @@ function normalizeQuizItem(item, index, strictMode = true) {
     }
   }
 
+  // Apply LaTeX repair to all text fields before returning
   const normalized = {
-    question,
-    options,
+    question: validateAndRepairLatex(question),
+    options: options.map(opt => validateAndRepairLatex(opt)),
     correct_index: correctIndex,
-    explanation,
+    explanation: explanation.map(exp => validateAndRepairLatex(exp)),
   };
-
-
 
   return normalized;
 }
@@ -2607,7 +2607,11 @@ function normalizeFlashcard(card, index) {
   if (!front || !back) {
     throw new Error(`Flashcard ${index + 1} is invalid`);
   }
-  return { front, back };
+  // Apply LaTeX repair to both sides
+  return {
+    front: validateAndRepairLatex(front),
+    back: validateAndRepairLatex(back)
+  };
 }
 
 // ============================================================================

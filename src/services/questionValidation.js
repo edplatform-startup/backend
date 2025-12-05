@@ -25,23 +25,44 @@ export function __resetGrokExecutor() {
 }
 
 /**
- * Coerce model content to string
+ * Coerce model content to string.
+ * Handles various response structures from reasoning models:
+ * - Direct string content
+ * - Array of text parts
+ * - Object with .text property
+ * - Object with .content property (reasoning models)
+ * - Array where items have .type and .text (Anthropic style)
  */
 function coerceModelText(content) {
   if (typeof content === 'string') return content.trim();
+
   if (Array.isArray(content)) {
     return content
       .map((part) => {
         if (typeof part === 'string') return part;
-        if (part && typeof part === 'object' && typeof part.text === 'string') return part.text;
+        if (part && typeof part === 'object') {
+          // Handle { type: 'text', text: '...' } format (Anthropic/OpenAI)
+          if (part.type === 'text' && typeof part.text === 'string') return part.text;
+          // Handle { text: '...' } format
+          if (typeof part.text === 'string') return part.text;
+          // Handle { content: '...' } format
+          if (typeof part.content === 'string') return part.content;
+        }
         return '';
       })
       .join('')
       .trim();
   }
-  if (content && typeof content === 'object' && typeof content.text === 'string') {
-    return content.text.trim();
+
+  if (content && typeof content === 'object') {
+    // Handle { text: '...' }
+    if (typeof content.text === 'string') return content.text.trim();
+    // Handle { content: '...' }
+    if (typeof content.content === 'string') return content.content.trim();
+    // Try JSON stringify as last resort to see what we got
+    console.warn('[coerceModelText] Unrecognized content structure:', JSON.stringify(content).slice(0, 200));
   }
+
   return '';
 }
 
@@ -132,7 +153,7 @@ Remember to honestly assess your confidence in the answer's correctness.`
     }
 
     const confidence = parsed.internal_reasoning?.final_confidence ?? 0.5;
-    
+
     return {
       question: parsed.question,
       confidence: Math.max(0, Math.min(1, confidence)),
@@ -210,7 +231,7 @@ Assess the accuracy of this question.`
     const parsed = parseJsonObject(raw, 'rate_question_confidence');
 
     const confidence = parsed?.confidence ?? 0.5;
-    
+
     return {
       question: {
         ...question,
@@ -253,18 +274,18 @@ export async function validateCourseContent(allGeneratedContent, userId, courseI
 
   allGeneratedContent.forEach((lesson, lessonIdx) => {
     const { nodeId, payload } = lesson;
-    
+
     // Quizzes - only validate low confidence items
     if (payload.quiz && Array.isArray(payload.quiz)) {
       payload.quiz.forEach((q, qIdx) => {
         const confidence = q._confidence ?? 0.5; // Default to low confidence if not set
         const needsValidation = q._needsValidation === true || confidence < 0.7;
-        
+
         if (!needsValidation) {
           skippedHighConfidence++;
           return; // Skip high-confidence items
         }
-        
+
         const id = `quiz_${nodeId}_${qIdx}`;
         itemsToValidate.push({
           id,
@@ -284,12 +305,12 @@ export async function validateCourseContent(allGeneratedContent, userId, courseI
       payload.practice_problems.forEach((p, pIdx) => {
         const confidence = p._confidence ?? 0.5;
         const needsValidation = p._needsValidation === true || confidence < 0.7;
-        
+
         if (!needsValidation) {
           skippedHighConfidence++;
           return; // Skip high-confidence items
         }
-        
+
         const id = `practice_${nodeId}_${pIdx}`;
         itemsToValidate.push({
           id,
@@ -375,7 +396,20 @@ CRITICAL:
       courseId,
     });
 
+    // Diagnostic logging for batch validation content extraction
+    console.log(`[validateCourseContent] Content type: ${typeof content}, isArray: ${Array.isArray(content)}`);
+    if (content && typeof content === 'object' && !Array.isArray(content)) {
+      console.log(`[validateCourseContent] Content keys: ${Object.keys(content).join(', ')}`);
+    }
+
     const raw = coerceModelText(content);
+    console.log(`[validateCourseContent] Extracted raw length: ${raw.length}, preview: ${raw.slice(0, 100)}...`);
+
+    if (raw.length < 100) {
+      // Log more detail when extraction seems to have failed
+      console.error(`[validateCourseContent] Content extraction may have failed. Raw content preview: ${JSON.stringify(content).slice(0, 500)}`);
+    }
+
     const parsed = parseJsonObject(raw, 'course_batch_validation');
     const results = parsed?.results || {};
 
@@ -386,14 +420,14 @@ CRITICAL:
 
     // We need to be careful about mutating the original objects in place or replacing them.
     // Since we have a map to the indices, we can update the arrays in allGeneratedContent.
-    
+
     // First, mark items for deletion or update
     const updates = []; // { lessonIdx, type, itemIndex, action: 'update'|'delete', data? }
 
     for (const item of itemsToValidate) {
       const result = results[item.id];
       const mapInfo = itemMap.get(item.id);
-      
+
       if (!result) {
         console.warn(`[validateCourseContent] No result for ${item.id}, assuming valid.`);
         validCount++;
@@ -413,10 +447,10 @@ CRITICAL:
 
     // Apply updates in reverse order of index to avoid shifting issues when deleting?
     // Actually, we should group by lesson and type, then rebuild the arrays.
-    
+
     // Group updates by lesson and type
     const updatesByLesson = new Map(); // lessonIdx -> { quiz: Map<index, action>, practice: Map<index, action> }
-    
+
     updates.forEach(u => {
       if (!updatesByLesson.has(u.lessonIdx)) {
         updatesByLesson.set(u.lessonIdx, { quiz: new Map(), practice: new Map() });
@@ -462,7 +496,7 @@ CRITICAL:
     });
 
     console.log(`[validateCourseContent] Validation complete. Valid: ${validCount}, Fixed: ${fixedCount}, Discarded: ${discardedCount}`);
-    
+
   } catch (error) {
     console.error('[validateCourseContent] Critical failure in batch validation:', error);
     // In case of critical failure, we return original content but warn
