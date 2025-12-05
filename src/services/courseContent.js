@@ -285,7 +285,6 @@ async function runContentWorker(courseId, options = {}) {
     reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     flashcards: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
-    practice_exam: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     practice_problems: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0, verified: 0, corrected: 0 },
     video: { total: 0, successful: 0, failed: 0 }
   };
@@ -368,11 +367,6 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     ? safeGenerate(generateFlashcards(lessonName, plans.flashcards, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Flashcards')
     : Promise.resolve(null);
 
-  const practiceExamPlan = plans.practice_exam ?? plans.practiceExam;
-  const practiceExamPromise = practiceExamPlan
-    ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Practice Exam')
-    : Promise.resolve(null);
-
   const practiceProblemsPlan = plans.practice_problems ?? plans.practiceProblems;
   const practiceProblemsPromise = practiceProblemsPlan
     ? safeGenerate(generatePracticeProblems(lessonName, practiceProblemsPlan, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Practice Problems')
@@ -382,12 +376,11 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     ? safeGenerate(generateVideoSelection(plans.video, node.user_id, node.course_id), 'Selecting Video')
     : Promise.resolve({ videos: [], logs: [] });
 
-  const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes, practiceProblemsRes] = await Promise.all([
+  const [readingRes, quizRes, flashcardsRes, videoResult, practiceProblemsRes] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
     videoPromise,
-    practiceExamPromise,
     practiceProblemsPromise,
   ]);
 
@@ -435,7 +428,6 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     reading: readingRes?.data || null,
     quiz: quizRes?.data || null,
     flashcards: flashcardsRes?.data || null,
-    practice_exam: practiceExamRes?.data || null,
     practice_problems: practiceProblemsRes?.data || null,
     video: videos, // Keep original array structure
     video_urls: videoUrls, // New CSV field
@@ -462,7 +454,6 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     reading: readingRes?.stats || {},
     quiz: quizRes?.stats || {},
     flashcards: flashcardsRes?.stats || {},
-    practice_exam: practiceExamRes?.stats || {},
     practice_problems: practiceProblemsRes?.stats || {},
     video: { total: 1, successful: videos.length > 0 ? 1 : 0, failed: videos.length === 0 ? 1 : 0 }
   };
@@ -1871,115 +1862,6 @@ function normalizeQuizItem(item, index, strictMode = true) {
   return normalized;
 }
 
-async function generatePracticeExam(title, plan, courseName, moduleName, userId, courseId) {
-  const messages = [
-    {
-      role: 'system',
-      content: `You are creating a high-stakes practice exam for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
-
-Always respond with JSON:
-{
-  "internal_audit": "overall reasoning about coverage, pacing, and fairness",
-  "practice_exam": [
-    {
-      "validation_check": "Scratchpad ensuring rubric matches answer and only one resolution path earns full credit",
-      "question": "Student-facing prompt (can include multi-part instructions)",
-      "answer_key": "Model solution in instructor voice",
-      "rubric": "Bulleted scoring rubric tied to sub-parts",
-      "estimated_minutes": 20
-    }
-  ]
-}
-
-Rules:
-- validation_check is required for every item and must audit completeness before final answers
-- answer_key must stay solution-focused, no meta-commentary
-- rubric should reference the same subparts mentioned in the question.
-- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
-    },
-    {
-      role: 'user',
-      content: `Produce JSON with a 'practice_exam' array of 2 rigorous free-response problems for "${title}".
-Plan / emphasis:
-${plan}
-
-Each problem should require 15-25 minutes, may include labeled subparts (a, b, ...), and must capture authentic exam difficulty.`,
-    },
-  ];
-
-  const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
-    temperature: 0.25,
-    maxTokens: 4096,
-    messages,
-    responseFormat: { type: 'json_object' },
-    requestTimeoutMs: 120000,
-    reasoning: 'high',
-    userId,
-    source: 'practice_exam_generation',
-    courseId,
-  });
-
-  const text = coerceModelText(content);
-
-  let rawItems;
-  try {
-    rawItems = parseJsonArray(text, 'practice_exam');
-
-    const validator = (item, index) => {
-      try {
-        let cleanItem = item;
-        if (item && typeof item === 'object') {
-          const { validation_check, step_by_step_thinking, ...rest } = item;
-          cleanItem = rest;
-        }
-        return { valid: true, data: normalizePracticeExamItem(cleanItem, index) };
-      } catch (e) {
-        return { valid: false, error: e.message };
-      }
-    };
-
-    const repairPrompt = (brokenItems, errors) => {
-      return `The following practice exam items are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Ensure each has 'question', 'answer_key', 'rubric', and 'estimated_minutes'.`;
-    };
-
-    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'generatePracticeExam', userId, courseId);
-
-    if (!repairedItems.length) {
-      throw new Error('Practice exam generator returned no valid problems after repair');
-    }
-
-    // --- VALIDATION STEP ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId, courseId);
-
-    return { data: validatedItems, stats };
-  } catch (err) {
-    throw err;
-  }
-}
-
-function normalizePracticeExamItem(item, index) {
-  const question = typeof item?.question === 'string' ? item.question.trim() : '';
-  const answerKey = typeof item?.answer_key === 'string' ? item.answer_key.trim() : '';
-  const rubric = typeof item?.rubric === 'string' ? item.rubric.trim() : '';
-  const estimatedMinutesRaw = Number(item?.estimated_minutes);
-  const estimatedMinutes = Number.isFinite(estimatedMinutesRaw) && estimatedMinutesRaw > 0
-    ? Math.round(estimatedMinutesRaw)
-    : 20;
-
-  if (!question || !answerKey) {
-    throw new Error(`Practice exam item ${index + 1} is invalid`);
-  }
-
-  return {
-    question,
-    answer_key: answerKey,
-    rubric: rubric || 'Award full credit only when every subpart is justified with correct reasoning.',
-    estimated_minutes: estimatedMinutes,
-  };
-}
-
 /**
  * Generates practice problems - exam-style questions with detailed rubrics and sample answers.
  * These are more complex than quiz questions and designed to replicate authentic exam conditions.
@@ -2824,83 +2706,6 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
   }
 }
 
-export async function regeneratePracticeExam(title, currentExam, changeInstruction, courseName, moduleName, userId, courseId) {
-  const messages = [
-    {
-      role: 'system',
-      content: `You are editing a practice exam for the lesson "${title}" in module "${moduleName}".
-Current Exam:
-${JSON.stringify(currentExam, null, 2)}
-
-Change Instruction:
-${changeInstruction}
-
-Always respond with JSON:
-{
-  "internal_audit": "reasoning",
-  "practice_exam": [
-    {
-      "validation_check": "...",
-      "question": "...",
-      "answer_key": "...",
-      "rubric": "...",
-      "estimated_minutes": 20
-    }
-  ]
-}
-`,
-    },
-    {
-      role: 'user',
-      content: `Generate the new JSON 'practice_exam' array.`,
-    },
-  ];
-
-  const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
-    temperature: 0.25,
-    maxTokens: 4096,
-    messages,
-    responseFormat: { type: 'json_object' },
-    requestTimeoutMs: 120000,
-    reasoning: 'high',
-    userId,
-    source: 'practice_exam_regeneration',
-    courseId,
-  });
-
-  const text = coerceModelText(content);
-
-  try {
-    const rawItems = parseJsonArray(text, 'practice_exam');
-    const validator = (item, index) => {
-      try {
-        let cleanItem = item;
-        if (item && typeof item === 'object') {
-          const { validation_check, step_by_step_thinking, ...rest } = item;
-          cleanItem = rest;
-        }
-        return { valid: true, data: normalizePracticeExamItem(cleanItem, index) };
-      } catch (e) {
-        return { valid: false, error: e.message };
-      }
-    };
-
-    const repairPrompt = (brokenItems, errors) => `Regenerate invalid practice exam items:\n${JSON.stringify(brokenItems)}`;
-    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'regeneratePracticeExam', userId, courseId);
-
-    if (!repairedItems.length) throw new Error('Practice exam regenerator returned no valid problems');
-
-    // --- VALIDATION STEP ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedItems = await validateContent('practice_exam', repairedItems, validationContext, userId, courseId);
-
-    return { data: validatedItems, stats };
-  } catch (err) {
-    throw err;
-  }
-}
-
 export async function generateVideoSelection(queries, userId, courseId) {
   const logs = [];
   const videos = [];
@@ -3096,7 +2901,7 @@ function mergeValidatedArray(original, validated, contentType) {
 
 /**
  * Validates generated content using a worker model.
- * @param {string} contentType - 'reading', 'quiz', 'flashcards', 'practice_exam', 'inline_question'
+ * @param {string} contentType - 'reading', 'quiz', 'flashcards', 'inline_question'
  * @param {any} content - The content to validate
  * @param {string} context - Additional context (e.g., lesson title, plan)
  * @param {object} options - Additional options
@@ -3164,11 +2969,6 @@ ${contentType === 'flashcards' ? `
 - Each object must have: "front", "back".
 - Do not wrap the array in a "flashcards" key.
 ` : ''}
-${contentType === 'practice_exam' ? `
-- Return a JSON ARRAY of objects.
-- Each object must have: "question", "answer_key", "rubric", "estimated_minutes".
-- Do not wrap the array in a "practice_exam" key.
-` : ''}
 
 Context:
 ${context}`
@@ -3228,7 +3028,6 @@ ${context}`
             if (Array.isArray(json.quiz)) return mergeValidatedArray(content, json.quiz, contentType);
             if (Array.isArray(json.questions)) return mergeValidatedArray(content, json.questions, contentType);
             if (Array.isArray(json.flashcards)) return mergeValidatedArray(content, json.flashcards, contentType);
-            if (Array.isArray(json.practice_exam)) return mergeValidatedArray(content, json.practice_exam, contentType);
             // If we can't find the array, return original to be safe
             return content;
           }
@@ -3249,7 +3048,6 @@ ${context}`
               if (Array.isArray(json.quiz)) return mergeValidatedArray(content, json.quiz, contentType);
               if (Array.isArray(json.questions)) return mergeValidatedArray(content, json.questions, contentType);
               if (Array.isArray(json.flashcards)) return mergeValidatedArray(content, json.flashcards, contentType);
-              if (Array.isArray(json.practice_exam)) return mergeValidatedArray(content, json.practice_exam, contentType);
               // If we can't find the array, return original to be safe
               return content;
             }

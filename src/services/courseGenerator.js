@@ -56,7 +56,6 @@ function extractTopicTitles(grokDraft) {
  * @property {string[]} [video] - Search queries for video
  * @property {string} [quiz] - Prompt for quiz generation
  * @property {string} [flashcards] - Prompt for flashcard generation
- * @property {string} [practice_exam] - Prompt for practice exam generation
  */
 
 /**
@@ -140,17 +139,14 @@ CRITICAL RULES:
    - A lesson can have multiple readings (e.g., theory + examples + edge cases)
    - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
-   - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
-   - A lesson can include **practice_problems** for exam-style worked problems (more complex than quiz questions, requiring 10-20 min each, with detailed rubrics and sample answers)
    - ALL content should flow in a logical learning order for maximum comprehension
+   - NOTE: Do NOT include practice_problems in individual lessons. Practice problems are automatically added to Module Quizzes.
 6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
 7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** ${mode === 'cram' ? 'Concise, high-yield focus. Emphasize exam-critical concepts and key definitions.' : 'Highly detailed prompt for a writer (e.g., "Use a gear analogy," "Focus on formal proofs"). Focus on intuitive understanding and exact topics.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
    - **video:** ${mode === 'cram' ? 'Only include if the concept is exceptionally difficult or visual. 1-2 high-yield search queries.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
-   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
-   - **practice_problems:** INCLUDE WHEN: The lesson covers complex problem-solving skills, multi-step procedures, or exam-critical topics where students need to practice authentic exam-style problems. Each practice problem should take 10-20 minutes to complete. Specify: number of problems (typically 2-4), specific topic areas to cover, expected difficulty level, types of reasoning required (e.g., proofs, calculations, analysis), and any common exam traps to incorporate. These are MORE DIFFICULT than quiz questions and should replicate real exam conditions.
 8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
@@ -176,8 +172,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
          "reading": "Explain the chain rule using a 'peeling the onion' analogy. Focus on identifying inner vs outer functions.",
          "video": ["chain rule calculus intuition", "chain rule visualization 3blue1brown"],
          "quiz": "Generate 3-5 multiple-choice questions. Question 1 on Chain Rule intuition, Question 2 on identifying inner/outer functions, Question 3 on applying the formula. Include a Challenge Question involving a trigonometric function inside a polynomial.",
-         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions.",
-         "practice_problems": "Create 2 exam-style problems on chain rule application. Problem 1: Differentiate a nested function with 3 layers (e.g., sin(ln(x^2+1))). Problem 2: Apply chain rule combined with implicit differentiation. Include common exam traps like forgetting inner derivative."
+         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions."
       }
     }
   ]
@@ -347,18 +342,35 @@ Requirements:
 7. Use proper LaTeX formatting for any math.
 8. Do NOT include content from outside this module.`;
 
+    const practiceProblemsPrompt = `Create 2-3 exam-style practice problems for the module "${moduleName}".
+These problems should cover the key concepts from the following lessons:
+${lessonSummaries}
+
+Requirements:
+1. Each problem should take 10-20 minutes to complete.
+2. Problems should be MORE DIFFICULT than the quiz questions and replicate authentic exam conditions.
+3. Include multi-step problems that integrate concepts across multiple lessons in this module.
+4. For each problem, provide:
+   - A detailed rubric with point allocations for each step
+   - Common exam traps and errors students might make
+   - A complete sample answer with step-by-step solution
+5. Focus on application, analysis, and evaluation (Bloom's higher levels).
+6. Use proper LaTeX formatting for any math.
+7. Do NOT include content from outside this module.`;
+
     const moduleQuizLesson = {
       slug_id: quizSlug,
       title: 'Module Quiz',
       module_group: moduleName,
-      estimated_minutes: 20,
+      estimated_minutes: 30,
       bloom_level: 'Evaluate',
       intrinsic_exam_value: 10,
-      architectural_reasoning: 'Automatically generated comprehensive review quiz for the module.',
+      architectural_reasoning: 'Automatically generated comprehensive review quiz with practice problems for the module.',
       dependencies: lessons.map(l => l.slug_id), // Depend on ALL lessons in the module
       original_source_ids: [],
       content_plans: {
-        quiz: quizPrompt
+        quiz: quizPrompt,
+        practice_problems: practiceProblemsPrompt
       }
     };
 
@@ -458,8 +470,18 @@ CRITICAL RULES:
 1. **Prioritize Weaknesses:** Focus heavily on topics where the grade is low (1-3). You can group strong topics (4-5) into a quick summary lesson or omit them if the list is long.
 2. **Granularity:** Create lessons that take 15-30 minutes. Group related weak topics into cohesive lessons.
 3. **Module Group:** ALL lessons must have "module_group" set to "${type} Review".
-4. **Content:** Include readings (summary/review), videos (if helpful), and quizzes.
-5. **Practice:** Include a "practice_exam" content plan for at least one lesson, or spread practice problems across lessons.
+4. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
+   - A lesson can have multiple readings (e.g., theory + examples + edge cases)
+   - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
+   - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
+   - A lesson can include flashcards for memorization
+   - ALL content should flow in a logical learning order for maximum comprehension
+   - NOTE: Do NOT include practice_problems in individual lessons. Practice problems are automatically added to the final Review Quiz.
+5. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
+   - **reading:** Concise review/summary focusing on exam-critical concepts. Address the specific weaknesses mentioned in the student's performance.
+   - **video:** 1-2 high-yield search queries. Only include if the concept is exceptionally difficult or visual.
+   - **quiz:** Detailed prompt for an examiner. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question."
+   - **flashcards:** Prompt focusing on what to memorize (definitions, formulas, key procedural steps).
 6. **IDs:** Use kebab-case slug_ids.
 7. **Reasoning:** Explain why you grouped topics this way and how you addressed the specific weaknesses mentioned in the input.
 
@@ -478,8 +500,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
       "content_plans": {
          "reading": "Review the key concepts of...",
          "video": ["topic explanation"],
-         "quiz": "Create review questions...",
-         "practice_exam": "Create 2 free response problems..."
+         "quiz": "Create review questions covering...",
+         "flashcards": "Focus on key formulas and definitions for..."
       }
     }
   ]
@@ -517,6 +539,57 @@ Output STRICT VALID JSON format (no markdown, no comments):
   if (!lessonGraph || !Array.isArray(lessonGraph.lessons)) {
     throw new Error('Invalid response structure: missing lessons array');
   }
+
+  // Inject Review Quiz with practice problems at the end
+  const lessonSummaries = lessonGraph.lessons.map(l => {
+    const readingPrompt = l.content_plans?.reading || '';
+    const gist = readingPrompt.length > 150 ? readingPrompt.substring(0, 150) + '...' : readingPrompt;
+    return `- Lesson: "${l.title}" (Focus: ${gist})`;
+  }).join('\n');
+
+  const reviewQuizPrompt = `Create a comprehensive Review Quiz for the "${type} Review" module.
+The quiz should cover the key concepts from the following lessons:
+${lessonSummaries}
+
+Requirements:
+1. This is a cumulative review quiz for all the review material.
+2. Only include questions that are DIFFICULT and SUMMATIVE in nature — i.e., questions that require problem-solving, application, analysis, or evaluation rather than simple recall.
+3. Include at least 6-7 questions in the quiz.
+4. Provide detailed explanations for every answer (correct and incorrect).
+5. Use proper LaTeX formatting for any math.`;
+
+  const practiceProblemsPrompt = `Create 2-3 exam-style practice problems for the "${type} Review" module.
+These problems should cover the key concepts from the following lessons:
+${lessonSummaries}
+
+Requirements:
+1. Each problem should take 10-20 minutes to complete.
+2. Problems should be MORE DIFFICULT than the quiz questions and replicate authentic exam conditions.
+3. Include multi-step problems that integrate concepts across multiple lessons.
+4. For each problem, provide:
+   - A detailed rubric with point allocations for each step
+   - Common exam traps and errors students might make
+   - A complete sample answer with step-by-step solution
+5. Focus on application, analysis, and evaluation (Bloom's higher levels).
+6. Use proper LaTeX formatting for any math.`;
+
+  const reviewQuizSlug = `review-quiz-${type}`;
+  const reviewQuizLesson = {
+    slug_id: reviewQuizSlug,
+    title: `${type.charAt(0).toUpperCase() + type.slice(1)} Review Quiz`,
+    module_group: `${type} Review`,
+    estimated_minutes: 30,
+    bloom_level: 'Evaluate',
+    intrinsic_exam_value: 10,
+    architectural_reasoning: 'Automatically generated comprehensive review quiz with practice problems.',
+    dependencies: lessonGraph.lessons.map(l => l.slug_id),
+    content_plans: {
+      quiz: reviewQuizPrompt,
+      practice_problems: practiceProblemsPrompt
+    }
+  };
+
+  lessonGraph.lessons.push(reviewQuizLesson);
 
   // Normalization & Output
   const slugToUuid = new Map();

@@ -165,7 +165,7 @@ If you are provisioning a fresh database, apply the content tables first:
 \i docs/migrations/course-content.sql
 ```
 
-This creates the per-format content tables (`video_items`, `reading_articles`, `flashcard_sets`, `mini_quizzes`, `practice_exams`) under the `api` schema.
+This creates the per-format content tables (`video_items`, `reading_articles`, `flashcard_sets`, `mini_quizzes`) under the `api` schema.
 
 ### Monitoring & Debugging
 

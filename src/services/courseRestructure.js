@@ -5,7 +5,6 @@ import {
   regenerateReading,
   regenerateQuiz,
   regenerateFlashcards,
-  regeneratePracticeExam,
   generateVideoSelection
 } from './courseContent.js';
 
@@ -110,8 +109,7 @@ Identify all lessons that need to change.`;
       has_reading: !!payload.reading,
       has_quiz: !!payload.quiz,
       has_flashcards: !!payload.flashcards,
-      has_video: !!payload.video && payload.video.length > 0,
-      has_practice_exam: !!payload.practice_exam
+      has_video: !!payload.video && payload.video.length > 0
     };
 
     const instructionSystemPrompt = `You are the Content Strategist.
@@ -127,7 +125,6 @@ Return JSON ONLY (no markdown, no conversational text):
   "reading": "instruction string...",
   "quiz": "instruction string...",
   "flashcards": "instruction string...",
-  "practice_exam": "instruction string...",
   "video": ["new query 1", "new query 2"] 
 }
 `;
@@ -189,17 +186,6 @@ Return JSON ONLY (no markdown, no conversational text):
         updated = true;
       } catch (e) {
         console.error(`Failed to regenerate flashcards for ${lessonId}`, e);
-      }
-    }
-
-    // Practice Exam
-    if (changePlans.practice_exam && payload.practice_exam) {
-      try {
-        const res = await regeneratePracticeExam(node.title, payload.practice_exam, changePlans.practice_exam, courseTitle, node.module_ref, userId, courseId);
-        newPayload.practice_exam = res.data;
-        updated = true;
-      } catch (e) {
-        console.error(`Failed to regenerate practice exam for ${lessonId}`, e);
       }
     }
 

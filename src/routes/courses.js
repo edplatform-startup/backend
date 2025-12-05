@@ -361,9 +361,6 @@ router.get('/:courseId/nodes/:nodeId', async (req, res) => {
         case 'flashcards':
           filteredData = { cards: payload.flashcards };
           break;
-        case 'practice_exam':
-          filteredData = { practice_exam: payload.practice_exam };
-          break;
         default:
           // If format is unknown, return everything (or handle as error? defaulting to everything is safer)
           filteredData = payload;

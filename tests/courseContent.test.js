@@ -151,23 +151,6 @@ test('generateCourseContent fills node payloads and marks course ready', async (
       return { content: 'CORRECT' };
     }
 
-    if (/practice_exam/i.test(lastContent)) {
-      return {
-        content: JSON.stringify({
-          internal_audit: 'ensured free-response coverage',
-          practice_exam: [
-            {
-              validation_check: 'One coherent rubric ties to answer key',
-              question: 'Solve the practice exam prompt.',
-              answer_key: 'Detailed solution.',
-              rubric: 'Award points for steps.',
-              estimated_minutes: 20,
-            },
-          ],
-        }),
-      };
-    }
-
     if (/Create one deep-understanding multiple-choice question/i.test(lastContent)) {
       return {
         content: JSON.stringify({
@@ -243,7 +226,6 @@ test('generateCourseContent fills node payloads and marks course ready', async (
     assert.equal(nodeUpdates[0].content_payload.status, 'ready');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.quiz));
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.flashcards));
-    assert.equal(nodeUpdates[0].content_payload.practice_exam, null);
     assert.deepEqual(nodeUpdates[0].content_payload.video, [{ videoId: 'vid123', title: 'Demo', thumbnail: 'thumb' }]);
     assert.equal(nodeUpdates[0].content_payload.video_urls, 'https://www.youtube.com/watch?v=vid123');
     assert.ok(Array.isArray(nodeUpdates[0].content_payload.video_logs));

@@ -16,7 +16,6 @@ const mockGrokExecutor = async (options) => {
                 final_content: { markdown: "Mock markdown content" },
                 quiz: [],
                 flashcards: [],
-                practice_exam: [],
                 repaired_items: [], // for repairContentArray
                 valid: true // for validation
             })
