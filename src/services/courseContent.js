@@ -361,7 +361,7 @@ async function runContentWorker(courseId, options = {}) {
 
   let totalProcessed = 0;
   let totalFailed = 0;
-  
+
   // Accumulate all generated content in memory
   const allGeneratedContent = [];
 
@@ -369,11 +369,11 @@ async function runContentWorker(courseId, options = {}) {
   const moduleEntries = Array.from(moduleGroups.entries());
   progress.setPhase('generation');
   progress.log(`Starting parallel processing of ${moduleEntries.length} modules (max 5 concurrent)...`, userName, courseTitle);
-  
+
   const moduleResults = await runWithConcurrency(moduleEntries, 5, async ([moduleName, moduleLessons]) => {
     progress.moduleStarted();
     progress.log(`Processing module "${moduleName}" with ${moduleLessons.length} lessons...`, userName, courseTitle);
-    
+
     try {
       const moduleResult = await processModuleBatched(
         moduleLessons,
@@ -385,7 +385,7 @@ async function runContentWorker(courseId, options = {}) {
         userName,
         progress
       );
-      
+
       progress.moduleCompleted();
       progress.log(`Module "${moduleName}" generated (pending validation): ${moduleResult.processed} processed`, userName, courseTitle);
       return { moduleName, moduleResult, lessonCount: moduleLessons.length };
@@ -406,11 +406,11 @@ async function runContentWorker(courseId, options = {}) {
       } else if (moduleResult) {
         totalProcessed += moduleResult.processed;
         totalFailed += moduleResult.failed;
-        
+
         if (moduleResult.results) {
           allGeneratedContent.push(...moduleResult.results);
         }
-        
+
         // Merge stats
         if (moduleResult.stats) {
           Object.keys(moduleResult.stats).forEach(type => {
@@ -433,7 +433,7 @@ async function runContentWorker(courseId, options = {}) {
   // --- SINGLE-SHOT BATCH VALIDATION PHASE ---
   progress.setPhase('validation');
   progress.log('Starting single-shot batch validation...', userName, courseTitle);
-  
+
   let validatedContent = allGeneratedContent;
   try {
     // Validate everything in one go
@@ -454,7 +454,7 @@ async function runContentWorker(courseId, options = {}) {
   // --- DEFERRED DATABASE PERSISTENCE ---
   progress.setPhase('persistence');
   progress.log(`Saving ${validatedContent.length} validated items to database...`, userName, courseTitle);
-  
+
   for (const item of validatedContent) {
     try {
       // Update Node
@@ -499,7 +499,7 @@ async function runContentWorker(courseId, options = {}) {
         }));
         await supabase.schema('api').from('flashcards').insert(flashcardPayloads);
       }
-      
+
     } catch (saveError) {
       const pct = progress.getPercentage();
       console.error(`[${pct}%] [Course Generation] Error saving item ${item.nodeId}:`, saveError.message);
@@ -516,7 +516,7 @@ async function runContentWorker(courseId, options = {}) {
     stats: aggregateStats,
     totalLLMCalls: totalCalls
   };
-  
+
   const courseStatus = totalFailed > 0 ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
   await updateCourseStatus(supabase, courseId, courseStatus);
 
@@ -701,21 +701,21 @@ async function updateCourseStatus(supabase, courseId, status) {
 async function updateNodesWithValidatedContent(supabase, courseId, validatedItems, contentType) {
   // Group validated items by lesson ID
   const itemsByLesson = new Map();
-  
+
   for (const item of validatedItems) {
     const lessonId = item.lessonId;
     if (!lessonId) continue;
-    
+
     if (!itemsByLesson.has(lessonId)) {
       itemsByLesson.set(lessonId, []);
     }
-    
+
     const content = contentType === 'quiz' ? item.question : item.problem;
     if (content) {
       itemsByLesson.get(lessonId).push(content);
     }
   }
-  
+
   // Update each lesson node
   for (const [lessonId, items] of itemsByLesson.entries()) {
     try {
@@ -727,37 +727,37 @@ async function updateNodesWithValidatedContent(supabase, courseId, validatedItem
         .eq('id', lessonId)
         .eq('course_id', courseId)
         .single();
-      
+
       if (fetchError || !node) {
         console.warn(`[updateNodesWithValidatedContent] Could not fetch node ${lessonId}:`, fetchError?.message);
         continue;
       }
-      
+
       const payload = node.content_payload || {};
       const existingContent = payload[contentType] || [];
-      
+
       // Replace existing items with validated versions (matching by question text)
       const updatedContent = existingContent.map(existing => {
         const matchKey = contentType === 'quiz' ? 'question' : 'question';
-        const match = items.find(item => 
+        const match = items.find(item =>
           item[matchKey]?.trim().toLowerCase() === existing[matchKey]?.trim().toLowerCase()
         );
         return match || existing;
       });
-      
+
       // Update the node
       const updatedPayload = {
         ...payload,
         [contentType]: updatedContent
       };
-      
+
       const { error: updateError } = await supabase
         .schema('api')
         .from('course_nodes')
         .update({ content_payload: updatedPayload })
         .eq('id', lessonId)
         .eq('course_id', courseId);
-      
+
       if (updateError) {
         console.warn(`[updateNodesWithValidatedContent] Failed to update node ${lessonId}:`, updateError.message);
       }
@@ -1326,14 +1326,14 @@ Example:
 
     const content = response.content;
     const raw = coerceModelText(content);
-    
+
     // Try to parse as CSV first (single line format)
     let parsed = null;
     let confidence = 0.8;
-    
+
     const csvText = raw.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const csvQuestions = csvToQuiz(`index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence\n0,${csvText}`);
-    
+
     if (csvQuestions.length > 0) {
       const q = csvQuestions[0];
       parsed = {
@@ -1363,11 +1363,11 @@ Example:
         if (!Array.isArray(item.options) || item.options.length !== 4) throw new Error('Options must be an array of 4 strings');
         if (!Number.isInteger(item.answerIndex) || item.answerIndex < 0 || item.answerIndex > 3) throw new Error('answerIndex must be 0-3');
         if (!Array.isArray(item.explanation) || item.explanation.length !== 4) throw new Error('Explanation must be an array of 4 strings');
-        
+
         // Strict explanation validation - same as quiz questions
         const expValidation = validateExplanations(item.explanation, 4);
         if (!expValidation.valid) throw new Error(`Explanation validation failed: ${expValidation.error}`);
-        
+
         // Rationale consistency check - convert to quiz format for the check
         const quizFormatItem = {
           question: item.question,
@@ -1376,11 +1376,11 @@ Example:
           explanation: item.explanation
         };
 
-        
+
         // Attach confidence for tracking
         item._confidence = confidence;
         item._needsValidation = confidence < CONFIDENCE_THRESHOLD;
-        
+
         return { valid: true, data: item };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -1864,7 +1864,7 @@ Plan: ${plan}
 Return ONLY the CSV with header row. No markdown fences.`,
     },
   ];
-  
+
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4.1-fast',
     temperature: 0.2,
@@ -1883,7 +1883,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
     // Try CSV parsing first
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     questions = csvToQuiz(csvText);
-    
+
     // If CSV parsing failed or returned empty, fallback to JSON
     if (!questions.length) {
       questions = parseJsonArray(text, 'quiz');
@@ -1904,7 +1904,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
             confidence = confidence_assessment.confidence_score;
           }
         }
-        
+
         // Pre-check explanations before normalization for clearer error messages
         if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
           return { valid: false, error: `Incomplete explanations: expected array of 4, got ${Array.isArray(cleanItem?.explanation) ? cleanItem.explanation.length : 'non-array'}` };
@@ -1913,12 +1913,12 @@ Return ONLY the CSV with header row. No markdown fences.`,
           const shortIdx = cleanItem.explanation.findIndex(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH);
           return { valid: false, error: `Explanation for option ${shortIdx + 1} is missing or too short (need ${MIN_EXPLANATION_LENGTH}+ chars)` };
         }
-        
+
         const normalized = normalizeQuizItem(cleanItem, index, true);
         // Attach confidence score for later batch validation
         normalized._confidence = confidence;
         normalized._needsValidation = confidence < CONFIDENCE_THRESHOLD;
-        
+
         return { valid: true, data: normalized };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -1931,7 +1931,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
 - Each item MUST have 'explanation' as an array of EXACTLY 4 SUBSTANTIVE strings (minimum ${MIN_EXPLANATION_LENGTH} characters each)
 - For the correct option: explain WHY it is correct with specific reasoning
 - For each incorrect option: explain WHY it is wrong and what misconception it represents
-- Do NOT use placeholders like "Answer rationale not provided" or "..."`;  
+- Do NOT use placeholders like "Answer rationale not provided" or "..."`;
     };
 
     const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateQuiz', userId, courseId);
@@ -1968,9 +1968,9 @@ function validateExplanations(explanation, optionsCount = 4) {
   if (explanation.length !== optionsCount) {
     return { valid: false, error: `Explanation must have ${optionsCount} entries, got ${explanation.length}` };
   }
-  
+
   const placeholders = ['answer rationale not provided', 'no explanation', 'n/a', '...', 'tbd', 'todo'];
-  
+
   for (let i = 0; i < explanation.length; i++) {
     const exp = explanation[i];
     if (!exp || typeof exp !== 'string') {
@@ -2013,11 +2013,11 @@ function normalizeQuizItem(item, index, strictMode = true) {
   if (!question || options.length < 2) {
     throw new Error(`Quiz item ${index + 1} is invalid: missing question or options`);
   }
-  
+
   if (options.length !== 4) {
     throw new Error(`Quiz item ${index + 1} must have exactly 4 options, got ${options.length}`);
   }
-  
+
   if (correctIndex < 0 || correctIndex >= options.length) {
     throw new Error(`Quiz item ${index + 1} has invalid correct_index: ${correctIndex}`);
   }
@@ -2034,16 +2034,16 @@ function normalizeQuizItem(item, index, strictMode = true) {
       explanation.push('Explanation pending.');
     }
   }
-  
+
   const normalized = {
     question,
     options,
     correct_index: correctIndex,
     explanation,
   };
-  
 
-  
+
+
   return normalized;
 }
 
@@ -2162,7 +2162,7 @@ Each problem should require 10-20 minutes, test deep understanding, include conf
         // Attach confidence score for later batch validation
         normalized._confidence = confidence;
         normalized._needsValidation = confidence < CONFIDENCE_THRESHOLD;
-        
+
         return { valid: true, data: normalized };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -2188,7 +2188,7 @@ Each problem should require 10-20 minutes, test deep understanding, include conf
     // Skip individual validation - will be done in batch after course generation
     // Just return the items with confidence scores attached
     stats.lowConfidenceCount = repairedItems.filter(p => p._needsValidation).length;
-    
+
     return { data: repairedItems, stats };
   } catch (err) {
     throw err;
@@ -2212,11 +2212,11 @@ function normalizePracticeProblem(item, index) {
   if (!rubric || typeof rubric !== 'object') {
     throw new Error(`Practice problem ${index + 1} is missing rubric`);
   }
-  
+
   const totalPoints = typeof rubric.total_points === 'number' ? rubric.total_points : 10;
   const gradingCriteria = Array.isArray(rubric.grading_criteria) ? rubric.grading_criteria : [];
-  const partialCreditPolicy = typeof rubric.partial_credit_policy === 'string' 
-    ? rubric.partial_credit_policy 
+  const partialCreditPolicy = typeof rubric.partial_credit_policy === 'string'
+    ? rubric.partial_credit_policy
     : 'Award partial credit for correct approach.';
 
   if (gradingCriteria.length === 0) {
@@ -2308,7 +2308,7 @@ async function validatePracticeProblemsAccuracy(problems, context, userId, cours
         console.warn(`[validatePracticeProblems] Problem ${i + 1} has issues: ${validationResult.issues.join(', ')}`);
 
         const correctedProblem = await correctPracticeProblem(problem, validationResult, context, userId, courseId);
-        
+
         if (correctedProblem) {
           stats.corrected++;
           validatedProblems.push({
@@ -2563,7 +2563,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
     // Try CSV parsing first
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     flashcards = csvToFlashcards(csvText);
-    
+
     // If CSV parsing failed, fallback to JSON
     if (!flashcards.length) {
       flashcards = parseJsonArray(text, 'flashcards');
@@ -2628,7 +2628,7 @@ function normalizeFlashcard(card, index) {
  */
 export async function generateModuleReadings(lessons, courseName, moduleName, prereqMap, mode, userId, courseId) {
   if (!lessons?.length) return new Map();
-  
+
   // Build lesson plans summary
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
@@ -2677,7 +2677,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
 
     const raw = coerceModelText(content);
     const readingsMap = parseBatchedReadings(raw);
-    
+
     const results = new Map();
     for (const lesson of lessons) {
       const reading = readingsMap.get(lesson.id);
@@ -2694,7 +2694,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
         results.set(lesson.id, null);
       }
     }
-    
+
     return results;
   } catch (error) {
     console.error(`[generateModuleReadings] Batch generation failed:`, error.message);
@@ -2716,9 +2716,9 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
  */
 export async function generateModuleQuizzes(lessons, courseName, moduleName, prereqMap, mode, userId, courseId) {
   if (!lessons?.length) return new Map();
-  
+
   const questionCount = mode === 'cram' ? '4-6' : '8-12';
-  
+
   // Build lesson plans summary
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
@@ -2738,20 +2738,29 @@ Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
 OUTPUT FORMAT: CSV with lesson_id column
 Header: lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
-Rules:
+COLUMN RULES:
 - lesson_id: Must match the provided Lesson ID exactly
 - index: Question number within that lesson (0, 1, 2, ...)
-- scratchpad: Use this space for ANY internal reasoning, verification, working out. Stripped before showing to students.
-- question: Complete, grammatically correct question. NO abbreviations. Write out fully.
-- optionA-D: Complete, clear answer choices. NO internal thinking or working notes.
+- scratchpad: Your internal reasoning/verification. This column is stripped before showing to students.
+- question: The actual quiz question students will see
+- optionA-D: The four answer choices students will see
 - correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- expA-D: Explain why each option is correct/incorrect (min 20 chars each). Full sentences.
-- confidence: 0.0-1.0 (your confidence the answer is correct)
-- Include 1 Challenge Question per lesson (last question)
-- Use LaTeX for math: \\(...\\) for inline
-- Escape commas with quotes
+- expA-D: Explanation for each option (min 20 chars each)
+- confidence: 0.0-1.0
 
-QUALITY: All text shown to students must be polished, complete sentences.
+QUALITY REQUIREMENTS (CRITICAL):
+- ALL student-facing text (question, optionA-D, expA-D) MUST be:
+  * Complete, grammatically correct sentences
+  * Written in clear, easy-to-understand language
+  * Free of abbreviations, shorthand, or note-style writing
+  * Professional and polished, as if published in a textbook
+- DO NOT use telegraphic style like "deg3 odd, no" or "E.g. non-Hamilton despite Euler"
+- DO NOT use question marks in the middle of statements
+- WRITE OUT complete thoughts: "The degree of vertex 3 is odd, so this graph does not have an Eulerian path."
+- Put ALL working, reasoning, verification, and draft notes in the scratchpad column ONLY
+- Include 1 Challenge Question per lesson (last question)
+- Use LaTeX for math: \\\\(...\\\\) for inline
+- Escape commas with quotes
 
 CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     },
@@ -2767,7 +2776,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.2,
       maxTokens: 16000,
       messages,
-      requestTimeoutMs: 180000,
+      requestTimeoutMs: 600000, // 10 minutes for batch operations
       reasoning: { enabled: true },
       userId,
       source: 'batch_quiz_generation',
@@ -2777,7 +2786,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     const text = coerceModelText(content);
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const quizMap = csvToBatchedQuiz(csvText);
-    
+
     const results = new Map();
     for (const lesson of lessons) {
       const questions = quizMap.get(lesson.id);
@@ -2808,7 +2817,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
         };
 
         const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateModuleQuizzes', userId, courseId);
-        
+
         results.set(lesson.id, {
           data: repairedQuestions,
           stats
@@ -2818,7 +2827,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
         results.set(lesson.id, null);
       }
     }
-    
+
     return results;
   } catch (error) {
     console.error(`[generateModuleQuizzes] Batch generation failed:`, error.message);
@@ -2837,7 +2846,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
  */
 export async function generateModuleFlashcards(lessons, courseName, moduleName, userId, courseId) {
   if (!lessons?.length) return new Map();
-  
+
   // Build lesson plans summary
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
@@ -2855,16 +2864,20 @@ Generate 5-7 flashcards for EACH of the ${lessons.length} lessons.
 OUTPUT FORMAT: CSV with lesson_id column
 Header: lesson_id,index,scratchpad,front,back
 
-Rules:
+COLUMN RULES:
 - lesson_id: Must match the provided Lesson ID exactly
 - index: Card number within that lesson (0, 1, 2, ...)
-- scratchpad: Use for internal reasoning/verification. Stripped before showing to students.
-- front: Complete, grammatically correct question/prompt. Full sentences.
-- back: Clear, complete answer. Full sentences where appropriate.
-- Use LaTeX for math: \\(...\\) for inline
-- Escape commas with quotes
+- scratchpad: Your internal reasoning/verification. Stripped before showing to students.
+- front: The question/prompt students will see on the front of the card
+- back: The answer students will see on the back of the card
 
-QUALITY: front and back must be polished text. Put all working in scratchpad.
+QUALITY REQUIREMENTS (CRITICAL):
+- front: Must be a clear, complete question or prompt (e.g., "What is the definition of...")
+- back: Must be a clear, complete answer in full sentences
+- DO NOT put reasoning, verification, or notes in front/back columns
+- Put ALL working in the scratchpad column
+- Use LaTeX for math: \\\\(...\\\\) for inline
+- Escape commas with quotes
 
 CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
     },
@@ -2880,7 +2893,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
       temperature: 0.25,
       maxTokens: 8000,
       messages,
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 600000, // 10 minutes for batch operations
       reasoning: { enabled: true },
       userId,
       source: 'batch_flashcards_generation',
@@ -2890,7 +2903,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
     const text = coerceModelText(content);
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const flashcardsMap = csvToBatchedFlashcards(csvText);
-    
+
     const results = new Map();
     for (const lesson of lessons) {
       const cards = flashcardsMap.get(lesson.id);
@@ -2909,7 +2922,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
         };
 
         const { items: repairedCards, stats } = await repairContentArray(cards, validator, repairPrompt, 'generateModuleFlashcards', userId, courseId);
-        
+
         results.set(lesson.id, {
           data: repairedCards,
           stats
@@ -2919,7 +2932,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
         results.set(lesson.id, null);
       }
     }
-    
+
     return results;
   } catch (error) {
     console.error(`[generateModuleFlashcards] Batch generation failed:`, error.message);
@@ -2940,7 +2953,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
  */
 export async function generateModuleInlineQuestions(lessons, readingsMap, courseName, moduleName, userId, courseId) {
   if (!lessons?.length) return new Map();
-  
+
   // Build content summary - include truncated reading for context
   const lessonContexts = lessons.map(l => {
     const readingRes = readingsMap.get(l.id);
@@ -2962,20 +2975,27 @@ Generate 3-5 inline MCQs for EACH of the ${lessons.length} lessons based on thei
 OUTPUT FORMAT: CSV with header
 lesson_id,chunk_index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
-Rules:
+COLUMN RULES:
 - lesson_id: Must match the provided Lesson ID exactly
 - chunk_index: Question number within that lesson (0, 1, 2, ...)
-- scratchpad: Use for internal reasoning/verification. Stripped before showing to students.
-- question: Complete, grammatically correct question. Full sentences.
-- optionA-D: Complete, clear answer choices.
+- scratchpad: Your internal reasoning/verification. Stripped before showing to students.
+- question: The quiz question students will see
+- optionA-D: The four answer choices students will see
 - correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- expA-D: Explain why each option is correct/incorrect (min 20 chars). Full sentences.
-- confidence: 0.0-1.0 (your confidence the answer is correct)
-- Focus on synthesis/application, not simple recall
-- Use LaTeX for math: \\(...\\) for inline
-- Escape commas with quotes
+- expA-D: Explanation for each option (min 20 chars)
+- confidence: 0.0-1.0
 
-QUALITY: All student-facing text must be polished. Put working in scratchpad.
+QUALITY REQUIREMENTS (CRITICAL):
+- ALL student-facing text (question, optionA-D, expA-D) MUST be:
+  * Complete, grammatically correct sentences
+  * Written in clear, easy-to-understand language
+  * Free of abbreviations, shorthand, or note-style writing
+  * Professional and polished
+- DO NOT put reasoning or working in question/option/explanation columns
+- Put ALL working in the scratchpad column
+- Focus on synthesis/application, not simple recall
+- Use LaTeX for math: \\\\(...\\\\) for inline
+- Escape commas with quotes
 
 CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     },
@@ -2991,7 +3011,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.3,
       maxTokens: 16000,
       messages,
-      requestTimeoutMs: 180000,
+      requestTimeoutMs: 600000, // 10 minutes for batch operations
       reasoning: { enabled: true },
       userId,
       source: 'batch_inline_questions',
@@ -3001,7 +3021,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     const text = coerceModelText(content);
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const questionsMap = csvToBatchedInlineQuestions(csvText);
-    
+
     // Convert questions to markdown format
     const results = new Map();
     for (const lesson of lessons) {
@@ -3014,7 +3034,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
             const letter = ['A', 'B', 'C', 'D'][i];
             md += `- ${letter}. ${opt.trim()}\n`;
           });
-          
+
           const correctLetter = ['A', 'B', 'C', 'D'][q.answerIndex];
           const explanationList = q.options.map((_, i) => {
             const letter = ['A', 'B', 'C', 'D'][i];
@@ -3022,18 +3042,18 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
             const icon = isCorrect ? '✅' : '❌';
             return `- **${letter}** ${icon} ${q.explanation[i] || 'No explanation.'}`;
           }).join('\n');
-          
+
           md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctLetter}\n\n${explanationList}\n</details>\n`;
-          
+
           return { markdown: md, confidence: q.confidence, _needsValidation: q.confidence < 0.7 };
         });
-        
+
         results.set(lesson.id, markdownQuestions);
       } else {
         results.set(lesson.id, []);
       }
     }
-    
+
     return results;
   } catch (error) {
     console.error(`[generateModuleInlineQuestions] Batch generation failed:`, error.message);
@@ -3053,10 +3073,10 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
  */
 export async function generateModuleVideos(lessons, courseName, moduleName, userId, courseId) {
   if (!lessons?.length) return new Map();
-  
+
   const logs = [];
   logs.push(`[generateModuleVideos] Selecting videos for ${lessons.length} lessons in module "${moduleName}"`);
-  
+
   // Collect video queries for all lessons
   const lessonQueries = [];
   for (const lesson of lessons) {
@@ -3070,12 +3090,12 @@ export async function generateModuleVideos(lessons, courseName, moduleName, user
       });
     }
   }
-  
+
   if (lessonQueries.length === 0) {
     logs.push('[generateModuleVideos] No video queries found for any lesson');
     return new Map(lessons.map(l => [l.id, { videos: [], logs: ['No video query specified'] }]));
   }
-  
+
   // If custom fetcher is set, use it per-lesson (can't batch external API)
   if (customYouTubeFetcher) {
     const results = new Map();
@@ -3096,7 +3116,7 @@ export async function generateModuleVideos(lessons, courseName, moduleName, user
     }
     return results;
   }
-  
+
   // Batch YouTube searches
   const searchResultsByLesson = new Map();
   for (const lq of lessonQueries) {
@@ -3117,24 +3137,24 @@ export async function generateModuleVideos(lessons, courseName, moduleName, user
       searchResultsByLesson.set(lq.lessonId, { lessonTitle: lq.lessonTitle, query: lq.query, videos: [] });
     }
   }
-  
+
   // Build prompt for LLM to select videos for all lessons at once
   let videoListPrompt = '';
   for (const [lessonId, data] of searchResultsByLesson) {
     if (data.videos.length === 0) continue;
-    
+
     videoListPrompt += `\n===LESSON:${lessonId}===\nTitle: "${data.lessonTitle}"\nQuery: "${data.query}"\nVideos:\n`;
     videoListPrompt += data.videos.map(v =>
       `  [${v.index}] "${v.title}" | ${v.author} | ${v.timestamp}`
     ).join('\n');
     videoListPrompt += '\n';
   }
-  
+
   if (!videoListPrompt) {
     logs.push('[generateModuleVideos] No videos found for any lesson');
     return new Map(lessons.map(l => [l.id, { videos: [], logs: ['No videos found in search'] }]));
   }
-  
+
   const messages = [
     {
       role: 'system',
@@ -3157,7 +3177,7 @@ Select ONE video per lesson.`
       content: `Select the best video for each lesson:\n${videoListPrompt}\n\nReturn ONLY CSV with header row.`
     }
   ];
-  
+
   try {
     const { content } = await grokExecutor({
       model: 'x-ai/grok-4.1-fast',
@@ -3170,24 +3190,24 @@ Select ONE video per lesson.`
       source: 'batch_video_selection',
       courseId,
     });
-    
+
     const text = coerceModelText(content);
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    
+
     // Parse the CSV response
     const rows = parseCSV(csvText);
     const results = new Map();
-    
+
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       if (row.length < 2) continue;
-      
+
       const lessonId = row[0]?.trim();
       const videoIndex = parseInt(row[1], 10);
-      
+
       const searchData = searchResultsByLesson.get(lessonId);
       if (!searchData || !searchData.videos[videoIndex]) continue;
-      
+
       const selectedVideo = searchData.videos[videoIndex];
       results.set(lessonId, {
         videos: [{
@@ -3199,14 +3219,14 @@ Select ONE video per lesson.`
         logs: [`Selected video: "${selectedVideo.title}"`]
       });
     }
-    
+
     // Fill in lessons without selections
     for (const lesson of lessons) {
       if (!results.has(lesson.id)) {
         results.set(lesson.id, { videos: [], logs: ['No video selected'] });
       }
     }
-    
+
     logs.push(`[generateModuleVideos] Selected videos for ${results.size} lessons`);
     return results;
   } catch (error) {
@@ -3232,10 +3252,10 @@ Select ONE video per lesson.`
 async function processModuleBatched(moduleLessons, supabase, courseName, moduleName, prereqMap, mode, userName, progress = null) {
   const userId = moduleLessons[0]?.user_id;
   const courseId = moduleLessons[0]?.course_id;
-  
+
   const pctPrefix = progress ? `[${progress.getPercentage()}%] ` : '';
   console.log(`${pctPrefix}[processModuleBatched] Processing module "${moduleName}" with ${moduleLessons.length} lessons`);
-  
+
   // Filter lessons that need each content type
   const needsReading = moduleLessons.filter(l => l.content_payload?.generation_plans?.reading);
   const needsQuiz = moduleLessons.filter(l => l.content_payload?.generation_plans?.quiz);
@@ -3257,7 +3277,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
   ]);
 
   // 4. Generate inline questions for all lessons (needs readings first)
-  const inlineQuestionsMap = needsReading.length 
+  const inlineQuestionsMap = needsReading.length
     ? await generateModuleInlineQuestions(needsReading, readingsMap, courseName, moduleName, userId, courseId)
     : new Map();
 
@@ -3284,7 +3304,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
   let processed = 0;
   let failed = 0;
   const results = [];
-  
+
   const aggregateStats = {
     reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
@@ -3349,7 +3369,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       }
 
       // DEFERRED SAVING: Do NOT insert into DB here. Return content for validation.
-      
+
       const videos = videoRes.videos || [];
       const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
 
@@ -3557,7 +3577,7 @@ Rules:
     // Try CSV parsing first
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     let questions = csvToQuiz(csvText);
-    
+
     // Fallback to JSON if CSV fails
     if (!questions.length) {
       questions = parseJsonArray(text, 'quiz');
@@ -3571,7 +3591,7 @@ Rules:
           const { validation_check, step_by_step_thinking, ...rest } = item;
           cleanItem = rest;
         }
-        
+
         // Pre-check explanations before normalization for clearer error messages
         if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
           return { valid: false, error: `Incomplete explanations: expected array of 4, got ${Array.isArray(cleanItem?.explanation) ? cleanItem.explanation.length : 'non-array'}` };
@@ -3580,7 +3600,7 @@ Rules:
           const shortIdx = cleanItem.explanation.findIndex(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH);
           return { valid: false, error: `Explanation for option ${shortIdx + 1} is missing or too short (need ${MIN_EXPLANATION_LENGTH}+ chars)` };
         }
-        
+
         return { valid: true, data: normalizeQuizItem(cleanItem, index, true) };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -3649,7 +3669,7 @@ Rules:
     // Try CSV parsing first
     const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
     let flashcards = csvToFlashcards(csvText);
-    
+
     // Fallback to JSON if CSV fails
     if (!flashcards.length) {
       flashcards = parseJsonArray(text, 'flashcards');
@@ -4069,7 +4089,7 @@ ${context}`
  */
 async function validateQuizQuestionsIndividually(questions, context, userId, courseId, options = {}) {
   const { enableSelfConsistency = true } = options;
-  
+
   const stats = {
     total: questions.length,
     passed: 0,
@@ -4099,7 +4119,7 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
 
     while (attempts < maxAttempts && validated === null) {
       attempts++;
-      
+
       // On later attempts for incomplete explanations, try targeted rationale fix
       if (attempts > 1 && hasIncompleteExplanation) {
         try {
@@ -4116,7 +4136,7 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
           console.warn(`[validateQuizQuestionsIndividually] Rationale fix failed for Q${i + 1}:`, fixError.message);
         }
       }
-      
+
       try {
         // Wrap single question in array for validateContent, then unwrap
         const result = await validateContent('quiz', [question], questionContext, userId, courseId, { throwOnFailure: true });
@@ -4128,7 +4148,7 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
           const resultExpValidation = validateExplanations(validatedQ.explanation, 4);
           if (resultExpValidation.valid) {
 
-            
+
             validated = validatedQ;
             if (JSON.stringify(validatedQ) !== JSON.stringify(question)) {
               stats.fixed++;
@@ -4154,16 +4174,16 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
       stats.selfConsistencyChecked++;
       try {
         const consistencyResult = await verifySelfConsistency(validated, context, userId, courseId);
-        
+
         if (consistencyResult.consistent) {
           stats.selfConsistencyPassed++;
           validated._selfConsistencyVerified = true;
         } else {
           // Discrepancy detected - attempt reconciliation
           console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} self-consistency FAILED. Attempting reconciliation...`);
-          
+
           const reconciledQuestion = await reconcileAnswerDiscrepancy(validated, consistencyResult, context, userId, courseId);
-          
+
           if (reconciledQuestion) {
             stats.selfConsistencyReconciled++;
             validated = reconciledQuestion;
@@ -4213,25 +4233,25 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
 async function fixMissingRationales(question, userId, courseId) {
   const letters = ['A', 'B', 'C', 'D'];
   const correctLetter = letters[question.correct_index] || 'A';
-  
+
   // Identify which explanations are missing or inadequate
   const missingIndices = [];
   const currentExplanations = question.explanation || [];
-  
+
   for (let i = 0; i < 4; i++) {
     const exp = currentExplanations[i];
     if (!exp || typeof exp !== 'string' || exp.trim().length < MIN_EXPLANATION_LENGTH) {
       missingIndices.push(i);
     }
   }
-  
+
   if (missingIndices.length === 0) {
     return question; // Nothing to fix
   }
-  
+
   const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
   const missingLetters = missingIndices.map(i => letters[i]).join(', ');
-  
+
   const messages = [
     {
       role: 'system',
@@ -4281,7 +4301,7 @@ Provide substantive explanations for each missing option. For the correct answer
 
     const raw = coerceModelText(content);
     const parsed = parseJsonObject(raw, 'rationale_fix');
-    
+
     if (!parsed || !parsed.explanations) {
       console.warn('[fixMissingRationales] Invalid response format');
       return null;
@@ -4292,7 +4312,7 @@ Provide substantive explanations for each missing option. For the correct answer
     while (fixedExplanations.length < 4) {
       fixedExplanations.push('');
     }
-    
+
     for (const [letter, explanation] of Object.entries(parsed.explanations)) {
       const idx = letters.indexOf(letter.toUpperCase());
       if (idx >= 0 && explanation && explanation.trim().length >= MIN_EXPLANATION_LENGTH) {
@@ -4329,7 +4349,7 @@ Provide substantive explanations for each missing option. For the correct answer
 async function verifySelfConsistency(question, context, userId, courseId) {
   const letters = ['A', 'B', 'C', 'D'];
   const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
-  
+
   const messages = [
     {
       role: 'system',
@@ -4376,7 +4396,7 @@ Analyze this question and determine the correct answer. Show your reasoning.`
 
     const raw = coerceModelText(content);
     const parsed = parseJsonObject(raw, 'self_consistency_check');
-    
+
     if (!parsed || !parsed.correct_option) {
       console.warn('[verifySelfConsistency] Invalid response format');
       return { consistent: true, modelAnswer: -1, confidence: 'unknown', reasoning: 'Failed to parse response' };
@@ -4423,7 +4443,7 @@ async function reconcileAnswerDiscrepancy(question, consistencyResult, context, 
   const originalLetter = letters[question.correct_index];
   const modelLetter = letters[consistencyResult.modelAnswer];
   const optionsText = question.options.map((opt, i) => `${letters[i]}. ${opt}`).join('\n');
-  
+
   const messages = [
     {
       role: 'system',
@@ -4476,7 +4496,7 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
 
     const raw = coerceModelText(content);
     const parsed = parseJsonObject(raw, 'answer_reconciliation');
-    
+
     if (!parsed || !parsed.correct_option) {
       console.warn('[reconcileAnswerDiscrepancy] Invalid response format');
       return null;
@@ -4484,7 +4504,7 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
 
     const reconciledLetter = parsed.correct_option.toUpperCase();
     const reconciledIndex = letters.indexOf(reconciledLetter);
-    
+
     if (reconciledIndex < 0) {
       console.warn('[reconcileAnswerDiscrepancy] Invalid reconciled answer letter');
       return null;

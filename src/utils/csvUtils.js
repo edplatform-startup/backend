@@ -46,10 +46,10 @@ export function parseCSVLine(line) {
   let current = '';
   let inQuotes = false;
   let i = 0;
-  
+
   while (i < line.length) {
     const char = line[i];
-    
+
     if (inQuotes) {
       if (char === '"') {
         // Check for escaped quote
@@ -81,7 +81,7 @@ export function parseCSVLine(line) {
       }
     }
   }
-  
+
   // Push last field
   fields.push(current.trim());
   return fields;
@@ -95,19 +95,19 @@ export function parseCSVLine(line) {
  */
 export function parseCSV(csv) {
   if (!csv || typeof csv !== 'string') return [];
-  
+
   const rows = [];
   const lines = csv.split('\n');
   let currentRow = '';
   let inQuotes = false;
-  
+
   for (const line of lines) {
     if (!inQuotes) {
       currentRow = line;
     } else {
       currentRow += '\n' + line;
     }
-    
+
     // Count quotes to determine if we're still in a quoted field
     let quoteCount = 0;
     for (let i = 0; i < currentRow.length; i++) {
@@ -115,10 +115,10 @@ export function parseCSV(csv) {
         quoteCount++;
       }
     }
-    
+
     // Odd number of quotes means we're inside a quoted field
     inQuotes = quoteCount % 2 === 1;
-    
+
     if (!inQuotes) {
       const parsed = parseCSVLine(currentRow);
       if (parsed.length > 0 && parsed.some(f => f.length > 0)) {
@@ -126,7 +126,7 @@ export function parseCSV(csv) {
       }
     }
   }
-  
+
   return rows;
 }
 
@@ -142,7 +142,7 @@ export function parseCSV(csv) {
  */
 export function quizToCSV(questions) {
   if (!Array.isArray(questions) || questions.length === 0) return '';
-  
+
   const header = 'index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD';
   const rows = questions.map((q, i) => {
     const opts = q.options || [];
@@ -161,7 +161,7 @@ export function quizToCSV(questions) {
       escapeCSV(exps[3] || '')
     ].join(',');
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -173,13 +173,13 @@ export function quizToCSV(questions) {
 export function csvToQuiz(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return []; // Need header + at least 1 data row
-  
+
   // Skip header row
   const questions = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 7) continue; // Minimum required fields
-    
+
     // Handle fields: index,question,optionA-D,correct_index,expA-D
     const question = {
       question: unescapeCSV(row[1]),
@@ -197,15 +197,15 @@ export function csvToQuiz(csv) {
         unescapeCSV(row[10])
       ] : ['', '', '', '']
     };
-    
+
     // Validate correct_index
     if (question.correct_index < 0 || question.correct_index > 3) {
       question.correct_index = 0;
     }
-    
+
     questions.push(question);
   }
-  
+
   return questions;
 }
 
@@ -221,7 +221,7 @@ export function csvToQuiz(csv) {
  */
 export function flashcardsToCSV(flashcards) {
   if (!Array.isArray(flashcards) || flashcards.length === 0) return '';
-  
+
   const header = 'index,front,back';
   const rows = flashcards.map((f, i) => {
     return [
@@ -230,7 +230,7 @@ export function flashcardsToCSV(flashcards) {
       escapeCSV(f.back || '')
     ].join(',');
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -242,18 +242,18 @@ export function flashcardsToCSV(flashcards) {
 export function csvToFlashcards(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return [];
-  
+
   const flashcards = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 3) continue;
-    
+
     flashcards.push({
       front: unescapeCSV(row[1]),
       back: unescapeCSV(row[2])
     });
   }
-  
+
   return flashcards;
 }
 
@@ -269,13 +269,13 @@ export function csvToFlashcards(csv) {
  */
 export function lessonsToCSV(lessons) {
   if (!Array.isArray(lessons) || lessons.length === 0) return '';
-  
+
   const header = 'slug_id,title,module_group,estimated_minutes,bloom_level,intrinsic_exam_value,dependencies,reading_plan,video_queries,quiz_plan,flashcards_plan';
   const rows = lessons.map(l => {
     const deps = Array.isArray(l.dependencies) ? l.dependencies.join('|') : '';
     const plans = l.content_plans || {};
     const videoQueries = Array.isArray(plans.video) ? plans.video.join('|') : '';
-    
+
     return [
       escapeCSV(l.slug_id || ''),
       escapeCSV(l.title || ''),
@@ -290,7 +290,7 @@ export function lessonsToCSV(lessons) {
       escapeCSV(plans.flashcards || '')
     ].join(',');
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -302,15 +302,15 @@ export function lessonsToCSV(lessons) {
 export function csvToLessons(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return [];
-  
+
   const lessons = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 6) continue;
-    
+
     const deps = row[6] ? row[6].split('|').map(d => d.trim()).filter(Boolean) : [];
     const videoQueries = row[8] ? row[8].split('|').map(v => v.trim()).filter(Boolean) : [];
-    
+
     lessons.push({
       slug_id: unescapeCSV(row[0]),
       title: unescapeCSV(row[1]),
@@ -327,7 +327,7 @@ export function csvToLessons(csv) {
       }
     });
   }
-  
+
   return lessons;
 }
 
@@ -343,13 +343,13 @@ export function csvToLessons(csv) {
  */
 export function practiceProblemsToCSV(problems) {
   if (!Array.isArray(problems) || problems.length === 0) return '';
-  
+
   const header = 'index,question,estimated_minutes,difficulty,topic_tags,total_points,solution_steps,final_answer,key_insights';
   const rows = problems.map((p, i) => {
     const tags = Array.isArray(p.topic_tags) ? p.topic_tags.join('|') : '';
     const steps = Array.isArray(p.sample_answer?.solution_steps) ? p.sample_answer.solution_steps.join('|||') : '';
     const insights = Array.isArray(p.sample_answer?.key_insights) ? p.sample_answer.key_insights.join('|||') : '';
-    
+
     return [
       i,
       escapeCSV(p.question || ''),
@@ -362,7 +362,7 @@ export function practiceProblemsToCSV(problems) {
       escapeCSV(insights)
     ].join(',');
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -375,16 +375,16 @@ export function practiceProblemsToCSV(problems) {
 export function csvToPracticeProblems(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return [];
-  
+
   const problems = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 8) continue;
-    
+
     const tags = row[4] ? row[4].split('|').map(t => t.trim()).filter(Boolean) : [];
     const steps = row[6] ? row[6].split('|||').map(s => s.trim()).filter(Boolean) : [];
     const insights = row[8] ? row[8].split('|||').map(s => s.trim()).filter(Boolean) : [];
-    
+
     problems.push({
       question: unescapeCSV(row[1]),
       estimated_minutes: parseInt(row[2], 10) || 15,
@@ -403,7 +403,7 @@ export function csvToPracticeProblems(csv) {
       }
     });
   }
-  
+
   return problems;
 }
 
@@ -419,16 +419,16 @@ export function csvToPracticeProblems(csv) {
  */
 export function courseDraftToCSV(draft) {
   if (!draft) return '';
-  
+
   const header = 'topic_index,topic_title,subtopic_index,subtopic_title,description';
   const rows = [];
-  
+
   const topics = draft.topics || draft.overviewTopics || draft.modules || [];
-  
+
   topics.forEach((topic, ti) => {
     const topicTitle = typeof topic === 'string' ? topic : (topic.title || topic.name || '');
     const subtopics = topic?.subtopics || topic?.lessons || [];
-    
+
     if (subtopics.length === 0) {
       rows.push([
         ti,
@@ -451,7 +451,7 @@ export function courseDraftToCSV(draft) {
       });
     }
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -467,12 +467,12 @@ export function courseDraftToCSV(draft) {
  */
 export function arrayToCSV(items, keys) {
   if (!Array.isArray(items) || items.length === 0 || !Array.isArray(keys)) return '';
-  
+
   const header = keys.join(',');
   const rows = items.map(item => {
     return keys.map(k => escapeCSV(item[k] ?? '')).join(',');
   });
-  
+
   return [header, ...rows].join('\n');
 }
 
@@ -484,10 +484,10 @@ export function arrayToCSV(items, keys) {
 export function csvToArray(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return [];
-  
+
   const keys = rows[0];
   const items = [];
-  
+
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const item = {};
@@ -496,7 +496,7 @@ export function csvToArray(csv) {
     });
     items.push(item);
   }
-  
+
   return items;
 }
 
@@ -506,85 +506,96 @@ export function csvToArray(csv) {
 
 /**
  * Parses batched quiz CSV with lesson_id column and confidence scores.
- * CSV Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+ * CSV Header: lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+ * (scratchpad is internal LLM reasoning - skipped in parsing)
  * @param {string} csv - CSV string from LLM
  * @returns {Map<string, Array>} - Map of lesson_id -> quiz questions array
  */
 export function csvToBatchedQuiz(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return new Map();
-  
+
   const result = new Map();
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (row.length < 8) continue;
-    
+    // Require at least 9 columns: lesson_id, index, scratchpad, question, optionA-D, correct_index
+    if (row.length < 9) continue;
+
     const lessonId = unescapeCSV(row[0]);
     if (!lessonId) continue;
-    
-    const confidence = row.length >= 13 ? parseFloat(row[12]) || 0.8 : 0.8;
-    
+
+    // Column indices after skipping scratchpad (row[2]):
+    // row[3] = question, row[4-7] = options, row[8] = correct_index
+    // row[9-12] = explanations, row[13] = confidence
+    const confidence = row.length >= 14 ? parseFloat(row[13]) || 0.8 : 0.8;
+
     const question = {
-      question: unescapeCSV(row[2]),
+      question: unescapeCSV(row[3]),
       options: [
-        unescapeCSV(row[3]),
         unescapeCSV(row[4]),
         unescapeCSV(row[5]),
-        unescapeCSV(row[6])
+        unescapeCSV(row[6]),
+        unescapeCSV(row[7])
       ],
-      correct_index: parseInt(row[7], 10) || 0,
-      explanation: row.length >= 12 ? [
-        unescapeCSV(row[8]),
+      correct_index: parseInt(row[8], 10) || 0,
+      explanation: row.length >= 13 ? [
         unescapeCSV(row[9]),
         unescapeCSV(row[10]),
-        unescapeCSV(row[11])
+        unescapeCSV(row[11]),
+        unescapeCSV(row[12])
       ] : ['', '', '', ''],
       _confidence: confidence,
       _needsValidation: confidence < 0.7
     };
-    
+
     if (question.correct_index < 0 || question.correct_index > 3) {
       question.correct_index = 0;
     }
-    
+
     if (!result.has(lessonId)) {
       result.set(lessonId, []);
     }
     result.get(lessonId).push(question);
   }
-  
+
   return result;
 }
 
 /**
  * Parses batched flashcards CSV with lesson_id column.
- * CSV Header: lesson_id,index,front,back
+ * CSV Header: lesson_id,index,scratchpad,front,back
+ * (scratchpad is internal LLM reasoning - skipped in parsing)
  * @param {string} csv - CSV string from LLM
  * @returns {Map<string, Array>} - Map of lesson_id -> flashcards array
  */
 export function csvToBatchedFlashcards(csv) {
   const rows = parseCSV(csv);
   if (rows.length < 2) return new Map();
-  
+
   const result = new Map();
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (row.length < 4) continue;
-    
+    // Require at least 5 columns: lesson_id, index, scratchpad, front, back
+    if (row.length < 5) continue;
+
     const lessonId = unescapeCSV(row[0]);
     if (!lessonId) continue;
-    
+
+    // Skip row[2] (scratchpad) - it's for LLM internal reasoning
     const flashcard = {
-      front: unescapeCSV(row[2]),
-      back: unescapeCSV(row[3])
+      front: unescapeCSV(row[3]),
+      back: unescapeCSV(row[4])
     };
-    
+
+    // Skip if front or back is empty
+    if (!flashcard.front || !flashcard.back) continue;
+
     if (!result.has(lessonId)) {
       result.set(lessonId, []);
     }
     result.get(lessonId).push(flashcard);
   }
-  
+
   return result;
 }
 
@@ -597,10 +608,10 @@ export function csvToBatchedFlashcards(csv) {
 export function parseBatchedReadings(text) {
   const result = new Map();
   if (!text) return result;
-  
+
   // Split on lesson headers
   const parts = text.split(/===LESSON:([^=]+)===/);
-  
+
   // parts[0] is before first header (ignore), then alternating: lessonId, content
   for (let i = 1; i < parts.length; i += 2) {
     const lessonId = parts[i]?.trim();
@@ -609,7 +620,7 @@ export function parseBatchedReadings(text) {
       result.set(lessonId, content);
     }
   }
-  
+
   return result;
 }
 
@@ -627,7 +638,8 @@ export function formatLessonPlansForBatch(lessons) {
 
 /**
  * Parses batched inline questions CSV output.
- * CSV format: lesson_id,chunk_index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+ * CSV format: lesson_id,chunk_index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+ * (scratchpad is internal LLM reasoning - skipped in parsing)
  * @param {string} csv - CSV string with header
  * @returns {Map<string, Array>} - Map of lesson_id -> array of inline question objects
  */
@@ -635,25 +647,27 @@ export function csvToBatchedInlineQuestions(csv) {
   const result = new Map();
   const rows = parseCSV(csv);
   if (rows.length < 2) return result;
-  
+
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (row.length < 12) continue;
-    
+    // Require at least 13 columns: lesson_id, chunk_index, scratchpad, question, optionA-D, correct_index, expA-D
+    if (row.length < 13) continue;
+
     const lessonId = unescapeCSV(row[0]);
     const chunkIndex = parseInt(row[1], 10) || 0;
-    const question = unescapeCSV(row[2]);
-    const options = [unescapeCSV(row[3]), unescapeCSV(row[4]), unescapeCSV(row[5]), unescapeCSV(row[6])];
-    const correctIndex = parseInt(row[7], 10) || 0;
-    const explanations = [unescapeCSV(row[8]), unescapeCSV(row[9]), unescapeCSV(row[10]), unescapeCSV(row[11])];
-    const confidence = row.length > 12 ? parseFloat(row[12]) || 0.8 : 0.8;
-    
+    // Skip row[2] (scratchpad) - it's for LLM internal reasoning
+    const question = unescapeCSV(row[3]);
+    const options = [unescapeCSV(row[4]), unescapeCSV(row[5]), unescapeCSV(row[6]), unescapeCSV(row[7])];
+    const correctIndex = parseInt(row[8], 10) || 0;
+    const explanations = [unescapeCSV(row[9]), unescapeCSV(row[10]), unescapeCSV(row[11]), unescapeCSV(row[12])];
+    const confidence = row.length > 13 ? parseFloat(row[13]) || 0.8 : 0.8;
+
     if (!question || options.some(o => !o)) continue;
-    
+
     if (!result.has(lessonId)) {
       result.set(lessonId, []);
     }
-    
+
     result.get(lessonId).push({
       chunkIndex,
       question,
@@ -664,7 +678,7 @@ export function csvToBatchedInlineQuestions(csv) {
       _needsValidation: confidence < 0.7
     });
   }
-  
+
   return result;
 }
 
@@ -678,31 +692,31 @@ export function csvToBatchedVideos(csv) {
   const result = new Map();
   const rows = parseCSV(csv);
   if (rows.length < 2) return result;
-  
+
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 4) continue;
-    
+
     const lessonId = unescapeCSV(row[0]);
     const videoIndex = parseInt(row[1], 10) || 0;
     const title = unescapeCSV(row[2]);
     const thumbnail = row.length > 3 ? unescapeCSV(row[3]) : '';
     const url = row.length > 4 ? unescapeCSV(row[4]) : '';
     const confidence = row.length > 5 ? parseFloat(row[5]) || 0.8 : 0.8;
-    
+
     if (!title) continue;
-    
+
     // Extract videoId from URL if present
     let videoId = '';
     if (url) {
       const match = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
       videoId = match ? match[1] : '';
     }
-    
+
     if (!result.has(lessonId)) {
       result.set(lessonId, []);
     }
-    
+
     result.get(lessonId).push({
       videoIndex,
       videoId,
@@ -712,7 +726,7 @@ export function csvToBatchedVideos(csv) {
       confidence
     });
   }
-  
+
   return result;
 }
 
@@ -729,11 +743,11 @@ export function isCSVAppropriate(data) {
   if (!data) return false;
   if (!Array.isArray(data)) return false;
   if (data.length === 0) return false;
-  
+
   // Check first item for complexity
   const sample = data[0];
   if (typeof sample !== 'object') return false;
-  
+
   // Count nested objects/arrays
   let nestedCount = 0;
   for (const value of Object.values(sample)) {
@@ -741,7 +755,7 @@ export function isCSVAppropriate(data) {
       nestedCount++;
     }
   }
-  
+
   // If more than 2 nested structures, prefer JSON
   return nestedCount <= 2;
 }

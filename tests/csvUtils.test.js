@@ -104,10 +104,10 @@ describe('CSV Utilities', () => {
         correct_index: 0,
         explanation: ['Right', 'Wrong', 'Wrong', 'Wrong']
       }];
-      
+
       const csv = quizToCSV(quiz);
       const parsed = csvToQuiz(csv);
-      
+
       assert.strictEqual(parsed[0].question, 'What is "quotation" in CSV?');
       assert.strictEqual(parsed[0].options[0], 'Option A, with comma');
     });
@@ -122,7 +122,7 @@ describe('CSV Utilities', () => {
     it('converts flashcards to CSV and back', () => {
       const csv = flashcardsToCSV(sampleFlashcards);
       assert.ok(csv.includes('index,front,back'));
-      
+
       const parsed = csvToFlashcards(csv);
       assert.strictEqual(parsed.length, 2);
       assert.strictEqual(parsed[0].front, 'Question 1');
@@ -133,7 +133,7 @@ describe('CSV Utilities', () => {
       const cards = [{ front: 'What is \\(x^2\\)?', back: '2x, the derivative' }];
       const csv = flashcardsToCSV(cards);
       const parsed = csvToFlashcards(csv);
-      
+
       assert.strictEqual(parsed[0].front, 'What is \\(x^2\\)?');
       assert.strictEqual(parsed[0].back, '2x, the derivative');
     });
@@ -162,7 +162,7 @@ describe('CSV Utilities', () => {
       const csv = lessonsToCSV(sampleLessons);
       assert.ok(csv.includes('slug_id,title,module_group'));
       assert.ok(csv.includes('intro-calc'));
-      
+
       const parsed = csvToLessons(csv);
       assert.strictEqual(parsed.length, 1);
       assert.strictEqual(parsed[0].slug_id, 'intro-calc');
@@ -199,19 +199,23 @@ describe('CSV Utilities', () => {
   });
 
   describe('Batched Quiz CSV', () => {
-    it('parses batched quiz CSV with lesson_id column', () => {
-      const csv = `lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD
-lesson-1,0,What is 2+2?,3,4,5,6,1,Wrong,Correct,Wrong,Wrong
-lesson-1,1,What is 3+3?,5,6,7,8,1,Wrong,Correct,Wrong,Wrong
-lesson-2,0,What is 1+1?,1,2,3,4,1,Wrong,Correct,Wrong,Wrong`;
+    it('parses batched quiz CSV with lesson_id column and scratchpad', () => {
+      // CSV format: lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+      const csv = `lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+lesson-1,0,Internal reasoning here,What is 2+2?,3,4,5,6,1,Wrong,Correct,Wrong,Wrong,0.9
+lesson-1,1,More reasoning,What is 3+3?,5,6,7,8,1,Wrong,Correct,Wrong,Wrong,0.8
+lesson-2,0,Checking answer,What is 1+1?,1,2,3,4,1,Wrong,Correct,Wrong,Wrong,0.95`;
 
       const result = csvToBatchedQuiz(csv);
-      
+
       assert.strictEqual(result.size, 2);
       assert.strictEqual(result.get('lesson-1').length, 2);
       assert.strictEqual(result.get('lesson-2').length, 1);
+      // Verify scratchpad is skipped and question is parsed from correct column
       assert.strictEqual(result.get('lesson-1')[0].question, 'What is 2+2?');
       assert.strictEqual(result.get('lesson-2')[0].correct_index, 1);
+      // Verify confidence is parsed correctly
+      assert.strictEqual(result.get('lesson-1')[0]._confidence, 0.9);
     });
 
     it('handles empty CSV', () => {
@@ -221,18 +225,21 @@ lesson-2,0,What is 1+1?,1,2,3,4,1,Wrong,Correct,Wrong,Wrong`;
   });
 
   describe('Batched Flashcards CSV', () => {
-    it('parses batched flashcards CSV with lesson_id column', () => {
-      const csv = `lesson_id,index,front,back
-lesson-1,0,What is X?,Answer X
-lesson-1,1,What is Y?,Answer Y
-lesson-2,0,What is Z?,Answer Z`;
+    it('parses batched flashcards CSV with lesson_id column and scratchpad', () => {
+      // CSV format: lesson_id,index,scratchpad,front,back
+      const csv = `lesson_id,index,scratchpad,front,back
+lesson-1,0,Verification note,What is X?,Answer X
+lesson-1,1,Another note,What is Y?,Answer Y
+lesson-2,0,Reasoning here,What is Z?,Answer Z`;
 
       const result = csvToBatchedFlashcards(csv);
-      
+
       assert.strictEqual(result.size, 2);
       assert.strictEqual(result.get('lesson-1').length, 2);
       assert.strictEqual(result.get('lesson-2').length, 1);
+      // Verify scratchpad is skipped and front/back are from correct columns
       assert.strictEqual(result.get('lesson-1')[0].front, 'What is X?');
+      assert.strictEqual(result.get('lesson-1')[0].back, 'Answer X');
       assert.strictEqual(result.get('lesson-2')[0].back, 'Answer Z');
     });
   });
@@ -251,7 +258,7 @@ More content here.
 This is the second lesson.`;
 
       const result = parseBatchedReadings(text);
-      
+
       assert.strictEqual(result.size, 2);
       assert.ok(result.get('lesson-1').includes('Introduction'));
       assert.ok(result.get('lesson-2').includes('Second Lesson'));
