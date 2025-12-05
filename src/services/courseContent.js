@@ -1068,6 +1068,23 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
         if (!Array.isArray(item.options) || item.options.length !== 4) throw new Error('Options must be an array of 4 strings');
         if (!Number.isInteger(item.answerIndex) || item.answerIndex < 0 || item.answerIndex > 3) throw new Error('answerIndex must be 0-3');
         if (!Array.isArray(item.explanation) || item.explanation.length !== 4) throw new Error('Explanation must be an array of 4 strings');
+        
+        // Strict explanation validation - same as quiz questions
+        const expValidation = validateExplanations(item.explanation, 4);
+        if (!expValidation.valid) throw new Error(`Explanation validation failed: ${expValidation.error}`);
+        
+        // Rationale consistency check - convert to quiz format for the check
+        const quizFormatItem = {
+          question: item.question,
+          options: item.options,
+          correct_index: item.answerIndex,
+          explanation: item.explanation
+        };
+        const consistency = checkRationaleConsistency(quizFormatItem);
+        if (!consistency.valid) {
+          console.warn(`[generateInlineQuestion] Rationale consistency warnings: ${consistency.warnings.join(', ')}`);
+        }
+        
         return { valid: true, data: item };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -1075,14 +1092,49 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     };
 
     const repairPrompt = (brokenItems, errors) => {
-      return `The following inline question is invalid:\n${JSON.stringify(brokenItems[0], null, 2)}\n\nError:\n${errors[0]}\n\nPlease regenerate it correctly. Ensure 'options' and 'explanation' are both arrays of 4 strings.`;
+      return `The following inline question is invalid:\n${JSON.stringify(brokenItems[0], null, 2)}\n\nError:\n${errors[0]}\n\nPlease regenerate it correctly. 
+CRITICAL REQUIREMENTS:
+- 'options' must be an array of exactly 4 answer choices
+- 'explanation' must be an array of exactly 4 SUBSTANTIVE explanations (minimum 15 characters each)
+- Each explanation must be a COMPLETE sentence explaining why that option is correct or incorrect
+- NO placeholder text like "Incorrect" or "Not the answer"
+- For the correct option: explain WHY it is the right answer with supporting reasoning
+- For incorrect options: explain the specific misconception or error`;
     };
 
     // Wrap in array for the repair tool
     const { items: repairedItems } = await repairContentArray([parsed], validator, repairPrompt, 'generateInlineQuestion', userId, courseId);
 
-    if (!repairedItems.length) return null;
-    parsed = repairedItems[0];
+    // If repair failed, try targeted rationale fix
+    if (!repairedItems.length) {
+      console.log('[generateInlineQuestion] Standard repair failed. Attempting targeted rationale fix.');
+      const quizFormatItem = {
+        question: parsed?.question || '',
+        options: parsed?.options || [],
+        correct_index: parsed?.answerIndex ?? 0,
+        explanation: parsed?.explanation || []
+      };
+      const fixedQuestion = await fixMissingRationales(quizFormatItem, userId, courseId);
+      if (fixedQuestion) {
+        // Convert back to inline format
+        parsed = {
+          question: fixedQuestion.question,
+          options: fixedQuestion.options,
+          answerIndex: fixedQuestion.correct_index,
+          explanation: fixedQuestion.explanation
+        };
+        // Validate the fix
+        const fixValidation = validator(parsed);
+        if (!fixValidation.valid) {
+          console.warn('[generateInlineQuestion] Targeted rationale fix did not resolve validation issues.');
+          return null;
+        }
+      } else {
+        return null;
+      }
+    } else {
+      parsed = repairedItems[0];
+    }
 
     const answerIndex = parsed.answerIndex;
     const correctOption = ['A', 'B', 'C', 'D'][answerIndex];
@@ -1179,6 +1231,58 @@ Return JSON: { "repaired_markdown": "string" }`;
     if (!finalCheck.valid) {
       console.warn(`[generateInlineQuestion] validateContent broke the format: ${finalCheck.error}. Reverting to pre-validation version.`);
       return validatedMd; // Fallback to the formatted but potentially unvalidated content
+    }
+
+    // --- SELF-CONSISTENCY VERIFICATION ---
+    // Convert inline question back to quiz format for consistency check
+    const inlineAsQuiz = {
+      question: parsed.question,
+      options: parsed.options,
+      correct_index: parsed.answerIndex,
+      explanation: parsed.explanation
+    };
+    
+    try {
+      const consistencyResult = await verifySelfConsistency(inlineAsQuiz, chunkText, userId, courseId);
+      
+      if (!consistencyResult.consistent) {
+        console.warn(`[generateInlineQuestion] Self-consistency check FAILED. Model answered ${['A', 'B', 'C', 'D'][consistencyResult.modelAnswer]} but correct is ${['A', 'B', 'C', 'D'][parsed.answerIndex]}`);
+        
+        // Attempt reconciliation
+        const reconciledQuestion = await reconcileAnswerDiscrepancy(inlineAsQuiz, consistencyResult, chunkText, userId, courseId);
+        
+        if (reconciledQuestion && reconciledQuestion.correct_index !== parsed.answerIndex) {
+          console.log(`[generateInlineQuestion] Answer reconciled: changed from ${['A', 'B', 'C', 'D'][parsed.answerIndex]} to ${['A', 'B', 'C', 'D'][reconciledQuestion.correct_index]}`);
+          
+          // Rebuild markdown with corrected answer
+          const newAnswerIndex = reconciledQuestion.correct_index;
+          const newCorrectOption = ['A', 'B', 'C', 'D'][newAnswerIndex];
+          const newExplanations = reconciledQuestion.explanation || parsed.explanation;
+          
+          let reconciledMd = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
+          parsed.options.forEach((opt, i) => {
+            const letter = ['A', 'B', 'C', 'D'][i];
+            let cleanOpt = opt.trim().replace(/^[A-D][.)]\s*/i, '').trim();
+            reconciledMd += `- ${letter}. ${cleanOpt}\n`;
+          });
+          
+          const explanationList = parsed.options.map((_, i) => {
+            const letter = ['A', 'B', 'C', 'D'][i];
+            const isCorrect = i === newAnswerIndex;
+            const icon = isCorrect ? '✅' : '❌';
+            return `- **${letter}** ${icon} ${newExplanations[i] || 'Explanation not available.'}`;
+          }).join('\n');
+          
+          reconciledMd += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${newCorrectOption}\n\n${explanationList}\n</details>\n`;
+          
+          return reconciledMd;
+        } else if (!reconciledQuestion) {
+          console.warn(`[generateInlineQuestion] Could not reconcile answer discrepancy. Keeping original but flagging.`);
+        }
+      }
+    } catch (scError) {
+      console.error(`[generateInlineQuestion] Self-consistency check error:`, scError.message);
+      // Don't fail the question, just log the error
     }
 
     return contentValidatedMd;

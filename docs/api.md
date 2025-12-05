@@ -879,7 +879,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `validation_quiz` – Quiz validation (per-question validation with self-consistency check)
   - `validation_flashcards` – Flashcard validation
   - `validation_practice_exam` – Practice exam validation
-  - `validation_inline_question` – Inline question validation
+  - `validation_inline_question` – Inline question validation (with self-consistency check)
   - `reading_regeneration` – Reading regeneration
   - `quiz_regeneration` – Quiz regeneration
   - `flashcards_regeneration` – Flashcard regeneration
