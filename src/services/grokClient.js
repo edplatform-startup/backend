@@ -490,7 +490,7 @@ export async function executeOpenRouterChat(options = {}) {
     attachments = [],
     attachmentsInlineOptions,
     responseFormat,
-    requestTimeoutMs = 55000,
+    requestTimeoutMs = 300000,
     enableWebSearch = false,
     plugins,
     userId,

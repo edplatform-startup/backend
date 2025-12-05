@@ -68,7 +68,7 @@ export function __resetYouTubeFetcher() {
 // Export for testing - internal functions exposed for unit tests
 export { mergeValidatedArray as __mergeValidatedArray };
 export { validateExplanations as __validateExplanations };
-export { checkRationaleConsistency as __checkRationaleConsistency };
+
 export { MIN_EXPLANATION_LENGTH as __MIN_EXPLANATION_LENGTH };
 
 export async function saveCourseStructure(courseId, userId, lessonGraph) {
@@ -1281,10 +1281,7 @@ Example:
           correct_index: item.answerIndex,
           explanation: item.explanation
         };
-        const consistency = checkRationaleConsistency(quizFormatItem);
-        if (!consistency.valid) {
-          console.warn(`[generateInlineQuestion] Rationale consistency warnings: ${consistency.warnings.join(', ')}`);
-        }
+
         
         // Attach confidence for tracking
         item._confidence = confidence;
@@ -1902,39 +1899,7 @@ function validateExplanations(explanation, optionsCount = 4) {
  * @param {object} item - Quiz item with question, options, correct_index, explanation
  * @returns {{valid: boolean, warnings: string[]}}
  */
-function checkRationaleConsistency(item) {
-  const warnings = [];
-  const correctIdx = item.correct_index;
-  const correctExp = item.explanation[correctIdx]?.toLowerCase() || '';
-  
-  // Negative indicators that shouldn't appear in correct answer's rationale
-  const negativeIndicators = ['incorrect', 'wrong', 'false', 'not correct', 'is not', 'cannot be'];
-  // Positive indicators that shouldn't appear strongly in incorrect answers' rationales
-  const positiveIndicators = ['is correct', 'is the right', 'is true', 'is accurate', 'correctly'];
-  
-  // Check correct answer's explanation doesn't sound negative
-  for (const neg of negativeIndicators) {
-    if (correctExp.includes(neg) && !correctExp.includes('not ' + neg)) {
-      // Simple heuristic: if explanation for correct answer says "incorrect" without negating it
-      warnings.push(`Correct answer (option ${correctIdx + 1}) explanation contains negative language: "${neg}"`);
-      break;
-    }
-  }
-  
-  // Check incorrect answers' explanations don't sound too positive
-  for (let i = 0; i < item.explanation.length; i++) {
-    if (i === correctIdx) continue;
-    const exp = item.explanation[i]?.toLowerCase() || '';
-    for (const pos of positiveIndicators) {
-      if (exp.includes(pos)) {
-        warnings.push(`Incorrect answer (option ${i + 1}) explanation contains positive language: "${pos}"`);
-        break;
-      }
-    }
-  }
-  
-  return { valid: warnings.length === 0, warnings };
-}
+
 
 function normalizeQuizItem(item, index, strictMode = true) {
   const question = typeof item?.question === 'string' ? item.question.trim() : '';
@@ -1983,11 +1948,7 @@ function normalizeQuizItem(item, index, strictMode = true) {
     explanation,
   };
   
-  // Check rationale consistency and log warnings (don't fail, just warn)
-  const consistency = checkRationaleConsistency(normalized);
-  if (!consistency.valid) {
-    console.warn(`[normalizeQuizItem] Q${index + 1} rationale consistency warnings:`, consistency.warnings);
-  }
+
   
   return normalized;
 }
@@ -4057,11 +4018,7 @@ async function validateQuizQuestionsIndividually(questions, context, userId, cou
           // Verify the validated question has complete explanations using strict validation
           const resultExpValidation = validateExplanations(validatedQ.explanation, 4);
           if (resultExpValidation.valid) {
-            // Also check rationale consistency
-            const consistency = checkRationaleConsistency(validatedQ);
-            if (!consistency.valid) {
-              console.warn(`[validateQuizQuestionsIndividually] Q${i + 1} has rationale consistency issues:`, consistency.warnings);
-            }
+
             
             validated = validatedQ;
             if (JSON.stringify(validatedQ) !== JSON.stringify(question)) {
