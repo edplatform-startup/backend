@@ -387,7 +387,7 @@ export async function synthesizeSyllabus({
       maxTokens: 8192,
       attachments,
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 120000, // 2 minutes for PLANNER with web search
+      requestTimeoutMs: 300000, // 5 minutes for PLANNER with web search
       userId,
       courseId,
       source: 'planner_syllabus',
@@ -446,7 +446,7 @@ Return corrected JSON only.`,
       maxTokens: 8192,
       attachments,
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 120000, // 2 minutes for repair call
+      requestTimeoutMs: 300000, // 5 minutes for repair call
       userId,
       courseId,
       source: 'planner_syllabus_repair',
@@ -640,7 +640,7 @@ Using this information, produce competency-based overviewTopics with fully popul
       maxTokens: 8192,
       allowWeb: false, // Disabled web search to avoid compatibility issues with Grok
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 120000, // 2 minutes for TOPICS
+      requestTimeoutMs: 300000, // 5 minutes for TOPICS
       userId,
       courseId,
       source: 'hierarchical_topics',
@@ -680,7 +680,7 @@ Please return **only** a correct JSON object for the topic map, with no extra te
         allowWeb: false,
         maxTokens: 8192,
         responseFormat: { type: 'json_object' },
-        requestTimeoutMs: 120000,
+        requestTimeoutMs: 300000, // 5 minutes for topic repair
         userId,
         courseId,
         source: 'hierarchical_topics_repair',

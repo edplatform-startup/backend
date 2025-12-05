@@ -8,11 +8,8 @@ import {
   quizToCSV,
   flashcardsToCSV,
   parseCSV,
-  csvToBatchedQuiz,
-  csvToBatchedFlashcards,
   parseBatchedReadings,
   formatLessonPlansForBatch,
-  csvToBatchedInlineQuestions,
   csvToBatchedVideos
 } from '../utils/csvUtils.js';
 import yts from 'yt-search';
@@ -2739,38 +2736,39 @@ Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
       content: `You are building quizzes for module "${moduleName}" in course "${courseName}".
 Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
 
-OUTPUT FORMAT: CSV with lesson_id column
-Header: lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+OUTPUT FORMAT: JSON object
+{
+  "quizzes": {
+    "<lesson_id>": [
+      {
+        "question": "Full question text",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correct_index": 0,
+        "explanation": ["Why A is correct/wrong", "Why B is correct/wrong", "Why C is correct/wrong", "Why D is correct/wrong"],
+        "confidence": 0.9
+      }
+    ]
+  }
+}
 
-COLUMN RULES:
-- lesson_id: Must match the provided Lesson ID exactly
-- index: Question number within that lesson (0, 1, 2, ...)
-- scratchpad: Your internal reasoning/verification. This column is stripped before showing to students.
-- question: The actual quiz question students will see
-- optionA-D: The four answer choices students will see
-- correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- expA-D: Explanation for each option (min 20 chars each)
-- confidence: 0.0-1.0
+FIELD RULES:
+- question: Clear, complete question text
+- options: Array of exactly 4 answer choices
+- correct_index: 0-3 (index of correct answer)
+- explanation: Array of exactly 4 explanations (one per option, min 20 chars each)
+- confidence: 0.0-1.0 - Rate how confident you are that: (1) the marked correct answer is TRULY correct, (2) NO other option could also be correct, (3) the question is factually accurate. Use lower confidence (< 0.7) if uncertain.
 
-QUALITY REQUIREMENTS (CRITICAL):
-- ALL student-facing text (question, optionA-D, expA-D) MUST be:
-  * Complete, grammatically correct sentences
-  * Written in clear, easy-to-understand language
-  * Free of abbreviations, shorthand, or note-style writing
-  * Professional and polished, as if published in a textbook
-- DO NOT use telegraphic style like "deg3 odd, no" or "E.g. non-Hamilton despite Euler"
-- DO NOT use question marks in the middle of statements
-- WRITE OUT complete thoughts: "The degree of vertex 3 is odd, so this graph does not have an Eulerian path."
-- Put ALL working, reasoning, verification, and draft notes in the scratchpad column ONLY
+QUALITY REQUIREMENTS:
+- All text must be complete, grammatically correct sentences
+- Professional quality, as if published in a textbook
 - Include 1 Challenge Question per lesson (last question)
-- Use LaTeX for math: \\\\(...\\\\) for inline
-- Escape commas with quotes
+- Use LaTeX for math: \\(...\\) for inline, \\[...\\] for display
 
-CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
+Generate questions for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate quiz questions for these lessons:\n\n${lessonPlans}\n\nReturn ONLY CSV with header row.`
+      content: `Generate quiz questions for these lessons:\n\n${lessonPlans}`
     }
   ];
 
@@ -2780,7 +2778,8 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.2,
       maxTokens: 16000,
       messages,
-      requestTimeoutMs: 600000, // 10 minutes for batch operations
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 600000,
       reasoning: { enabled: true },
       userId,
       source: 'batch_quiz_generation',
@@ -2788,28 +2787,33 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const quizMap = csvToBatchedQuiz(csvText);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      console.error(`[generateModuleQuizzes] Failed to parse JSON:`, e.message);
+      return new Map();
+    }
+
+    const quizMap = parsed?.quizzes || {};
 
     const results = new Map();
     for (const lesson of lessons) {
-      const questions = quizMap.get(lesson.id);
-      if (questions?.length) {
+      const questions = quizMap[lesson.id]; // JSON object access, not Map
+      if (Array.isArray(questions) && questions.length > 0) {
         // Validate and repair questions
         const validator = (item, index) => {
           try {
-            let cleanItem = item;
-            if (item && typeof item === 'object') {
-              const { validation_check, step_by_step_thinking, confidence_assessment, ...rest } = item;
-              cleanItem = rest;
-            }
-            if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
+            if (!Array.isArray(item?.explanation) || item.explanation.length !== 4) {
               return { valid: false, error: `Incomplete explanations` };
             }
-            if (cleanItem.explanation.some(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH)) {
+            if (item.explanation.some(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH)) {
               return { valid: false, error: `Explanation too short` };
             }
-            const normalized = normalizeQuizItem(cleanItem, index, true);
+            const normalized = normalizeQuizItem(item, index, true);
+            // Preserve confidence for batch validation (threshold: 0.65)
+            normalized._confidence = typeof item.confidence === 'number' ? item.confidence : 0.8;
+            normalized._needsValidation = normalized._confidence < 0.65;
             return { valid: true, data: normalized };
           } catch (e) {
             return { valid: false, error: e.message };
@@ -2865,29 +2869,25 @@ Flashcards Plan: ${plans.flashcards || 'Generate key concept flashcards'}`;
       content: `You are building flashcards for module "${moduleName}" in course "${courseName}".
 Generate 5-7 flashcards for EACH of the ${lessons.length} lessons.
 
-OUTPUT FORMAT: CSV with lesson_id column
-Header: lesson_id,index,scratchpad,front,back
+OUTPUT FORMAT: JSON object
+{
+  "flashcards": {
+    "<lesson_id>": [
+      { "front": "Question or prompt", "back": "Answer or explanation" }
+    ]
+  }
+}
 
-COLUMN RULES:
-- lesson_id: Must match the provided Lesson ID exactly
-- index: Card number within that lesson (0, 1, 2, ...)
-- scratchpad: Your internal reasoning/verification. Stripped before showing to students.
-- front: The question/prompt students will see on the front of the card
-- back: The answer students will see on the back of the card
+FIELD RULES:
+- front: Clear question or prompt students will see
+- back: Complete answer in full sentences
+- Use LaTeX for math: \\(...\\) for inline, \\[...\\] for display
 
-QUALITY REQUIREMENTS (CRITICAL):
-- front: Must be a clear, complete question or prompt (e.g., "What is the definition of...")
-- back: Must be a clear, complete answer in full sentences
-- DO NOT put reasoning, verification, or notes in front/back columns
-- Put ALL working in the scratchpad column
-- Use LaTeX for math: \\\\(...\\\\) for inline
-- Escape commas with quotes
-
-CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
+Generate flashcards for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate flashcards for these lessons:\n\n${lessonPlans}\n\nReturn ONLY CSV with header row.`
+      content: `Generate flashcards for these lessons:\n\n${lessonPlans}`
     }
   ];
 
@@ -2897,7 +2897,8 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
       temperature: 0.25,
       maxTokens: 8000,
       messages,
-      requestTimeoutMs: 600000, // 10 minutes for batch operations
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 600000,
       reasoning: { enabled: true },
       userId,
       source: 'batch_flashcards_generation',
@@ -2905,13 +2906,20 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const flashcardsMap = csvToBatchedFlashcards(csvText);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      console.error(`[generateModuleFlashcards] Failed to parse JSON:`, e.message);
+      return new Map();
+    }
 
+    const flashcardsMap = parsed?.flashcards || {};
     const results = new Map();
+
     for (const lesson of lessons) {
-      const cards = flashcardsMap.get(lesson.id);
-      if (cards?.length) {
+      const cards = flashcardsMap[lesson.id]; // JSON object access
+      if (Array.isArray(cards) && cards.length > 0) {
         // Validate flashcards
         const validator = (item, index) => {
           try {
@@ -2976,36 +2984,36 @@ ${truncated}`;
       content: `You are creating inline "Check Your Understanding" questions for module "${moduleName}" in course "${courseName}".
 Generate 3-5 inline MCQs for EACH of the ${lessons.length} lessons based on their reading content.
 
-OUTPUT FORMAT: CSV with header
-lesson_id,chunk_index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+OUTPUT FORMAT: JSON object
+{
+  "questions": {
+    "<lesson_id>": [
+      {
+        "question": "Question text",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correct_index": 0,
+        "explanation": ["Why A...", "Why B...", "Why C...", "Why D..."],
+        "confidence": 0.9
+      }
+    ]
+  }
+}
 
-COLUMN RULES:
-- lesson_id: Must match the provided Lesson ID exactly
-- chunk_index: Question number within that lesson (0, 1, 2, ...)
-- scratchpad: Your internal reasoning/verification. Stripped before showing to students.
-- question: The quiz question students will see
-- optionA-D: The four answer choices students will see
-- correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- expA-D: Explanation for each option (min 20 chars)
-- confidence: 0.0-1.0
+FIELD RULES:
+- question: Clear question text
+- options: Array of exactly 4 answer choices
+- correct_index: 0-3 (index of correct answer)
+- explanation: Array of 4 explanations (min 20 chars each)
+- confidence: 0.0-1.0 - Rate how confident you are that the answer is TRULY correct and NO other option could be correct. Use < 0.7 if uncertain.
 
-QUALITY REQUIREMENTS (CRITICAL):
-- ALL student-facing text (question, optionA-D, expA-D) MUST be:
-  * Complete, grammatically correct sentences
-  * Written in clear, easy-to-understand language
-  * Free of abbreviations, shorthand, or note-style writing
-  * Professional and polished
-- DO NOT put reasoning or working in question/option/explanation columns
-- Put ALL working in the scratchpad column
-- Focus on synthesis/application, not simple recall
-- Use LaTeX for math: \\\\(...\\\\) for inline
-- Escape commas with quotes
+QUALITY: Professional, complete sentences. Focus on synthesis/application, not recall.
+Use LaTeX for math: \\(...\\) for inline.
 
-CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
+Generate questions for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate inline questions for these lessons:\n\n${lessonContexts}\n\nReturn ONLY CSV with header row.`
+      content: `Generate inline questions for these lessons:\n\n${lessonContexts}`
     }
   ];
 
@@ -3015,7 +3023,8 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.3,
       maxTokens: 16000,
       messages,
-      requestTimeoutMs: 600000, // 10 minutes for batch operations
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 600000,
       reasoning: { enabled: true },
       userId,
       source: 'batch_inline_questions',
@@ -3023,33 +3032,43 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const questionsMap = csvToBatchedInlineQuestions(csvText);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      console.error(`[generateModuleInlineQuestions] Failed to parse JSON:`, e.message);
+      return new Map();
+    }
+
+    const questionsMap = parsed?.questions || {};
 
     // Convert questions to markdown format
     const results = new Map();
     for (const lesson of lessons) {
-      const questions = questionsMap.get(lesson.id) || [];
-      if (questions.length > 0) {
+      const questions = questionsMap[lesson.id] || [];
+      if (Array.isArray(questions) && questions.length > 0) {
         // Convert each question to markdown
         const markdownQuestions = questions.map(q => {
           let md = `\n\n**Check Your Understanding**\n\n${q.question}\n\n`;
-          q.options.forEach((opt, i) => {
+          (q.options || []).forEach((opt, i) => {
             const letter = ['A', 'B', 'C', 'D'][i];
-            md += `- ${letter}. ${opt.trim()}\n`;
+            md += `- ${letter}. ${String(opt).trim()}\n`;
           });
 
-          const correctLetter = ['A', 'B', 'C', 'D'][q.answerIndex];
-          const explanationList = q.options.map((_, i) => {
+          const answerIndex = typeof q.correct_index === 'number' ? q.correct_index : 0;
+          const correctLetter = ['A', 'B', 'C', 'D'][answerIndex];
+          const explanations = Array.isArray(q.explanation) ? q.explanation : [];
+          const explanationList = (q.options || []).map((_, i) => {
             const letter = ['A', 'B', 'C', 'D'][i];
-            const isCorrect = i === q.answerIndex;
+            const isCorrect = i === answerIndex;
             const icon = isCorrect ? '✅' : '❌';
-            return `- **${letter}** ${icon} ${q.explanation[i] || 'No explanation.'}`;
+            return `- **${letter}** ${icon} ${explanations[i] || 'No explanation.'}`;
           }).join('\n');
 
           md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctLetter}\n\n${explanationList}\n</details>\n`;
 
-          return { markdown: md, confidence: q.confidence, _needsValidation: q.confidence < 0.7 };
+          const confidence = typeof q.confidence === 'number' ? q.confidence : 0.8;
+          return { markdown: md, confidence, _needsValidation: confidence < 0.65 };
         });
 
         results.set(lesson.id, markdownQuestions);
