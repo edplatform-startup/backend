@@ -390,8 +390,23 @@ function getPluginToolHandler(name) {
 
 async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) {
   const MAX_RETRIES = 2;
+  const requestStartTime = Date.now();
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // Extract key info for logging
+  const stageLabel = meta?.stage || 'unknown';
+  const modelLabel = meta?.model || body?.model || body?.modelName || 'unknown';
+  const maxTokens = body?.max_tokens || 'unknown';
+  const messageCount = body?.messages?.length || 0;
+  const firstMsgPreview = body?.messages?.[0]?.content?.slice?.(0, 100) || 'N/A';
+  const timeoutMs = meta?.requestTimeoutMs || 'default';
+
+  console.log(`[openrouter] [${requestId}] Starting: stage=${stageLabel} model=${modelLabel} maxTokens=${maxTokens} timeout=${timeoutMs}ms`);
+
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const attemptStartTime = Date.now();
     const shouldRetry = attempt < MAX_RETRIES;
+
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -441,6 +456,9 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
         throw err;
       }
 
+      const durationMs = Date.now() - attemptStartTime;
+      console.log(`[openrouter] [${requestId}] Success after ${durationMs}ms (attempt ${attempt + 1})`);
+
       try {
         return JSON.parse(text);
       } catch (error) {
@@ -451,16 +469,26 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
         throw err;
       }
     } catch (error) {
+      const attemptDurationMs = Date.now() - attemptStartTime;
+      const totalDurationMs = Date.now() - requestStartTime;
       const isAbort = error?.name === 'AbortError';
+
       if (shouldRetry && (isAbort || error?.statusCode === 502 || error?.statusCode === 400)) {
         const backoff = 2000 * (attempt + 1);
-        console.warn('[openrouter] retrying after error:', error.message);
+        console.warn(`[openrouter] [${requestId}] Retry ${attempt + 1}/${MAX_RETRIES}: ${error.message} (attempt took ${attemptDurationMs}ms, total ${totalDurationMs}ms)`);
         await new Promise((resolve) => setTimeout(resolve, backoff));
         continue;
       }
-      const stageLabel = meta?.stage || 'unknown';
-      const modelLabel = meta?.model || body?.model || body?.modelName || 'unknown';
-      console.error(`[openrouter] request failed: stage=${stageLabel} model=${modelLabel}`, error);
+
+      // Comprehensive error logging
+      console.error(`[openrouter] [${requestId}] FAILED after ${totalDurationMs}ms (${attempt + 1} attempts)`);
+      console.error(`[openrouter] [${requestId}] Error: ${error.name}: ${error.message}`);
+      console.error(`[openrouter] [${requestId}] Details: stage=${stageLabel} model=${modelLabel} maxTokens=${maxTokens}`);
+      console.error(`[openrouter] [${requestId}] Request had ${messageCount} messages, first: "${firstMsgPreview}..."`);
+      if (isAbort) {
+        console.error(`[openrouter] [${requestId}] ABORT detected - request exceeded timeout or was cancelled`);
+      }
+
       throw error;
     }
   }
@@ -589,7 +617,7 @@ export async function executeOpenRouterChat(options = {}) {
     let payload;
     try {
       try {
-        payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal: effectiveSignal, meta: { stage: options?.stage || 'unknown', model: effectiveModel } });
+        payload = await callOpenRouterApi({ endpoint, apiKey, body: requestBody, signal: effectiveSignal, meta: { stage: options?.stage || source || 'unknown', model: effectiveModel, requestTimeoutMs } });
       } catch (error) {
         // Provide additional logging for token limit errors, including stage and maxTokens
         if (error && error.isTokenLimit) {

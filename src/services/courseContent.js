@@ -891,7 +891,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
           { role: 'user', content: prompt }
         ],
         responseFormat: { type: 'json_object' },
-        requestTimeoutMs: 60000,
+        requestTimeoutMs: 600000, // 10 minutes - repair may need time for complex content
         reasoning: { enabled: true },
         userId,
         source: 'content_repair',
@@ -3184,7 +3184,7 @@ Select ONE video per lesson.`
       temperature: 0.1,
       maxTokens: 2000,
       messages,
-      requestTimeoutMs: 60000,
+      requestTimeoutMs: 300000, // 5 minutes for batch video selection
       reasoning: { enabled: true },
       userId,
       source: 'batch_video_selection',
