@@ -78,7 +78,7 @@ router.post('/', async (req, res) => {
     const shouldRequestJson = responseFormat === 'json' && !useWebSearch && tools.length === 0;
     const result = await executeOpenRouterChat({
       messages,
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature,
       maxTokens,
       tools,
@@ -105,7 +105,7 @@ router.post('/', async (req, res) => {
     }
 
     return res.status(200).json({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       content: text,
     });
   } catch (e) {

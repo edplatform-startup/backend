@@ -608,7 +608,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
 
     try {
       const { content } = await grokExecutor({
-        model: 'x-ai/grok-4-fast',
+        model: 'x-ai/grok-4.1-fast',
         temperature: 0.2,
         maxTokens: 2048,
         messages: [
@@ -1045,7 +1045,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
 
   try {
     const response = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.3, // Slightly higher for creativity in question design
       maxTokens: 16384,
       messages: [systemPrompt, userPrompt],
@@ -1186,7 +1186,7 @@ Return JSON: { "repaired_markdown": "string" }`;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const response = await grokExecutor({
-            model: 'x-ai/grok-4-fast',
+            model: 'x-ai/grok-4.1-fast',
             temperature: 0.2,
             maxTokens: 1024,
             messages: [
@@ -1299,7 +1299,7 @@ Return JSON: { "repaired_markdown": "string" }`;
 async function validateMermaidBlock(code, userId, courseId) {
   try {
     const response = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.1,
       maxTokens: 512,
       messages: [
@@ -1338,7 +1338,7 @@ async function repairMermaidBlock(code, error, userId, courseId) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const response = await grokExecutor({
-        model: 'x-ai/grok-4-fast',
+        model: 'x-ai/grok-4.1-fast',
         temperature: 0.2,
         maxTokens: 1024,
         messages: [
@@ -1439,7 +1439,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
   const renderResponse = async (promptMessages) => {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.35,
       maxTokens: 8192,
       messages: promptMessages,
@@ -1647,7 +1647,7 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
     },
   ];
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
+    model: 'x-ai/grok-4.1-fast',
     temperature: 0.2,
     maxTokens: 2048, // Increased for detailed explanations
     messages,
@@ -1931,7 +1931,7 @@ Each problem should require 10-20 minutes, test deep understanding, and include 
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
+    model: 'x-ai/grok-4.1-fast',
     temperature: 0.25,
     maxTokens: 8192,
     messages,
@@ -2203,7 +2203,7 @@ Please independently solve this problem and validate the provided solution and r
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0,
       maxTokens: 4096,
       messages,
@@ -2289,7 +2289,7 @@ Please correct the problem to address these issues. Ensure the sample answer is 
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.2,
       maxTokens: 4096,
       messages,
@@ -2347,7 +2347,7 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     },
   ];
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
+    model: 'x-ai/grok-4.1-fast',
     temperature: 0.25,
     maxTokens: 1024,
     messages,
@@ -2450,7 +2450,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
 
   const renderResponse = async (promptMessages) => {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.3,
       maxTokens: 8192,
       messages: promptMessages,
@@ -2564,7 +2564,7 @@ Rules:
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
+    model: 'x-ai/grok-4.1-fast',
     temperature: 0.2,
     maxTokens: 2048,
     messages,
@@ -2662,7 +2662,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4-fast',
+    model: 'x-ai/grok-4.1-fast',
     temperature: 0.25,
     maxTokens: 2048,
     messages,
@@ -2789,7 +2789,7 @@ Select the best video index.`
       ];
 
       const response = await grokExecutor({
-        model: 'x-ai/grok-4-fast',
+        model: 'x-ai/grok-4.1-fast',
         temperature: 0.1,
         maxTokens: 256,
         messages,
@@ -3296,7 +3296,7 @@ Provide substantive explanations for each missing option. For the correct answer
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0.3,
       maxTokens: 1024,
       messages,
@@ -3391,7 +3391,7 @@ Analyze this question and determine the correct answer. Show your reasoning.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0, // Use temperature 0 for deterministic verification
       maxTokens: 1024,
       messages,
@@ -3491,7 +3491,7 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4-fast',
+      model: 'x-ai/grok-4.1-fast',
       temperature: 0,
       maxTokens: 1500,
       messages,

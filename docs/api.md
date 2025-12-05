@@ -100,7 +100,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - 200 OK → Model response (JSON):
     ```json
     {
-      "model": "x-ai/grok-4-fast",
+      "model": "x-ai/grok-4.1-fast",
       "content": "<string>" // normalized model output (text) or serialized JSON depending on responseFormat
     }
     ```
@@ -123,7 +123,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - Response (200):
     ```json
     {
-      "model": "x-ai/grok-4-fast",
+      "model": "x-ai/grok-4.1-fast",
       "content": "Supervised learning uses labeled data to train models, while unsupervised learning finds patterns in unlabeled data."
     }
     ```
@@ -279,7 +279,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
           ]
         }
       ],
-      "model": "x-ai/grok-4-fast",
+      "model": "x-ai/grok-4.1-fast",
       "rag_session_id": "uuid"  // present when RAG is used; reference for subsequent calls
     }
     ```
@@ -692,28 +692,69 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `500 Internal Server Error` → Database error
 
 ### POST /courses/:courseId/restructure
-- **Purpose**: Restructure or modify specific lessons in a course based on a user prompt.
+- **Purpose**: Restructure or modify a course by adding/removing modules, adding/removing lessons, or editing existing lesson content based on a user prompt.
 - **Path parameters**:
   - `courseId` (string, required) – UUID of the course
 - **Request body (JSON)**:
   - `userId` (string, required) – UUID of the user
-  - `prompt` (string, required) – The instruction for what to change (e.g., "Change the analogy in the limits lesson to use speedometers").
+  - `prompt` (string, required) – The instruction for what to change (e.g., "Add a module on derivatives after the limits module", "Remove the Newton's Method lesson", "Change the analogy in the limits lesson to use speedometers").
   - `lessonIds` (string[], optional) – Specific lesson IDs to target if known. If omitted, the system identifies affected lessons automatically.
+- **Supported Operations**:
+  - `add_module` – Create a new module with one or more lessons (generates reading, quiz, flashcards for each)
+  - `remove_module` – Delete an entire module and all its lessons
+  - `add_lesson` – Add a new lesson to an existing module
+  - `remove_lesson` – Delete a specific lesson
+  - `edit_lesson` – Modify content within an existing lesson (reading, quiz, flashcards, video)
 - **Behavior**:
-  1. Uses an LLM (Lesson Architect) to identify which lessons need modification based on the prompt and course structure.
-  2. Generates specific change instructions for each content type (reading, quiz, etc.) in the affected lessons.
-  3. Regenerates the content using the new instructions while preserving the overall structure.
-  4. Updates the database with the new content.
+  1. Uses Gemini (Lesson Architect) to analyze the request and create a structured plan of operations
+  2. Logs the Gemini plan with reasoning for what changes are needed
+  3. Executes each operation sequentially:
+     - For new content: Worker models (Grok) generate reading, quiz, and flashcards
+     - For edits: Worker models regenerate affected content types based on change instructions
+  4. Logs each worker execution with status (success/failed)
+  5. Persists all changes to the database
 - **Responses**:
   - `200 OK` →
     ```json
     {
       "success": true,
-      "affected_lessons": ["lesson-uuid-1", "lesson-uuid-2"],
       "results": [
-        { "id": "lesson-uuid-1", "status": "updated" },
-        { "id": "lesson-uuid-2", "status": "skipped" }
-      ]
+        { "operation": "add_module", "status": "completed" },
+        { "operation": "edit_lesson", "status": "completed" }
+      ],
+      "log": {
+        "courseId": "...",
+        "userId": "...",
+        "prompt": "...",
+        "durationMs": 12345,
+        "geminiPlan": {
+          "timestamp": "...",
+          "plan": {
+            "reasoning": "The user wants to...",
+            "operations": [...]
+          }
+        },
+        "operationCount": 2,
+        "operations": [...],
+        "workerExecutions": [
+          {
+            "lessonId": "...",
+            "lessonTitle": "...",
+            "contentType": "reading",
+            "instruction": "...",
+            "status": "success"
+          }
+        ],
+        "stats": {
+          "modulesAdded": 1,
+          "modulesRemoved": 0,
+          "lessonsAdded": 2,
+          "lessonsRemoved": 0,
+          "lessonsEdited": 1,
+          "workerSuccesses": 6,
+          "workerFailures": 0
+        }
+      }
     }
     ```
   - `400 Bad Request` → Missing parameters
@@ -854,7 +895,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
           "id": "...",
           "user_id": "...",
           "course_id": "...",
-          "model": "x-ai/grok-4-fast",
+          "model": "x-ai/grok-4.1-fast",
           "prompt_tokens": 150,
           "completion_tokens": 50,
           "total_tokens": 200,
@@ -1197,7 +1238,7 @@ All examples below require the `Authorization: Bearer <token>` header (omitted f
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
   - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4-fast" }`
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4.1-fast" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
   - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.

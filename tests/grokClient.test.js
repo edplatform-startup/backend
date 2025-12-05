@@ -76,7 +76,7 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
     let threw = false;
     try {
       await (await import('../src/services/grokClient.js')).executeOpenRouterChat({
-        model: 'x-ai/grok-4-fast',
+        model: 'x-ai/grok-4.1-fast',
         maxTokens: 200,
         messages: [{ role: 'user', content: 'Test' }],
         stage: 'TEST:STAGE',
@@ -86,7 +86,7 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
       threw = true;
     }
     assert.ok(threw, 'should throw');
-    const ok = captured.some((c) => /\[openrouter\]\[TOKEN\]/.test(c)) || captured.some((c) => c.includes('[openrouter] request failed') && c.includes('TEST:STAGE') && c.includes('grok-4-fast'));
+    const ok = captured.some((c) => /\[openrouter\]\[TOKEN\]/.test(c)) || captured.some((c) => c.includes('[openrouter] request failed') && c.includes('TEST:STAGE') && c.includes('grok-4.1-fast'));
     assert.ok(ok, 'Token limit or openrouter error log should include stage and model');
   } finally {
     console.error = originalError;
