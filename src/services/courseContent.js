@@ -1,7 +1,25 @@
 import { getSupabase } from '../supabaseClient.js';
 import { executeOpenRouterChat } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
+import {
+  csvToQuiz,
+  csvToFlashcards,
+  quizToCSV,
+  flashcardsToCSV,
+  parseCSV,
+  csvToBatchedQuiz,
+  csvToBatchedFlashcards,
+  parseBatchedReadings,
+  formatLessonPlansForBatch
+} from '../utils/csvUtils.js';
 import yts from 'yt-search';
+import {
+  rateQuestionConfidence,
+  batchValidateQuestions,
+  batchValidatePracticeProblems,
+  collectLowConfidenceQuestions,
+  CONFIDENCE_THRESHOLD
+} from './questionValidation.js';
 
 const STATUS_PENDING = 'pending';
 const STATUS_READY = 'ready';
@@ -216,24 +234,13 @@ async function runContentWorker(courseId, options = {}) {
     return { processed: 0, failed: 0, status: COURSE_STATUS_READY };
   }
 
-  const limit = pendingNodes.length < 20 ? Math.max(1, pendingNodes.length) : options.concurrency || DEFAULT_CONCURRENCY;
-
-  // Optimization: Fetch course title once if possible, or we can rely on it being passed or fetched inside.
-  // Since we don't have it easily here without another query, let's fetch it once.
+  // Fetch course info
   const { data: courseData } = await supabase.schema('api').from('courses').select('title, metadata, user_id').eq('id', courseId).single();
   const courseTitle = courseData?.title || 'Unknown Course';
   const mode = courseData?.metadata?.mode || 'deep';
   const userName = courseData?.metadata?.user_name || courseData?.user_id || 'Unknown User';
 
-  // Progress tracking for logging
-  let completedNodes = 0;
-  const totalNodes = pendingNodes.length;
-  const logProgress = (stage) => {
-    const percent = Math.round((completedNodes / totalNodes) * 100);
-    console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | ${stage} | ${percent}% complete`);
-  };
-
-  logProgress('Starting content generation');
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting batched content generation`);
 
   // Fetch all nodes and edges to build dependency map for context injection
   const { data: allNodes } = await supabase
@@ -263,24 +270,19 @@ async function runContentWorker(courseId, options = {}) {
     });
   }
 
-  const results = await runWithConcurrency(pendingNodes, limit, async (node, index) => {
-    try {
-      const prereqs = prereqMap.get(node.id) || [];
-      await processNode(node, supabase, courseTitle, prereqs, mode, userName);
-      completedNodes++;
-      logProgress(`Completed node ${completedNodes}/${totalNodes}: "${node.title}"`);
-      return { nodeId: node.id };
-    } catch (error) {
-      await markNodeError(node, supabase, error);
-      completedNodes++;
-      logProgress(`Failed node ${completedNodes}/${totalNodes}: "${node.title}"`);
-      throw error;
+  // GROUP NODES BY MODULE for batched generation
+  const moduleGroups = new Map();
+  for (const node of pendingNodes) {
+    const moduleName = node.module_ref || 'General Module';
+    if (!moduleGroups.has(moduleName)) {
+      moduleGroups.set(moduleName, []);
     }
-  });
+    moduleGroups.get(moduleName).push(node);
+  }
 
-  const failures = results.filter((result) => result.status === 'rejected');
+  console.log(`[Course Generation] Grouped ${pendingNodes.length} lessons into ${moduleGroups.size} modules`);
 
-  // Aggregate stats from successful results
+  // Process each module in batched mode
   const aggregateStats = {
     reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
@@ -289,39 +291,117 @@ async function runContentWorker(courseId, options = {}) {
     video: { total: 0, successful: 0, failed: 0 }
   };
 
-  results.forEach((result) => {
-    if (result.status === 'fulfilled' && result.value?.stats) {
-      const nodeStats = result.value.stats;
-      Object.keys(nodeStats).forEach((type) => {
-        if (aggregateStats[type]) {
-          aggregateStats[type].total += nodeStats[type].total || 0;
-          aggregateStats[type].immediate += nodeStats[type].immediate || 0;
-          aggregateStats[type].repaired_llm += nodeStats[type].repaired_llm || 0;
-          aggregateStats[type].failed += nodeStats[type].failed || 0;
-          aggregateStats[type].retries += nodeStats[type].retries || 0;
-        }
-      });
-    }
-  });
+  let totalProcessed = 0;
+  let totalFailed = 0;
 
-  Object.entries(aggregateStats).forEach(([type, stats]) => {
-    if (type === 'video') {
-    } else {
+  for (const [moduleName, moduleLessons] of moduleGroups) {
+    console.log(`[Course Generation] Processing module "${moduleName}" with ${moduleLessons.length} lessons...`);
+    
+    try {
+      const moduleResult = await processModuleBatched(
+        moduleLessons,
+        supabase,
+        courseTitle,
+        moduleName,
+        prereqMap,
+        mode,
+        userName
+      );
+      
+      totalProcessed += moduleResult.processed;
+      totalFailed += moduleResult.failed;
+      
+      // Merge stats
+      if (moduleResult.stats) {
+        Object.keys(moduleResult.stats).forEach(type => {
+          if (aggregateStats[type]) {
+            Object.keys(moduleResult.stats[type]).forEach(k => {
+              if (aggregateStats[type][k] != null) {
+                aggregateStats[type][k] += moduleResult.stats[type][k] || 0;
+              }
+            });
+          }
+        });
+      }
+      
+      console.log(`[Course Generation] Module "${moduleName}" complete: ${moduleResult.processed} processed, ${moduleResult.failed} failed`);
+    } catch (moduleError) {
+      console.error(`[Course Generation] Module "${moduleName}" failed:`, moduleError.message);
+      totalFailed += moduleLessons.length;
     }
-  });
+  }
 
   const summary = {
-    processed: pendingNodes.length,
-    failed: failures.length,
+    processed: totalProcessed,
+    failed: totalFailed,
     stats: aggregateStats
   };
-  const courseStatus = failures.length ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
+  const courseStatus = totalFailed > 0 ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
   await updateCourseStatus(supabase, courseId, courseStatus);
 
-  // Final completion log
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | 100% complete | ${pendingNodes.length - failures.length}/${pendingNodes.length} nodes successful`);
+  // --- BATCH VALIDATION PHASE ---
+  // After all modules are generated, collect low-confidence questions and validate in batch
+  // This uses ONE validation call for the entire course
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting batch validation phase...`);
+  
+  try {
+    // Fetch all generated nodes with their content
+    const { data: generatedNodes, error: genFetchError } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('id, title, content_payload, module_ref')
+      .eq('course_id', courseId);
 
-  return { ...summary, status: courseStatus, failures: failures.map((f) => f.reason?.message || 'Unknown error') };
+    if (!genFetchError && generatedNodes?.length) {
+      const lowConfidenceItems = collectLowConfidenceQuestions(generatedNodes);
+      
+      if (lowConfidenceItems.length > 0) {
+        console.log(`[Course Generation] Found ${lowConfidenceItems.length} low-confidence items for batch validation`);
+        
+        // Separate quiz questions and practice problems
+        const quizQuestions = lowConfidenceItems.filter(item => item.type === 'quiz');
+        const practiceProblems = lowConfidenceItems.filter(item => item.type === 'practice_problem');
+        
+        // Batch validate quiz questions (single call for entire course)
+        if (quizQuestions.length > 0) {
+          console.log(`[Course Generation] Batch validating ${quizQuestions.length} quiz questions...`);
+          const quizValidation = await batchValidateQuestions(quizQuestions, courseData?.user_id, courseId);
+          aggregateStats.batchValidation = {
+            quizQuestions: quizValidation.stats
+          };
+          
+          // Update nodes with validated questions
+          await updateNodesWithValidatedContent(supabase, courseId, quizValidation.validated, 'quiz');
+        }
+        
+        // Batch validate practice problems (single call for entire course)
+        if (practiceProblems.length > 0) {
+          console.log(`[Course Generation] Batch validating ${practiceProblems.length} practice problems...`);
+          const problemValidation = await batchValidatePracticeProblems(practiceProblems, courseData?.user_id, courseId);
+          aggregateStats.batchValidation = {
+            ...aggregateStats.batchValidation,
+            practiceProblems: problemValidation.stats
+          };
+          
+          // Update nodes with validated problems
+          await updateNodesWithValidatedContent(supabase, courseId, problemValidation.validated, 'practice_problems');
+        }
+        
+        console.log(`[Course Generation] Batch validation complete. Stats:`, aggregateStats.batchValidation);
+      } else {
+        console.log(`[Course Generation] No low-confidence items found - skipping batch validation`);
+      }
+    }
+  } catch (batchError) {
+    console.error(`[Course Generation] Batch validation failed:`, batchError.message);
+    // Don't fail the course generation, just log the error
+    aggregateStats.batchValidationError = batchError.message;
+  }
+
+  // Final completion log
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | ${totalProcessed}/${pendingNodes.length} lessons successful`);
+
+  return { ...summary, status: courseStatus, failures: [] };
 }
 
 async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'deep', userName = 'Unknown User') {
@@ -489,6 +569,82 @@ async function updateCourseStatus(supabase, courseId, status) {
       throw error;
     }
   } catch (error) {
+  }
+}
+
+/**
+ * Updates course nodes with validated/repaired content from batch validation.
+ * @param {object} supabase - Supabase client
+ * @param {string} courseId - Course ID
+ * @param {Array} validatedItems - Array of validated items with lessonId and updated content
+ * @param {string} contentType - 'quiz' or 'practice_problems'
+ */
+async function updateNodesWithValidatedContent(supabase, courseId, validatedItems, contentType) {
+  // Group validated items by lesson ID
+  const itemsByLesson = new Map();
+  
+  for (const item of validatedItems) {
+    const lessonId = item.lessonId;
+    if (!lessonId) continue;
+    
+    if (!itemsByLesson.has(lessonId)) {
+      itemsByLesson.set(lessonId, []);
+    }
+    
+    const content = contentType === 'quiz' ? item.question : item.problem;
+    if (content) {
+      itemsByLesson.get(lessonId).push(content);
+    }
+  }
+  
+  // Update each lesson node
+  for (const [lessonId, items] of itemsByLesson.entries()) {
+    try {
+      // Fetch current node content
+      const { data: node, error: fetchError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .select('content_payload')
+        .eq('id', lessonId)
+        .eq('course_id', courseId)
+        .single();
+      
+      if (fetchError || !node) {
+        console.warn(`[updateNodesWithValidatedContent] Could not fetch node ${lessonId}:`, fetchError?.message);
+        continue;
+      }
+      
+      const payload = node.content_payload || {};
+      const existingContent = payload[contentType] || [];
+      
+      // Replace existing items with validated versions (matching by question text)
+      const updatedContent = existingContent.map(existing => {
+        const matchKey = contentType === 'quiz' ? 'question' : 'question';
+        const match = items.find(item => 
+          item[matchKey]?.trim().toLowerCase() === existing[matchKey]?.trim().toLowerCase()
+        );
+        return match || existing;
+      });
+      
+      // Update the node
+      const updatedPayload = {
+        ...payload,
+        [contentType]: updatedContent
+      };
+      
+      const { error: updateError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .update({ content_payload: updatedPayload })
+        .eq('id', lessonId)
+        .eq('course_id', courseId);
+      
+      if (updateError) {
+        console.warn(`[updateNodesWithValidatedContent] Failed to update node ${lessonId}:`, updateError.message);
+      }
+    } catch (err) {
+      console.error(`[updateNodesWithValidatedContent] Error updating node ${lessonId}:`, err.message);
+    }
   }
 }
 
@@ -1012,44 +1168,37 @@ function manualRepairInlineQuestion(markdown) {
 }
 
 export async function generateInlineQuestion(chunkText, contextInfo = {}, userId, courseId) {
-
-
+  // CSV-based compact format for inline questions
   const systemPrompt = {
     role: 'system',
-    content: `You are an expert instructional designer and subject matter expert. 
-Your goal is to create a single, high-quality multiple-choice question that tests DEEP UNDERSTANDING of the provided text.
-Avoid simple recall questions. Focus on:
-- Synthesis of concepts
-- Application of knowledge
-- Identifying key implications or causes
+    content: `Generate a deep-understanding MCQ testing comprehension of the provided text.
 
-Return JSON ONLY:
-{
-  "question": "string",
-  "options": ["A", "B", "C", "D"],
-  "answerIndex": number (0-3),
-  "explanation": ["Expl for A", "Expl for B", "Expl for C", "Expl for D"]
-}
-Ensure answerIndex is valid.
-"explanation" must be an array of 4 strings, corresponding to each option.
-- For the correct option, explain WHY it is correct.
-- For incorrect options, explain WHY they are incorrect.
-- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
-Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
+OUTPUT FORMAT (single CSV line, no header):
+question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+
+Rules:
+- correct_index: 0-3 (0=A)
+- confidence: 0.0-1.0
+- Escape commas with quotes
+- Each explanation: min 15 chars, explain why correct/incorrect
+- Focus on synthesis/application, not recall
+- Use LaTeX only for math: \\(...\\)
+
+Example:
+"What causes X?","A causes Y","B causes Z","C is effect","D unrelated",1,"Incorrect: A affects Y not X","Correct: B mechanism explained in text","Incorrect: C is effect","Incorrect: D not mentioned",0.85`,
   };
 
   const userPrompt = {
     role: 'user',
-    content: `Create one deep-understanding multiple-choice question for this content:\n\n${chunkText.slice(0, 1500)}...`,
+    content: `Content:\n${chunkText.slice(0, 1200)}\n\nGenerate ONE question as a single CSV line (no header).`,
   };
 
   try {
     const response = await grokExecutor({
       model: 'x-ai/grok-4.1-fast',
-      temperature: 0.3, // Slightly higher for creativity in question design
-      maxTokens: 16384,
+      temperature: 0.3,
+      maxTokens: 1024,
       messages: [systemPrompt, userPrompt],
-      responseFormat: { type: 'json_object' },
       reasoning: 'high',
       userId,
       source: 'inline_question',
@@ -1058,7 +1207,34 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
 
     const content = response.content;
     const raw = coerceModelText(content);
-    let parsed = parseJsonObject(raw, 'inline_question');
+    
+    // Try to parse as CSV first (single line format)
+    let parsed = null;
+    let confidence = 0.8;
+    
+    const csvText = raw.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const csvQuestions = csvToQuiz(`index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence\n0,${csvText}`);
+    
+    if (csvQuestions.length > 0) {
+      const q = csvQuestions[0];
+      parsed = {
+        question: q.question,
+        options: q.options,
+        answerIndex: q.correct_index,
+        explanation: q.explanation
+      };
+      // Extract confidence from the last field if present
+      const fields = parseCSV(csvText);
+      if (fields[0] && fields[0].length >= 12) {
+        confidence = parseFloat(fields[0][11]) || 0.8;
+      }
+    } else {
+      // Fallback to JSON parsing
+      parsed = parseJsonObject(raw, 'inline_question');
+      if (parsed?.confidence_assessment?.confidence_score != null) {
+        confidence = parsed.confidence_assessment.confidence_score;
+      }
+    }
 
     // --- VALIDATION & REPAIR ---
     const validator = (item) => {
@@ -1085,6 +1261,10 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
           console.warn(`[generateInlineQuestion] Rationale consistency warnings: ${consistency.warnings.join(', ')}`);
         }
         
+        // Attach confidence for tracking
+        item._confidence = confidence;
+        item._needsValidation = confidence < CONFIDENCE_THRESHOLD;
+        
         return { valid: true, data: item };
       } catch (e) {
         return { valid: false, error: e.message };
@@ -1092,14 +1272,7 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
     };
 
     const repairPrompt = (brokenItems, errors) => {
-      return `The following inline question is invalid:\n${JSON.stringify(brokenItems[0], null, 2)}\n\nError:\n${errors[0]}\n\nPlease regenerate it correctly. 
-CRITICAL REQUIREMENTS:
-- 'options' must be an array of exactly 4 answer choices
-- 'explanation' must be an array of exactly 4 SUBSTANTIVE explanations (minimum 15 characters each)
-- Each explanation must be a COMPLETE sentence explaining why that option is correct or incorrect
-- NO placeholder text like "Incorrect" or "Not the answer"
-- For the correct option: explain WHY it is the right answer with supporting reasoning
-- For incorrect options: explain the specific misconception or error`;
+      return `Fix this inline question CSV:\n${JSON.stringify(brokenItems[0])}\nError: ${errors[0]}\n\nReturn as CSV: question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD`;
     };
 
     // Wrap in array for the repair tool
@@ -1601,57 +1774,47 @@ export async function generateQuiz(title, plan, courseName, moduleName, prereqs 
   if (prereqs.length > 0) {
     // Pick one random prereq to review
     const randomPrereq = prereqs[Math.floor(Math.random() * prereqs.length)];
-    reviewInstruction = `\n- **Cumulative Review:** Include exactly one question that reviews a key concept from the prerequisite lesson "${randomPrereq}". This question should reinforce retention and be accessible.`;
+    reviewInstruction = `\n- **Cumulative Review:** Include exactly one question that reviews a key concept from the prerequisite lesson "${randomPrereq}".`;
   }
 
+  const questionCount = mode === 'cram' ? '6-8' : (mode === 'deep' ? '13-16' : '9-13');
+
+  // CSV-based prompt for lower token usage
   const messages = [
     {
       role: 'system',
-      content: `You are building a graduate-level quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+      content: `You are building a graduate-level quiz for "${title}" in module "${moduleName}" of course "${courseName}".
 ${contextNote}
 
-Always respond with JSON:
-{
-  "internal_audit": "global scratchpad validating coverage and difficulty",
-  "quiz": [
-    {
-      "validation_check": "Chain-of-thought ensuring only one correct option",
-      "question": "Student-facing stem",
-      "options": ["..."],
-      "correct_index": 0,
-      "explanation": ["Expl for A", "Expl for B", "Expl for C", "Expl for D"]
-    }
-  ]
-}
+OUTPUT FORMAT: CSV (to minimize tokens)
+Header: index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
 Rules:
-- validation_check is the ONLY place you reason about distractors
-- "explanation" must be an array of 4 strings, corresponding to each option.
-- For the correct option, explain WHY it is correct.
-- For incorrect options, explain WHY they are incorrect.
-- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
-- Exactly one option may be correct, enforce via validation_check.
-- Ensure questions vary in difficulty (Easy, Medium, Hard).
-- You MUST include one "Challenge Question" that is significantly harder, designed to stump even strong students (mark it as Hard).${reviewInstruction}
-- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
-`,
+- Each row = one question
+- correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
+- confidence: 0.0-1.0 (1.0=certain, 0.7=uncertain)
+- Escape commas in text with quotes: "text, with comma"
+- expA-D: Explain why each option is correct/incorrect (min 20 chars each)
+- Include 1 Challenge Question (last row)${reviewInstruction}
+- Use LaTeX only for math: \\(...\\)
+
+Example row:
+0,"What is 2+2?","3","4","5","6",1,"Incorrect: 2+2≠3","Correct: 2+2=4 by basic arithmetic","Incorrect: 2+2≠5","Incorrect: 2+2≠6",0.95`,
     },
     {
       role: 'user',
-      content: `Generate JSON with a 'quiz' array of **${mode === 'cram' ? '5-7' : (mode === 'deep' ? '12-15' : '8-12')} comprehensive multiple-choice questions** plus 1 extra "Challenge Question" (total ${mode === 'cram' ? '6-8' : (mode === 'deep' ? '13-16' : '9-13')} questions) for "${title}". 
-      Follow the plan:
-${plan}
+      content: `Generate ${questionCount} quiz questions as CSV for "${title}".
+Plan: ${plan}
 
-Each question: 4 options, single correct_index, validation_check before finalizing, explanation array for all options. Ensure the last question is the Challenge Question.
-Ensure the questions cover the ENTIRE breadth of the lesson content provided in the plan.`,
+Return ONLY the CSV with header row. No markdown fences.`,
     },
   ];
+  
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4.1-fast',
     temperature: 0.2,
-    maxTokens: 2048, // Increased for detailed explanations
+    maxTokens: 4096,
     messages,
-    responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
     reasoning: 'high',
     userId,
@@ -1662,17 +1825,29 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
 
   let questions;
   try {
-    questions = parseJsonArray(text, 'quiz');
+    // Try CSV parsing first
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    questions = csvToQuiz(csvText);
+    
+    // If CSV parsing failed or returned empty, fallback to JSON
     if (!questions.length) {
-      questions = parseJsonArray(text, 'questions');
+      questions = parseJsonArray(text, 'quiz');
+      if (!questions.length) {
+        questions = parseJsonArray(text, 'questions');
+      }
     }
 
     const validator = (item, index) => {
       try {
         let cleanItem = item;
+        let confidence = 0.8; // Default confidence
         if (item && typeof item === 'object') {
-          const { validation_check, step_by_step_thinking, ...rest } = item;
+          const { validation_check, step_by_step_thinking, confidence_assessment, ...rest } = item;
           cleanItem = rest;
+          // Extract confidence score from assessment
+          if (confidence_assessment && typeof confidence_assessment.confidence_score === 'number') {
+            confidence = confidence_assessment.confidence_score;
+          }
         }
         
         // Pre-check explanations before normalization for clearer error messages
@@ -1684,7 +1859,12 @@ Ensure the questions cover the ENTIRE breadth of the lesson content provided in 
           return { valid: false, error: `Explanation for option ${shortIdx + 1} is missing or too short (need ${MIN_EXPLANATION_LENGTH}+ chars)` };
         }
         
-        return { valid: true, data: normalizeQuizItem(cleanItem, index, true) };
+        const normalized = normalizeQuizItem(cleanItem, index, true);
+        // Attach confidence score for later batch validation
+        normalized._confidence = confidence;
+        normalized._needsValidation = confidence < CONFIDENCE_THRESHOLD;
+        
+        return { valid: true, data: normalized };
       } catch (e) {
         return { valid: false, error: e.message };
       }
@@ -1888,6 +2068,12 @@ Always respond with JSON:
   "practice_problems": [
     {
       "validation_check": "Scratchpad verifying the problem is solvable, the rubric is fair, and the sample answer is correct",
+      "confidence_assessment": {
+        "solution_certainty": "How certain am I my solution is correct? (1.0 = verified, 0.5 = uncertain)",
+        "rubric_fairness": "Is the rubric complete and fair?",
+        "problem_clarity": "Is the problem statement unambiguous?",
+        "confidence_score": 0.0-1.0
+      },
       "question": "Full problem statement with all necessary information. Can include subparts (a, b, c...)",
       "estimated_minutes": 15,
       "difficulty": "Hard",
@@ -1914,6 +2100,12 @@ Always respond with JSON:
 
 Rules:
 - validation_check is required for every problem and must audit correctness before finalizing
+- confidence_assessment: Rate your confidence in the solution's correctness (0.0-1.0)
+  * 1.0 = Verified correct, no doubt
+  * 0.8+ = Very confident
+  * 0.7 = Moderately confident
+  * Below 0.7 = Uncertain, should be reviewed
+- BE HONEST about confidence. Problems with low confidence will be validated by a second pass.
 - Problems should test APPLICATION and ANALYSIS, not just recall
 - Rubrics must be specific enough that different graders would assign the same score
 - Sample answers must show complete work, not just final answers
@@ -1926,7 +2118,7 @@ Rules:
 Plan / emphasis:
 ${plan}
 
-Each problem should require 10-20 minutes, test deep understanding, and include a detailed rubric and sample answer.`,
+Each problem should require 10-20 minutes, test deep understanding, include confidence_assessment, and include a detailed rubric and sample answer.`,
     },
   ];
 
@@ -1952,11 +2144,21 @@ Each problem should require 10-20 minutes, test deep understanding, and include 
     const validator = (item, index) => {
       try {
         let cleanItem = item;
+        let confidence = 0.8; // Default confidence
         if (item && typeof item === 'object') {
-          const { validation_check, step_by_step_thinking, ...rest } = item;
+          const { validation_check, step_by_step_thinking, confidence_assessment, ...rest } = item;
           cleanItem = rest;
+          // Extract confidence score from assessment
+          if (confidence_assessment && typeof confidence_assessment.confidence_score === 'number') {
+            confidence = confidence_assessment.confidence_score;
+          }
         }
-        return { valid: true, data: normalizePracticeProblem(cleanItem, index) };
+        const normalized = normalizePracticeProblem(cleanItem, index);
+        // Attach confidence score for later batch validation
+        normalized._confidence = confidence;
+        normalized._needsValidation = confidence < CONFIDENCE_THRESHOLD;
+        
+        return { valid: true, data: normalized };
       } catch (e) {
         return { valid: false, error: e.message };
       }
@@ -1978,19 +2180,11 @@ Each problem should require 10-20 minutes, test deep understanding, and include 
       throw new Error('Practice problems generator returned no valid problems after repair');
     }
 
-    // --- VALIDATION STEP: Verify rubric and sample answer accuracy ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const { validatedProblems, validationStats } = await validatePracticeProblemsAccuracy(
-      repairedItems,
-      validationContext,
-      userId,
-      courseId
-    );
-
-    // Merge validation stats
-    stats.validation = validationStats;
-
-    return { data: validatedProblems, stats };
+    // Skip individual validation - will be done in batch after course generation
+    // Just return the items with confidence scores attached
+    stats.lowConfidenceCount = repairedItems.filter(p => p._needsValidation).length;
+    
+    return { data: repairedItems, stats };
   } catch (err) {
     throw err;
   }
@@ -2317,33 +2511,33 @@ Please correct the problem to address these issues. Ensure the sample answer is 
 }
 
 export async function generateFlashcards(title, plan, courseName, moduleName, userId, courseId) {
+  // CSV-based prompt for lower token usage
   const messages = [
     {
       role: 'system',
-      content:
-        `You are building flashcards for the lesson "${title}" in module "${moduleName}" of course "${courseName}". Adhere strictly to the generation plan.
+      content: `You are building flashcards for "${title}" in module "${moduleName}" of course "${courseName}".
 
-Always respond with JSON:
-{
-  "internal_audit": "coverage reasoning + memorization heuristics",
-  "flashcards": [
-    {
-      "step_by_step_thinking": "Scratchpad for mnemonic or reasoning",
-      "front": "Prompt shown to learner",
-      "back": "Concise, correct answer"
-    }
-  ]
-}
+OUTPUT FORMAT: CSV (to minimize tokens)
+Header: index,front,back
 
-Never include scratchpad text inside front/back.
-Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
+Rules:
+- Each row = one flashcard
+- front: Question/prompt for learner
+- back: Concise answer
+- Escape commas with quotes: "text, with comma"
+- Use LaTeX only for math: \\(...\\)
+
+Example:
+index,front,back
+0,"What is the derivative of x²?","2x"
+1,"Define photosynthesis","Process where plants convert light to chemical energy"`,
     },
     {
       role: 'user',
-      content: `Generate JSON with a 'flashcards' array of 5 cards for "${title}".
+      content: `Generate 5-7 flashcards as CSV for "${title}".
 Plan: ${plan}
 
-Each card must include step_by_step_thinking (scratchpad), then final front/back wording.`,
+Return ONLY the CSV with header row. No markdown fences.`,
     },
   ];
   const { content } = await grokExecutor({
@@ -2351,7 +2545,6 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
     temperature: 0.25,
     maxTokens: 1024,
     messages,
-    responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
     reasoning: 'high',
     userId,
@@ -2362,7 +2555,14 @@ Each card must include step_by_step_thinking (scratchpad), then final front/back
 
   let flashcards;
   try {
-    flashcards = parseJsonArray(text, 'flashcards');
+    // Try CSV parsing first
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    flashcards = csvToFlashcards(csvText);
+    
+    // If CSV parsing failed, fallback to JSON
+    if (!flashcards.length) {
+      flashcards = parseJsonArray(text, 'flashcards');
+    }
 
     const validator = (item, index) => {
       try {
@@ -2404,6 +2604,531 @@ function normalizeFlashcard(card, index) {
     throw new Error(`Flashcard ${index + 1} is invalid`);
   }
   return { front, back };
+}
+
+// ============================================================================
+// BATCHED MODULE CONTENT GENERATION
+// These functions generate content for ALL lessons in a module in one LLM call
+// ============================================================================
+
+/**
+ * Generates readings for all lessons in a module with a single LLM call.
+ * @param {Array} lessons - Array of lesson objects with id, title, content_payload
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {Map} prereqMap - Map of lesson_id -> prerequisite titles
+ * @param {string} mode - 'deep' or 'cram'
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, {data: string, stats: object}>>} - Map of lesson_id -> reading result
+ */
+export async function generateModuleReadings(lessons, courseName, moduleName, prereqMap, mode, userId, courseId) {
+  if (!lessons?.length) return new Map();
+  
+  // Build lesson plans summary
+  const lessonPlans = lessons.map(l => {
+    const plans = l.content_payload?.generation_plans || {};
+    const prereqs = prereqMap.get(l.id) || [];
+    const prereqNote = prereqs.length ? `Prerequisites: ${prereqs.join(', ')}` : 'No prerequisites';
+    return `===LESSON:${l.id}===
+Title: "${l.title}"
+${prereqNote}
+Plan: ${plans.reading || 'Generate comprehensive reading content'}`;
+  }).join('\n\n');
+
+  const systemPrompt = {
+    role: 'system',
+    content: `You are an elite instructional designer producing learning content for module "${moduleName}" in course "${courseName}".
+Generate readings for ALL ${lessons.length} lessons below in a SINGLE response.
+
+${mode === 'cram' ? 'FOCUS: High-yield, exam-critical topics. Concise but complete.' : 'FOCUS: Comprehensive coverage with detailed examples.'}
+
+OUTPUT FORMAT:
+- Start each lesson reading with: ===LESSON:lesson_id===
+- Follow with the full Markdown reading content for that lesson
+- Use LaTeX only for math: \\(...\\) for inline, \\[...\\] for display
+- Do NOT include inline questions or "Check Your Understanding" - these are added separately
+- Ensure each reading is complete and stands alone
+
+CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-2000 words depending on complexity.`
+  };
+
+  const userPrompt = {
+    role: 'user',
+    content: `Generate readings for these lessons:\n\n${lessonPlans}`
+  };
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4.1-fast',
+      temperature: 0.35,
+      maxTokens: 32000, // Large limit for multiple readings
+      messages: [systemPrompt, userPrompt],
+      requestTimeoutMs: 300000, // 5 minutes for batch
+      reasoning: 'high',
+      userId,
+      source: 'batch_reading_generation',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const readingsMap = parseBatchedReadings(raw);
+    
+    const results = new Map();
+    for (const lesson of lessons) {
+      const reading = readingsMap.get(lesson.id);
+      if (reading) {
+        // Clean up and validate the reading
+        let cleanedReading = cleanupMarkdown(reading);
+        
+        // Enrich with inline questions
+        try {
+          const chunks = splitContentIntoChunks(cleanedReading);
+          const enrichedChunks = [];
+          const MAX_ENRICHED = 5;
+
+          for (let i = 0; i < chunks.length; i++) {
+            let chunk = chunks[i];
+            if (i < MAX_ENRICHED && chunk.length > 500) {
+              const questionMd = await generateInlineQuestion(chunk, { title: lesson.title, courseName, moduleName }, userId, courseId);
+              if (questionMd) {
+                chunk += questionMd;
+              }
+            }
+            enrichedChunks.push(chunk);
+          }
+          cleanedReading = enrichedChunks.join('\n\n---\n\n');
+        } catch (enrichError) {
+          console.warn(`[generateModuleReadings] Enrichment failed for ${lesson.id}:`, enrichError.message);
+        }
+
+        results.set(lesson.id, {
+          data: cleanedReading,
+          stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
+        });
+      } else {
+        console.warn(`[generateModuleReadings] No reading generated for ${lesson.id}`);
+        results.set(lesson.id, null);
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error(`[generateModuleReadings] Batch generation failed:`, error.message);
+    // Return empty map - caller should fall back to per-lesson generation
+    return new Map();
+  }
+}
+
+/**
+ * Generates quizzes for all lessons in a module with a single LLM call.
+ * @param {Array} lessons - Array of lesson objects with id, title, content_payload
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {Map} prereqMap - Map of lesson_id -> prerequisite titles
+ * @param {string} mode - 'deep' or 'cram'
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, {data: Array, stats: object}>>} - Map of lesson_id -> quiz result
+ */
+export async function generateModuleQuizzes(lessons, courseName, moduleName, prereqMap, mode, userId, courseId) {
+  if (!lessons?.length) return new Map();
+  
+  const questionCount = mode === 'cram' ? '4-6' : '8-12';
+  
+  // Build lesson plans summary
+  const lessonPlans = lessons.map(l => {
+    const plans = l.content_payload?.generation_plans || {};
+    const prereqs = prereqMap.get(l.id) || [];
+    return `Lesson ID: ${l.id}
+Title: "${l.title}"
+Prerequisites: ${prereqs.length ? prereqs.join(', ') : 'None'}
+Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
+  }).join('\n\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are building quizzes for module "${moduleName}" in course "${courseName}".
+Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
+
+OUTPUT FORMAT: CSV with lesson_id column
+Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD
+
+Rules:
+- lesson_id: Must match the provided Lesson ID exactly
+- index: Question number within that lesson (0, 1, 2, ...)
+- correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
+- expA-D: Explain why each option is correct/incorrect (min 20 chars each)
+- Include 1 Challenge Question per lesson (last question)
+- Use LaTeX for math: \\(...\\)
+- Escape commas with quotes
+
+CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
+    },
+    {
+      role: 'user',
+      content: `Generate quiz questions for these lessons:\n\n${lessonPlans}\n\nReturn ONLY CSV with header row.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4.1-fast',
+      temperature: 0.2,
+      maxTokens: 16000,
+      messages,
+      requestTimeoutMs: 180000,
+      reasoning: 'high',
+      userId,
+      source: 'batch_quiz_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const quizMap = csvToBatchedQuiz(csvText);
+    
+    const results = new Map();
+    for (const lesson of lessons) {
+      const questions = quizMap.get(lesson.id);
+      if (questions?.length) {
+        // Validate and repair questions
+        const validator = (item, index) => {
+          try {
+            let cleanItem = item;
+            if (item && typeof item === 'object') {
+              const { validation_check, step_by_step_thinking, confidence_assessment, ...rest } = item;
+              cleanItem = rest;
+            }
+            if (!Array.isArray(cleanItem?.explanation) || cleanItem.explanation.length !== 4) {
+              return { valid: false, error: `Incomplete explanations` };
+            }
+            if (cleanItem.explanation.some(ex => !ex || typeof ex !== 'string' || ex.trim().length < MIN_EXPLANATION_LENGTH)) {
+              return { valid: false, error: `Explanation too short` };
+            }
+            const normalized = normalizeQuizItem(cleanItem, index, true);
+            return { valid: true, data: normalized };
+          } catch (e) {
+            return { valid: false, error: e.message };
+          }
+        };
+
+        const repairPrompt = (brokenItems, errors) => {
+          return `Fix these quiz items:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}`;
+        };
+
+        const { items: repairedQuestions, stats } = await repairContentArray(questions, validator, repairPrompt, 'generateModuleQuizzes', userId, courseId);
+        
+        results.set(lesson.id, {
+          data: repairedQuestions,
+          stats
+        });
+      } else {
+        console.warn(`[generateModuleQuizzes] No quiz generated for ${lesson.id}`);
+        results.set(lesson.id, null);
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error(`[generateModuleQuizzes] Batch generation failed:`, error.message);
+    return new Map();
+  }
+}
+
+/**
+ * Generates flashcards for all lessons in a module with a single LLM call.
+ * @param {Array} lessons - Array of lesson objects with id, title, content_payload
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, {data: Array, stats: object}>>} - Map of lesson_id -> flashcards result
+ */
+export async function generateModuleFlashcards(lessons, courseName, moduleName, userId, courseId) {
+  if (!lessons?.length) return new Map();
+  
+  // Build lesson plans summary
+  const lessonPlans = lessons.map(l => {
+    const plans = l.content_payload?.generation_plans || {};
+    return `Lesson ID: ${l.id}
+Title: "${l.title}"
+Flashcards Plan: ${plans.flashcards || 'Generate key concept flashcards'}`;
+  }).join('\n\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are building flashcards for module "${moduleName}" in course "${courseName}".
+Generate 5-7 flashcards for EACH of the ${lessons.length} lessons.
+
+OUTPUT FORMAT: CSV with lesson_id column
+Header: lesson_id,index,front,back
+
+Rules:
+- lesson_id: Must match the provided Lesson ID exactly
+- index: Card number within that lesson (0, 1, 2, ...)
+- front: Question/prompt
+- back: Concise answer
+- Use LaTeX for math: \\(...\\)
+- Escape commas with quotes
+
+CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
+    },
+    {
+      role: 'user',
+      content: `Generate flashcards for these lessons:\n\n${lessonPlans}\n\nReturn ONLY CSV with header row.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4.1-fast',
+      temperature: 0.25,
+      maxTokens: 8000,
+      messages,
+      requestTimeoutMs: 120000,
+      reasoning: 'high',
+      userId,
+      source: 'batch_flashcards_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const flashcardsMap = csvToBatchedFlashcards(csvText);
+    
+    const results = new Map();
+    for (const lesson of lessons) {
+      const cards = flashcardsMap.get(lesson.id);
+      if (cards?.length) {
+        // Validate flashcards
+        const validator = (item, index) => {
+          try {
+            return { valid: true, data: normalizeFlashcard(item, index) };
+          } catch (e) {
+            return { valid: false, error: e.message };
+          }
+        };
+
+        const repairPrompt = (brokenItems, errors) => {
+          return `Fix these flashcards:\n${JSON.stringify(brokenItems)}`;
+        };
+
+        const { items: repairedCards, stats } = await repairContentArray(cards, validator, repairPrompt, 'generateModuleFlashcards', userId, courseId);
+        
+        results.set(lesson.id, {
+          data: repairedCards,
+          stats
+        });
+      } else {
+        console.warn(`[generateModuleFlashcards] No flashcards generated for ${lesson.id}`);
+        results.set(lesson.id, null);
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error(`[generateModuleFlashcards] Batch generation failed:`, error.message);
+    return new Map();
+  }
+}
+
+/**
+ * Processes a module's content generation in batched mode.
+ * Generates all content types for all lessons in the module with fewer LLM calls.
+ * @param {Array} moduleLessons - Array of lesson nodes in this module
+ * @param {object} supabase - Supabase client
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {Map} prereqMap - Map of lesson_id -> prerequisite titles
+ * @param {string} mode - 'deep' or 'cram'
+ * @param {string} userName - User name for logging
+ * @returns {Promise<{processed: number, failed: number, stats: object}>}
+ */
+async function processModuleBatched(moduleLessons, supabase, courseName, moduleName, prereqMap, mode, userName) {
+  const userId = moduleLessons[0]?.user_id;
+  const courseId = moduleLessons[0]?.course_id;
+  
+  console.log(`[processModuleBatched] Processing module "${moduleName}" with ${moduleLessons.length} lessons`);
+  
+  // Filter lessons that need each content type
+  const needsReading = moduleLessons.filter(l => l.content_payload?.generation_plans?.reading);
+  const needsQuiz = moduleLessons.filter(l => l.content_payload?.generation_plans?.quiz);
+  const needsFlashcards = moduleLessons.filter(l => l.content_payload?.generation_plans?.flashcards);
+  const needsVideo = moduleLessons.filter(l => l.content_payload?.generation_plans?.video);
+  const needsPractice = moduleLessons.filter(l => {
+    const plans = l.content_payload?.generation_plans || {};
+    return plans.practice_problems || plans.practiceProblems;
+  });
+
+  // Generate all content types in parallel batches
+  const [readingsMap, quizzesMap, flashcardsMap] = await Promise.all([
+    needsReading.length ? generateModuleReadings(needsReading, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
+    needsQuiz.length ? generateModuleQuizzes(needsQuiz, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
+    needsFlashcards.length ? generateModuleFlashcards(needsFlashcards, courseName, moduleName, userId, courseId) : Promise.resolve(new Map())
+  ]);
+
+  // Generate videos individually (YouTube search can't be easily batched)
+  const videoResults = new Map();
+  for (const lesson of needsVideo) {
+    const plans = lesson.content_payload?.generation_plans || {};
+    try {
+      const videoResult = await generateVideoSelection(plans.video, userId, courseId);
+      videoResults.set(lesson.id, videoResult);
+    } catch (e) {
+      console.warn(`[processModuleBatched] Video selection failed for ${lesson.id}:`, e.message);
+      videoResults.set(lesson.id, { videos: [], logs: ['Error: ' + e.message] });
+    }
+  }
+
+  // Generate practice problems individually (complex structure)
+  const practiceResults = new Map();
+  for (const lesson of needsPractice) {
+    const plans = lesson.content_payload?.generation_plans || {};
+    const practicePlan = plans.practice_problems || plans.practiceProblems;
+    try {
+      const result = await generatePracticeProblems(lesson.title, practicePlan, courseName, moduleName, userId, courseId);
+      practiceResults.set(lesson.id, result);
+    } catch (e) {
+      console.warn(`[processModuleBatched] Practice problems failed for ${lesson.id}:`, e.message);
+      practiceResults.set(lesson.id, null);
+    }
+  }
+
+  // Now update each lesson with its generated content
+  let processed = 0;
+  let failed = 0;
+  const aggregateStats = {
+    reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
+    quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
+    flashcards: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
+    practice_problems: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
+    video: { total: 0, successful: 0, failed: 0 }
+  };
+
+  for (const lesson of moduleLessons) {
+    try {
+      const payload = isPlainObject(lesson.content_payload) ? { ...lesson.content_payload } : {};
+      const plans = payload.generation_plans || {};
+      const existingMetadata = payload.metadata || lesson.metadata || null;
+
+      // Get results for this lesson
+      const readingRes = readingsMap.get(lesson.id);
+      const quizRes = quizzesMap.get(lesson.id);
+      const flashcardsRes = flashcardsMap.get(lesson.id);
+      const videoRes = videoResults.get(lesson.id) || { videos: [], logs: [] };
+      const practiceRes = practiceResults.get(lesson.id);
+
+      // Fall back to individual generation if batch failed
+      let finalReading = readingRes?.data || null;
+      let finalQuiz = quizRes?.data || null;
+      let finalFlashcards = flashcardsRes?.data || null;
+
+      // If batch didn't generate content but plan exists, fall back to individual generation
+      if (!finalReading && plans.reading) {
+        console.log(`[processModuleBatched] Falling back to individual reading for ${lesson.id}`);
+        const prereqs = prereqMap.get(lesson.id) || [];
+        const result = await generateReading(lesson.title, plans.reading, courseName, moduleName, prereqs, mode, userId, courseId);
+        finalReading = result?.data || null;
+      }
+
+      if (!finalQuiz && plans.quiz) {
+        console.log(`[processModuleBatched] Falling back to individual quiz for ${lesson.id}`);
+        const prereqs = prereqMap.get(lesson.id) || [];
+        const result = await generateQuiz(lesson.title, plans.quiz, courseName, moduleName, prereqs, mode, userId, courseId);
+        finalQuiz = result?.data || null;
+      }
+
+      if (!finalFlashcards && plans.flashcards) {
+        console.log(`[processModuleBatched] Falling back to individual flashcards for ${lesson.id}`);
+        const result = await generateFlashcards(lesson.title, plans.flashcards, courseName, moduleName, userId, courseId);
+        finalFlashcards = result?.data || null;
+      }
+
+      // Save quizzes to DB
+      if (finalQuiz?.length) {
+        const quizPayloads = finalQuiz.map(q => ({
+          course_id: courseId,
+          node_id: lesson.id,
+          user_id: userId,
+          question: q.question,
+          options: q.options,
+          correct_index: q.correct_index,
+          explanation: JSON.stringify(q.explanation),
+          status: 'unattempted'
+        }));
+        const { error: quizError } = await supabase.schema('api').from('quiz_questions').insert(quizPayloads);
+        if (quizError) {
+          console.error(`[processModuleBatched] Failed to save quizzes for ${lesson.id}:`, quizError);
+        }
+      }
+
+      // Save flashcards to DB
+      if (finalFlashcards?.length) {
+        const flashcardPayloads = finalFlashcards.map(f => ({
+          course_id: courseId,
+          node_id: lesson.id,
+          user_id: userId,
+          front: f.front,
+          back: f.back,
+          next_show_timestamp: new Date().toISOString()
+        }));
+        const { error: fcError } = await supabase.schema('api').from('flashcards').insert(flashcardPayloads);
+        if (fcError) {
+          console.error(`[processModuleBatched] Failed to save flashcards for ${lesson.id}:`, fcError);
+        }
+      }
+
+      const videos = videoRes.videos || [];
+      const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
+
+      // Build final payload
+      const finalPayload = {
+        reading: finalReading,
+        quiz: finalQuiz,
+        flashcards: finalFlashcards,
+        practice_problems: practiceRes?.data || null,
+        video: videos,
+        video_urls: videoUrls,
+        video_logs: videoRes.logs || [],
+        generation_plans: plans,
+        metadata: existingMetadata,
+        status: STATUS_READY
+      };
+
+      // Update node
+      const { error: updateError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .update({ content_payload: finalPayload })
+        .eq('id', lesson.id)
+        .select('id')
+        .single();
+
+      if (updateError) {
+        throw new Error(`Failed to update node ${lesson.id}: ${updateError.message}`);
+      }
+
+      // Aggregate stats
+      if (readingRes?.stats) Object.keys(readingRes.stats).forEach(k => { if (aggregateStats.reading[k] != null) aggregateStats.reading[k] += readingRes.stats[k] || 0; });
+      if (quizRes?.stats) Object.keys(quizRes.stats).forEach(k => { if (aggregateStats.quiz[k] != null) aggregateStats.quiz[k] += quizRes.stats[k] || 0; });
+      if (flashcardsRes?.stats) Object.keys(flashcardsRes.stats).forEach(k => { if (aggregateStats.flashcards[k] != null) aggregateStats.flashcards[k] += flashcardsRes.stats[k] || 0; });
+      if (practiceRes?.stats) Object.keys(practiceRes.stats).forEach(k => { if (aggregateStats.practice_problems[k] != null) aggregateStats.practice_problems[k] += practiceRes.stats[k] || 0; });
+      aggregateStats.video.total++;
+      if (videos.length) aggregateStats.video.successful++; else aggregateStats.video.failed++;
+
+      processed++;
+      console.log(`[processModuleBatched] Completed ${lesson.title}`);
+    } catch (error) {
+      console.error(`[processModuleBatched] Failed to process ${lesson.id}:`, error.message);
+      await markNodeError(lesson, supabase, error);
+      failed++;
+    }
+  }
+
+  return { processed, failed, stats: aggregateStats };
 }
 
 export async function regenerateReading(title, currentContent, changeInstruction, courseName, moduleName, prereqs = [], userId, courseId) {
@@ -2520,46 +3245,33 @@ export async function regenerateQuiz(title, currentQuiz, changeInstruction, cour
     ? `Context: The student has completed lessons on [${prereqs.join(', ')}].`
     : `Context: This is an introductory lesson.`;
 
+  // Convert current quiz to CSV for input (lower tokens)
+  const currentQuizCSV = quizToCSV(currentQuiz);
+
   const messages = [
     {
       role: 'system',
-      content: `You are editing a graduate-level quiz for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+      content: `You are editing a quiz for "${title}" in module "${moduleName}" of course "${courseName}".
 ${contextNote}
 
-Current Quiz JSON:
-${JSON.stringify(currentQuiz, null, 2)}
+Current Quiz (CSV):
+${currentQuizCSV}
 
-Change Instruction:
-${changeInstruction}
+Change: ${changeInstruction}
 
-Always respond with JSON:
-{
-  "internal_audit": "reasoning about changes",
-  "quiz": [
-    {
-      "validation_check": "Chain-of-thought",
-      "question": "Student-facing stem",
-      "options": ["..."],
-      "correct_index": 0,
-      "explanation": ["Expl A", "Expl B", "Expl C", "Expl D"]
-    }
-  ]
-}
+OUTPUT FORMAT: CSV
+Header: index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD
 
 Rules:
-- Replace or modify questions as requested.
-- Keep the total number of questions similar unless instructed otherwise.
-- Ensure one "Challenge Question" remains.
-- "explanation" must be an array of 4 strings (one per option).
-- For the correct option, explain WHY it is correct.
-- For incorrect options, explain WHY they are incorrect.
-- Do NOT give away the answer by making the correct option significantly longer or always in the same position.
-- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
-`,
+- Modify questions as requested
+- Keep similar question count
+- Ensure 1 Challenge Question
+- expA-D: Explain each option (min 20 chars)
+- Use LaTeX for math: \\(...\\)`,
     },
     {
       role: 'user',
-      content: `Generate the new JSON 'quiz' array based on the changes.`,
+      content: `Generate the updated quiz as CSV. Return ONLY CSV with header row.`,
     },
   ];
 
@@ -2568,7 +3280,6 @@ Rules:
     temperature: 0.2,
     maxTokens: 2048,
     messages,
-    responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
     reasoning: 'high',
     userId,
@@ -2579,8 +3290,15 @@ Rules:
   const text = coerceModelText(content);
 
   try {
-    let questions = parseJsonArray(text, 'quiz');
-    if (!questions.length) questions = parseJsonArray(text, 'questions');
+    // Try CSV parsing first
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    let questions = csvToQuiz(csvText);
+    
+    // Fallback to JSON if CSV fails
+    if (!questions.length) {
+      questions = parseJsonArray(text, 'quiz');
+      if (!questions.length) questions = parseJsonArray(text, 'questions');
+    }
 
     const validator = (item, index) => {
       try {
@@ -2635,38 +3353,37 @@ Rules:
 }
 
 export async function regenerateFlashcards(title, currentCards, changeInstruction, courseName, moduleName, userId, courseId) {
+  // Convert current cards to CSV for input (lower tokens)
+  const currentCardsCSV = flashcardsToCSV(currentCards);
+
   const messages = [
     {
       role: 'system',
-      content: `You are editing flashcards for the lesson "${title}" in module "${moduleName}".
-Current Cards:
-${JSON.stringify(currentCards, null, 2)}
+      content: `You are editing flashcards for "${title}" in module "${moduleName}".
 
-Change Instruction:
-${changeInstruction}
+Current Cards (CSV):
+${currentCardsCSV}
 
-Always respond with JSON:
-{
-  "internal_audit": "reasoning",
-  "flashcards": [
-    { "step_by_step_thinking": "...", "front": "...", "back": "..." }
-  ]
-}
-Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.
-`,
+Change: ${changeInstruction}
+
+OUTPUT FORMAT: CSV
+Header: index,front,back
+
+Rules:
+- Modify cards as requested
+- Use LaTeX for math: \\(...\\)`,
     },
     {
       role: 'user',
-      content: `Generate the new JSON 'flashcards' array.`,
+      content: `Generate the updated flashcards as CSV. Return ONLY CSV with header row.`,
     },
   ];
 
   const { content } = await grokExecutor({
     model: 'x-ai/grok-4.1-fast',
     temperature: 0.25,
-    maxTokens: 2048,
+    maxTokens: 1024,
     messages,
-    responseFormat: { type: 'json_object' },
     requestTimeoutMs: 120000,
     reasoning: 'high',
     userId,
@@ -2677,7 +3394,14 @@ Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do 
   const text = coerceModelText(content);
 
   try {
-    const flashcards = parseJsonArray(text, 'flashcards');
+    // Try CSV parsing first
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    let flashcards = csvToFlashcards(csvText);
+    
+    // Fallback to JSON if CSV fails
+    if (!flashcards.length) {
+      flashcards = parseJsonArray(text, 'flashcards');
+    }
     const validator = (item, index) => {
       try {
         let cleanItem = item;

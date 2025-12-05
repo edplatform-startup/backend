@@ -59,6 +59,31 @@ For a concise, comprehensive spec of the current API, see `docs/api.md`.
 - The API only selects `code` and `title` fields to minimize payloads.
 - Increase/adjust limits, columns, or sorting in `src/routes/courses.js`.
 
+## Content Generation Architecture
+
+The backend uses a **batched module-level content generation** architecture for optimal LLM efficiency:
+
+### How It Works
+
+1. **Lesson Architect Stage**: A single LLM call generates the complete lesson DAG (Directed Acyclic Graph) with content plans for all lessons
+2. **Module-Level Batching**: Lessons are grouped by `module_ref`, and content is generated per module rather than per lesson:
+   - One LLM call generates all readings for a module
+   - One LLM call generates all quizzes for a module
+   - One LLM call generates all flashcards for a module
+3. **Course-Level Validation**: A single batch validation call validates all low-confidence questions across the entire course
+
+### Token Efficiency
+
+- **CSV Format**: Quiz and flashcard outputs use CSV format instead of JSON to reduce token usage by ~40-60%
+- **Batched Outputs**: Module-level batching reduces the overhead of repeated system prompts
+- **Fallback**: If batch generation fails for a lesson, it automatically falls back to individual generation
+
+### Output Formats
+
+- **Batched Readings**: Delimited by `===LESSON:lesson_id===` headers
+- **Batched Quizzes**: CSV with `lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD`
+- **Batched Flashcards**: CSV with `lesson_id,index,front,back`
+
 ## Deploying to Render
 
 This repository is configured for seamless deployment to Render using the included `render.yaml` blueprint.

@@ -62,6 +62,7 @@ describe('Study Plan Generator', () => {
         const plan = await generateStudyPlan('course1', 'user1');
 
         assert.equal(plan.mode, 'Deep Study');
+        assert.equal(plan.has_hidden_content, false);
         assert.ok(plan.modules.length > 0);
 
         // Filter out practice exam modules (they have is_practice_exam_module: true)
@@ -81,12 +82,14 @@ describe('Study Plan Generator', () => {
         const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
         assert.equal(plan.total_minutes, 0);
+        assert.equal(plan.has_hidden_content, true);
     });
 
     it('Cram Mode: Shared Ancestor Logic', async () => {
         mockData.courses = { data: { seconds_to_complete: 1.84 * 3600 }, error: null };
         const plan = await generateStudyPlan('course1', 'user1');
         assert.equal(plan.mode, 'Cram');
+        assert.equal(plan.has_hidden_content, false); // All nodes included
         
         // Filter out practice exam modules
         const contentModules = plan.modules.filter(m => !m.is_practice_exam_module);

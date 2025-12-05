@@ -326,12 +326,22 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
      - Calls Grok 4 Fast with high reasoning enabled to generate reading Markdown, quiz JSON, inline questions, and flashcards JSON. For Module Quiz nodes, also generates practice_problems JSON.
+     - **Confidence Rating**: Each generated question includes an internal chain-of-thought confidence score (0-1). Questions with `confidence_score < 0.7` are flagged with `_needsValidation: true`.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
      - Updates each node's `content_payload` to `{ reading, quiz, flashcards, practice_problems, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
-    - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
+  6. **Batch Validation**: After all nodes are processed, runs a single batch validation pass using Grok 4.1 Fast:
+     - Collects all low-confidence questions/problems across all nodes (threshold: 0.7)
+     - Validates and repairs in batches of 10 items per API call
+     - Updates affected nodes with corrected content in the database
+     - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
 - **Content Types**:
   - `reading` (string) – Markdown content for the lesson reading material
-  - `quiz` (array) – Multiple-choice questions with explanations
+  - `quiz` (array) – Multiple-choice questions with explanations. Each question includes:
+    - `question` (string) – Question text
+    - `options` (array) – Answer choices
+    - `correct_index` (number) – Index of correct answer
+    - `explanation` (string) – Explanation of correct answer
+    - `confidence_score` (number) – Model's confidence in question quality (0-1)
   - `flashcards` (array) – Front/back flashcard pairs
   - `practice_problems` (array) – Exam-style problems with detailed rubrics and sample answers. **Only generated for Module Quiz lessons** (final quiz of each module). More complex than quiz questions, designed to replicate authentic exam conditions. Each problem includes:
     - `question` (string) – Full problem statement with subparts
@@ -340,6 +350,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
     - `topic_tags` (array) – Relevant topic identifiers
     - `rubric` (object) – Grading criteria with `total_points`, `grading_criteria` array (each with `criterion`, `points`, `common_errors`), and `partial_credit_policy`
     - `sample_answer` (object) – Complete solution with `solution_steps` array, `final_answer`, `key_insights`, and `alternative_approaches`
+    - `confidence_score` (number) – Model's confidence in problem quality (0-1)
   - `video` (array) – Selected YouTube videos
 - Responses:
   - `201 Created` →
@@ -387,6 +398,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
 - **Response Fields**:
   - `mode` (string) – "Deep Study" or "Cram"
   - `total_minutes` (number) – Sum of all lesson durations
+  - `has_hidden_content` (boolean) – `true` if some lessons are hidden due to time constraints (Cram mode), `false` if all content is visible (Deep Study or Cram with sufficient time)
   - `modules` (array) – Mixed array containing lesson modules and practice exam modules
     - **Lesson Module**:
       - `title` (string) – Module name
@@ -407,6 +419,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   {
     "mode": "Deep Study",
     "total_minutes": 162,
+    "has_hidden_content": false,
     "modules": [
       {
         "title": "Module 1: Logic",

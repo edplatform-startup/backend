@@ -35,15 +35,24 @@ export async function generateStudyPlan(courseId, userId) {
 
     // 3. Optimization Algorithms
     let sortedNodes;
+    let hasHiddenContent = false;
     if (mode === 'Deep Study') {
         sortedNodes = runDeepStudyAlgorithm(graph);
     } else {
         sortedNodes = runCramModeAlgorithm(graph, minutesAvailable);
+        // In Cram mode, content is hidden if not all non-mastered nodes are included
+        const nonMasteredCount = Array.from(graph.values()).filter(
+            n => n.userState.mastery_status !== 'mastered'
+        ).length;
+        const includedNonMasteredCount = sortedNodes.filter(
+            n => n.userState?.mastery_status !== 'mastered'
+        ).length;
+        hasHiddenContent = includedNonMasteredCount < nonMasteredCount;
     }
 
     // 4. Output Formatting
     const nodesWithExams = insertPracticeExams(sortedNodes);
-    return formatOutput(mode, nodesWithExams, graph);
+    return formatOutput(mode, nodesWithExams, graph, hasHiddenContent);
 }
 
 function insertPracticeExams(nodes) {
@@ -376,7 +385,7 @@ function getAllAncestors(nodeMap, nodeId, visited = new Set()) {
     return ancestors;
 }
 
-function formatOutput(mode, sortedNodes, nodeMap) {
+function formatOutput(mode, sortedNodes, nodeMap, hasHiddenContent = false) {
     const modulesMap = new Map();
     const moduleOrder = []; // Track insertion order
     let totalMinutes = 0;
@@ -463,6 +472,7 @@ function formatOutput(mode, sortedNodes, nodeMap) {
     return {
         mode,
         total_minutes: Math.round(totalMinutes),
+        has_hidden_content: hasHiddenContent,
         modules: moduleOrder.map(key => modulesMap.get(key))
     };
 }

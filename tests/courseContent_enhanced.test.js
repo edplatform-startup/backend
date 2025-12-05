@@ -48,27 +48,33 @@ test('Course Content Enrichment Tests', async (t) => {
         return { content: 'CORRECT' };
       }
 
-      // 1. Reading Generation
-      if (lastMessage.includes('Generate a clear, student-facing Markdown reading')) {
+      // 1. Batched Reading Generation
+      if (systemMessage.includes('Generate readings for ALL') || lastMessage.includes('Generate a clear, student-facing Markdown reading')) {
+        // Return batched format with lesson delimiter
         return {
-          content: JSON.stringify({
-            internal_audit: 'audit',
-            final_content: {
-              markdown: `# The Water Cycle\n\nWater moves around the earth. It is a continuous process that sustains life on our planet. The water cycle involves several key stages including evaporation, condensation, and precipitation. This cycle has been happening for billions of years.\n\n## Evaporation\n\nSun heats water. The energy from the sun causes water molecules to become excited and turn into water vapor. This vapor rises into the atmosphere. Evaporation happens from oceans, lakes, and rivers. It is the primary way water moves from the surface to the air.\n\n## Condensation\n\nClouds form. As water vapor rises, it cools down and turns back into liquid water droplets. These droplets cluster together to form clouds. Condensation is crucial for the formation of rain and snow. It is the opposite of evaporation.\n\n## Precipitation\n\nRain falls. When clouds become heavy with water droplets, gravity pulls them down to earth. This can happen as rain, snow, sleet, or hail. Precipitation replenishes fresh water sources on the ground.`
-            }
-          })
+          content: `===LESSON:node-reading-1===
+# The Water Cycle
+
+Water moves around the earth. It is a continuous process that sustains life on our planet. The water cycle involves several key stages including evaporation, condensation, and precipitation. This cycle has been happening for billions of years.
+
+## Evaporation
+
+Sun heats water. The energy from the sun causes water molecules to become excited and turn into water vapor. This vapor rises into the atmosphere. Evaporation happens from oceans, lakes, and rivers. It is the primary way water moves from the surface to the air.
+
+## Condensation
+
+Clouds form. As water vapor rises, it cools down and turns back into liquid water droplets. These droplets cluster together to form clouds. Condensation is crucial for the formation of rain and snow. It is the opposite of evaporation.
+
+## Precipitation
+
+Rain falls. When clouds become heavy with water droplets, gravity pulls them down to earth. This can happen as rain, snow, sleet, or hail. Precipitation replenishes fresh water sources on the ground.`
         };
       }
 
-      // 2. Question Generation (inline questions)
-      if (lastMessage.includes('Create one deep-understanding multiple-choice question')) {
+      // 2. Inline Question Generation (CSV format)
+      if (systemMessage.includes('Generate a deep-understanding MCQ') || systemMessage.includes('deep-understanding MCQ')) {
         return {
-          content: JSON.stringify({
-            question: 'What drives evaporation?',
-            options: ['The Moon', 'The Sun', 'Wind', 'Magic'],
-            answerIndex: 1,
-            explanation: ['The moon does not provide energy for evaporation.', 'The sun provides the heat energy that causes water to evaporate.', 'Wind helps with evaporation but is not the primary driver.', 'Magic is not a scientific explanation.']
-          })
+          content: `"What drives evaporation?","The Moon","The Sun","Wind","Magic",1,"The moon does not provide energy for evaporation.","The sun provides the heat energy that causes water to evaporate.","Wind helps with evaporation but is not the primary driver.","Magic is not a scientific explanation.",0.85`
         };
       }
 
