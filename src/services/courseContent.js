@@ -24,7 +24,7 @@ const STATUS_READY = 'ready';
 const STATUS_ERROR = 'error';
 const COURSE_STATUS_READY = 'ready';
 const COURSE_STATUS_BLOCKED = 'needs_attention';
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_CONCURRENCY = 15;
 
 /**
  * Progress tracker for course generation.
@@ -363,12 +363,12 @@ async function runContentWorker(courseId, options = {}) {
   // Accumulate all generated content in memory
   const allGeneratedContent = [];
 
-  // Process modules in parallel with concurrency limit of 5
+  // Process modules in parallel with concurrency limit
   const moduleEntries = Array.from(moduleGroups.entries());
   progress.setPhase('generation');
-  progress.log(`Starting parallel processing of ${moduleEntries.length} modules (max 5 concurrent)...`, userName, courseTitle);
+  progress.log(`Starting parallel processing of ${moduleEntries.length} modules (max ${DEFAULT_CONCURRENCY} concurrent)...`, userName, courseTitle);
 
-  const moduleResults = await runWithConcurrency(moduleEntries, 5, async ([moduleName, moduleLessons]) => {
+  const moduleResults = await runWithConcurrency(moduleEntries, DEFAULT_CONCURRENCY, async ([moduleName, moduleLessons]) => {
     progress.moduleStarted();
     progress.log(`Processing module "${moduleName}" with ${moduleLessons.length} lessons...`, userName, courseTitle);
 
