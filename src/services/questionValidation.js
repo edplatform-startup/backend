@@ -118,7 +118,7 @@ Remember to honestly assess your confidence in the answer's correctness.`
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 60000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'question_with_confidence',
       courseId,
@@ -200,7 +200,7 @@ Assess the accuracy of this question.`
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'rate_question_confidence',
       courseId,
@@ -245,16 +245,26 @@ Assess the accuracy of this question.`
 export async function validateCourseContent(allGeneratedContent, userId, courseId) {
   console.log(`[validateCourseContent] Starting single-shot batch validation for ${allGeneratedContent.length} lessons`);
 
-  // 1. Collect all items needing validation
+  // 1. Collect ONLY LOW-CONFIDENCE items needing validation
+  // Items with _confidence >= 0.7 and _needsValidation !== true are skipped
   const itemsToValidate = [];
   const itemMap = new Map(); // Map ID -> { lessonIndex, type, itemIndex, originalItem }
+  let skippedHighConfidence = 0;
 
   allGeneratedContent.forEach((lesson, lessonIdx) => {
     const { nodeId, payload } = lesson;
     
-    // Quizzes
+    // Quizzes - only validate low confidence items
     if (payload.quiz && Array.isArray(payload.quiz)) {
       payload.quiz.forEach((q, qIdx) => {
+        const confidence = q._confidence ?? 0.5; // Default to low confidence if not set
+        const needsValidation = q._needsValidation === true || confidence < 0.7;
+        
+        if (!needsValidation) {
+          skippedHighConfidence++;
+          return; // Skip high-confidence items
+        }
+        
         const id = `quiz_${nodeId}_${qIdx}`;
         itemsToValidate.push({
           id,
@@ -269,9 +279,17 @@ export async function validateCourseContent(allGeneratedContent, userId, courseI
       });
     }
 
-    // Practice Problems
+    // Practice Problems - only validate low confidence items
     if (payload.practice_problems && Array.isArray(payload.practice_problems)) {
       payload.practice_problems.forEach((p, pIdx) => {
+        const confidence = p._confidence ?? 0.5;
+        const needsValidation = p._needsValidation === true || confidence < 0.7;
+        
+        if (!needsValidation) {
+          skippedHighConfidence++;
+          return; // Skip high-confidence items
+        }
+        
         const id = `practice_${nodeId}_${pIdx}`;
         itemsToValidate.push({
           id,
@@ -287,11 +305,11 @@ export async function validateCourseContent(allGeneratedContent, userId, courseI
   });
 
   if (itemsToValidate.length === 0) {
-    console.log('[validateCourseContent] No items to validate.');
-    return allGeneratedContent;
+    console.log(`[validateCourseContent] No items to validate (${skippedHighConfidence} high-confidence items skipped).`);
+    return { validatedItems: allGeneratedContent, stats: { validated: 0, skippedHighConfidence, fixed: 0, failed: 0 } };
   }
 
-  console.log(`[validateCourseContent] Validating ${itemsToValidate.length} items.`);
+  console.log(`[validateCourseContent] Validating ${itemsToValidate.length} low-confidence items (${skippedHighConfidence} high-confidence items skipped).`);
 
   // 2. Construct Prompt
   const promptItems = itemsToValidate.map(item => {
@@ -351,7 +369,7 @@ CRITICAL:
       ],
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 300000, // 5 minutes
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'course_batch_validation',
       courseId,

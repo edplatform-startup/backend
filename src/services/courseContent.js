@@ -300,7 +300,11 @@ async function runContentWorker(courseId, options = {}) {
   // Accumulate all generated content in memory
   const allGeneratedContent = [];
 
-  for (const [moduleName, moduleLessons] of moduleGroups) {
+  // Process modules in parallel with concurrency limit of 5
+  const moduleEntries = Array.from(moduleGroups.entries());
+  console.log(`[Course Generation] Starting parallel processing of ${moduleEntries.length} modules (max 5 concurrent)...`);
+  
+  const moduleResults = await runWithConcurrency(moduleEntries, 5, async ([moduleName, moduleLessons]) => {
     console.log(`[Course Generation] Processing module "${moduleName}" with ${moduleLessons.length} lessons...`);
     
     try {
@@ -314,30 +318,43 @@ async function runContentWorker(courseId, options = {}) {
         userName
       );
       
-      totalProcessed += moduleResult.processed;
-      totalFailed += moduleResult.failed;
-      
-      if (moduleResult.results) {
-        allGeneratedContent.push(...moduleResult.results);
-      }
-      
-      // Merge stats
-      if (moduleResult.stats) {
-        Object.keys(moduleResult.stats).forEach(type => {
-          if (aggregateStats[type]) {
-            Object.keys(moduleResult.stats[type]).forEach(k => {
-              if (aggregateStats[type][k] != null) {
-                aggregateStats[type][k] += moduleResult.stats[type][k] || 0;
-              }
-            });
-          }
-        });
-      }
-      
       console.log(`[Course Generation] Module "${moduleName}" generated (pending validation): ${moduleResult.processed} processed`);
+      return { moduleName, moduleResult, lessonCount: moduleLessons.length };
     } catch (moduleError) {
       console.error(`[Course Generation] Module "${moduleName}" failed:`, moduleError.message);
-      totalFailed += moduleLessons.length;
+      return { moduleName, error: moduleError, lessonCount: moduleLessons.length };
+    }
+  });
+
+  // Aggregate results from parallel processing
+  for (const result of moduleResults) {
+    if (result.status === 'fulfilled' && result.value) {
+      const { moduleName, moduleResult, error, lessonCount } = result.value;
+      if (error) {
+        totalFailed += lessonCount;
+      } else if (moduleResult) {
+        totalProcessed += moduleResult.processed;
+        totalFailed += moduleResult.failed;
+        
+        if (moduleResult.results) {
+          allGeneratedContent.push(...moduleResult.results);
+        }
+        
+        // Merge stats
+        if (moduleResult.stats) {
+          Object.keys(moduleResult.stats).forEach(type => {
+            if (aggregateStats[type]) {
+              Object.keys(moduleResult.stats[type]).forEach(k => {
+                if (aggregateStats[type][k] != null) {
+                  aggregateStats[type][k] += moduleResult.stats[type][k] || 0;
+                }
+              });
+            }
+          });
+        }
+      }
+    } else if (result.status === 'rejected') {
+      console.error(`[Course Generation] Module processing rejected:`, result.reason?.message);
     }
   }
 
@@ -798,7 +815,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
         ],
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 60000,
-        reasoning: 'high',
+        reasoning: { enabled: true },
         userId,
         source: 'content_repair',
         courseId,
@@ -1224,7 +1241,7 @@ Example:
       temperature: 0.3,
       maxTokens: 1024,
       messages: [systemPrompt, userPrompt],
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'inline_question',
       courseId,
@@ -1389,7 +1406,7 @@ Return JSON: { "repaired_markdown": "string" }`;
               { role: 'user', content: repairPrompt([validatedMd], [formatCheck.error]) }
             ],
             responseFormat: { type: 'json_object' },
-            reasoning: 'high',
+            reasoning: { enabled: true },
             userId,
             source: 'inline_question_repair',
             courseId,
@@ -1448,7 +1465,7 @@ Do not fix the code, just validate it.`
         { role: 'user', content: code }
       ],
       responseFormat: { type: 'json_object' },
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'mermaid_validation',
       courseId,
@@ -1489,7 +1506,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
           }
         ],
         responseFormat: { type: 'json_object' },
-        reasoning: 'high',
+        reasoning: { enabled: true },
         userId,
         source: 'mermaid_repair',
         courseId,
@@ -1580,7 +1597,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'reading_generation',
       courseId,
@@ -1777,7 +1794,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
     maxTokens: 4096,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: 'high',
+    reasoning: { enabled: true },
     userId,
     source: 'quiz_generation',
     courseId,
@@ -2040,7 +2057,7 @@ Each problem should require 10-20 minutes, test deep understanding, include conf
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 180000,
-    reasoning: 'high',
+    reasoning: { enabled: true },
     userId,
     source: 'practice_problems_generation',
     courseId,
@@ -2314,7 +2331,7 @@ Please independently solve this problem and validate the provided solution and r
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'practice_problem_validation',
       courseId,
@@ -2400,7 +2417,7 @@ Please correct the problem to address these issues. Ensure the sample answer is 
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 90000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'practice_problem_correction',
       courseId,
@@ -2457,7 +2474,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
     maxTokens: 1024,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: 'high',
+    reasoning: { enabled: true },
     userId,
     source: 'flashcards_generation',
     courseId,
@@ -2575,7 +2592,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
       maxTokens: 32000, // Large limit for multiple readings
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 300000, // 5 minutes for batch
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'batch_reading_generation',
       courseId,
@@ -2642,17 +2659,22 @@ Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
 Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
 
 OUTPUT FORMAT: CSV with lesson_id column
-Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+Header: lesson_id,index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
 Rules:
 - lesson_id: Must match the provided Lesson ID exactly
 - index: Question number within that lesson (0, 1, 2, ...)
+- scratchpad: Use this space for ANY internal reasoning, verification, working out. Stripped before showing to students.
+- question: Complete, grammatically correct question. NO abbreviations. Write out fully.
+- optionA-D: Complete, clear answer choices. NO internal thinking or working notes.
 - correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- expA-D: Explain why each option is correct/incorrect (min 20 chars each)
-- confidence: 0.0-1.0 (your confidence the answer and explanations are correct)
+- expA-D: Explain why each option is correct/incorrect (min 20 chars each). Full sentences.
+- confidence: 0.0-1.0 (your confidence the answer is correct)
 - Include 1 Challenge Question per lesson (last question)
-- Use LaTeX for math: \\(...\\)
+- Use LaTeX for math: \\(...\\) for inline
 - Escape commas with quotes
+
+QUALITY: All text shown to students must be polished, complete sentences.
 
 CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     },
@@ -2669,7 +2691,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       maxTokens: 16000,
       messages,
       requestTimeoutMs: 180000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'batch_quiz_generation',
       courseId,
@@ -2754,15 +2776,18 @@ Flashcards Plan: ${plans.flashcards || 'Generate key concept flashcards'}`;
 Generate 5-7 flashcards for EACH of the ${lessons.length} lessons.
 
 OUTPUT FORMAT: CSV with lesson_id column
-Header: lesson_id,index,front,back
+Header: lesson_id,index,scratchpad,front,back
 
 Rules:
 - lesson_id: Must match the provided Lesson ID exactly
 - index: Card number within that lesson (0, 1, 2, ...)
-- front: Question/prompt
-- back: Concise answer
-- Use LaTeX for math: \\(...\\)
+- scratchpad: Use for internal reasoning/verification. Stripped before showing to students.
+- front: Complete, grammatically correct question/prompt. Full sentences.
+- back: Clear, complete answer. Full sentences where appropriate.
+- Use LaTeX for math: \\(...\\) for inline
 - Escape commas with quotes
+
+QUALITY: front and back must be polished text. Put all working in scratchpad.
 
 CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
     },
@@ -2779,7 +2804,7 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
       maxTokens: 8000,
       messages,
       requestTimeoutMs: 120000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'batch_flashcards_generation',
       courseId,
@@ -2858,17 +2883,22 @@ ${truncated}`;
 Generate 3-5 inline MCQs for EACH of the ${lessons.length} lessons based on their reading content.
 
 OUTPUT FORMAT: CSV with header
-lesson_id,chunk_index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+lesson_id,chunk_index,scratchpad,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
 Rules:
 - lesson_id: Must match the provided Lesson ID exactly
 - chunk_index: Question number within that lesson (0, 1, 2, ...)
+- scratchpad: Use for internal reasoning/verification. Stripped before showing to students.
+- question: Complete, grammatically correct question. Full sentences.
+- optionA-D: Complete, clear answer choices.
 - correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
-- confidence: 0.0-1.0 (your confidence that the answer is correct)
-- Each explanation: min 20 chars, explain why correct/incorrect
+- expA-D: Explain why each option is correct/incorrect (min 20 chars). Full sentences.
+- confidence: 0.0-1.0 (your confidence the answer is correct)
 - Focus on synthesis/application, not simple recall
-- Use LaTeX for math: \\(...\\)
+- Use LaTeX for math: \\(...\\) for inline
 - Escape commas with quotes
+
+QUALITY: All student-facing text must be polished. Put working in scratchpad.
 
 CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
     },
@@ -2885,7 +2915,7 @@ CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
       maxTokens: 16000,
       messages,
       requestTimeoutMs: 180000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'batch_inline_questions',
       courseId,
@@ -3058,7 +3088,7 @@ Select ONE video per lesson.`
       maxTokens: 2000,
       messages,
       requestTimeoutMs: 60000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'batch_video_selection',
       courseId,
@@ -3337,7 +3367,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'reading_regeneration',
       courseId,
@@ -3436,7 +3466,7 @@ Rules:
     maxTokens: 2048,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: 'high',
+    reasoning: { enabled: true },
     userId,
     source: 'quiz_regeneration',
     courseId,
@@ -3528,7 +3558,7 @@ Rules:
     maxTokens: 1024,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: 'high',
+    reasoning: { enabled: true },
     userId,
     source: 'flashcards_regeneration',
     courseId,
@@ -3661,7 +3691,7 @@ Select the best video index.`
         messages,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
-        reasoning: 'high',
+        reasoning: { enabled: true },
         userId,
         source: 'video_selection',
         courseId,
@@ -3853,7 +3883,7 @@ ${context}`
       maxTokens: 8192, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: `validation_${contentType}`,
       courseId,
@@ -4259,7 +4289,7 @@ Analyze this question and determine the correct answer. Show your reasoning.`
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
-      reasoning: 'high', // High reasoning for careful analysis
+      reasoning: { enabled: true }, // High reasoning for careful analysis
       userId,
       source: 'self_consistency_check',
       courseId,
@@ -4359,7 +4389,7 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 45000,
-      reasoning: 'high',
+      reasoning: { enabled: true },
       userId,
       source: 'answer_reconciliation',
       courseId,
