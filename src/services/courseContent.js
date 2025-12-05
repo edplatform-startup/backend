@@ -28,6 +28,66 @@ const COURSE_STATUS_READY = 'ready';
 const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 5;
 
+/**
+ * Progress tracker for course generation.
+ * Tracks progress through phases and logs with percentage prefixes.
+ */
+class ProgressTracker {
+  constructor(totalModules) {
+    this.totalModules = totalModules;
+    this.completedModules = 0;
+    this.startedModules = 0;
+    this.phase = 'init'; // 'init', 'generation', 'validation', 'persistence'
+    // Phase weights: init=10%, generation=60%, validation=20%, persistence=10%
+    this.phaseWeights = {
+      init: { start: 0, end: 10 },
+      generation: { start: 10, end: 70 },
+      validation: { start: 70, end: 90 },
+      persistence: { start: 90, end: 100 }
+    };
+  }
+
+  setPhase(phase) {
+    this.phase = phase;
+  }
+
+  moduleStarted() {
+    this.startedModules++;
+  }
+
+  moduleCompleted() {
+    this.completedModules++;
+  }
+
+  getPercentage() {
+    const weights = this.phaseWeights[this.phase];
+    if (!weights) return 0;
+
+    if (this.phase === 'generation' && this.totalModules > 0) {
+      const phaseRange = weights.end - weights.start; // 60%
+      // Use completed modules for primary progress, but add partial credit for started modules
+      // Each completed module = full credit, each started (but not completed) = half credit
+      const completedProgress = this.completedModules / this.totalModules;
+      const inProgressCount = this.startedModules - this.completedModules;
+      const inProgressBonus = (inProgressCount * 0.5) / this.totalModules;
+      const moduleProgress = Math.min(completedProgress + inProgressBonus, 1);
+      return Math.round(weights.start + (phaseRange * moduleProgress));
+    }
+
+    return weights.start;
+  }
+
+  log(message, userName = '', courseTitle = '') {
+    const pct = this.getPercentage();
+    const prefix = `[${pct}%]`;
+    if (userName && courseTitle) {
+      console.log(`${prefix} [Course Generation] User: ${userName} | Course: "${courseTitle}" | ${message}`);
+    } else {
+      console.log(`${prefix} [Course Generation] ${message}`);
+    }
+  }
+}
+
 let customSaveCourseStructure = null;
 let customGenerateContent = null;
 let grokExecutor = executeOpenRouterChat;
@@ -243,7 +303,10 @@ async function runContentWorker(courseId, options = {}) {
   const mode = courseData?.metadata?.mode || 'deep';
   const userName = courseData?.metadata?.user_name || courseData?.user_id || 'Unknown User';
 
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting batched content generation`);
+  // Initialize progress tracker (will update totalModules after grouping)
+  const progress = new ProgressTracker(1);
+  progress.setPhase('init');
+  progress.log('Starting batched content generation', userName, courseTitle);
 
   // Fetch all nodes and edges to build dependency map for context injection
   const { data: allNodes } = await supabase
@@ -283,7 +346,9 @@ async function runContentWorker(courseId, options = {}) {
     moduleGroups.get(moduleName).push(node);
   }
 
-  console.log(`[Course Generation] Grouped ${pendingNodes.length} lessons into ${moduleGroups.size} modules`);
+  // Update progress tracker with actual module count
+  progress.totalModules = moduleGroups.size;
+  progress.log(`Grouped ${pendingNodes.length} lessons into ${moduleGroups.size} modules`, userName, courseTitle);
 
   // Process each module in batched mode
   const aggregateStats = {
@@ -302,10 +367,12 @@ async function runContentWorker(courseId, options = {}) {
 
   // Process modules in parallel with concurrency limit of 5
   const moduleEntries = Array.from(moduleGroups.entries());
-  console.log(`[Course Generation] Starting parallel processing of ${moduleEntries.length} modules (max 5 concurrent)...`);
+  progress.setPhase('generation');
+  progress.log(`Starting parallel processing of ${moduleEntries.length} modules (max 5 concurrent)...`, userName, courseTitle);
   
   const moduleResults = await runWithConcurrency(moduleEntries, 5, async ([moduleName, moduleLessons]) => {
-    console.log(`[Course Generation] Processing module "${moduleName}" with ${moduleLessons.length} lessons...`);
+    progress.moduleStarted();
+    progress.log(`Processing module "${moduleName}" with ${moduleLessons.length} lessons...`, userName, courseTitle);
     
     try {
       const moduleResult = await processModuleBatched(
@@ -315,13 +382,17 @@ async function runContentWorker(courseId, options = {}) {
         moduleName,
         prereqMap,
         mode,
-        userName
+        userName,
+        progress
       );
       
-      console.log(`[Course Generation] Module "${moduleName}" generated (pending validation): ${moduleResult.processed} processed`);
+      progress.moduleCompleted();
+      progress.log(`Module "${moduleName}" generated (pending validation): ${moduleResult.processed} processed`, userName, courseTitle);
       return { moduleName, moduleResult, lessonCount: moduleLessons.length };
     } catch (moduleError) {
-      console.error(`[Course Generation] Module "${moduleName}" failed:`, moduleError.message);
+      progress.moduleCompleted();
+      const pct = progress.getPercentage();
+      console.error(`[${pct}%] [Course Generation] Module "${moduleName}" failed:`, moduleError.message);
       return { moduleName, error: moduleError, lessonCount: moduleLessons.length };
     }
   });
@@ -354,12 +425,14 @@ async function runContentWorker(courseId, options = {}) {
         }
       }
     } else if (result.status === 'rejected') {
-      console.error(`[Course Generation] Module processing rejected:`, result.reason?.message);
+      const pct = progress.getPercentage();
+      console.error(`[${pct}%] [Course Generation] Module processing rejected:`, result.reason?.message);
     }
   }
 
   // --- SINGLE-SHOT BATCH VALIDATION PHASE ---
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting single-shot batch validation...`);
+  progress.setPhase('validation');
+  progress.log('Starting single-shot batch validation...', userName, courseTitle);
   
   let validatedContent = allGeneratedContent;
   try {
@@ -367,9 +440,10 @@ async function runContentWorker(courseId, options = {}) {
     const validationResult = await validateCourseContent(allGeneratedContent, courseData?.user_id, courseId);
     validatedContent = validationResult.validatedItems;
     aggregateStats.validation = validationResult.stats;
-    console.log(`[Course Generation] Validation complete. Fixed: ${validationResult.stats.fixed}, Failed: ${validationResult.stats.failed}`);
+    progress.log(`Validation complete. Fixed: ${validationResult.stats.fixed}, Failed: ${validationResult.stats.failed}`, userName, courseTitle);
   } catch (validationError) {
-    console.error(`[Course Generation] Batch validation failed:`, validationError.message);
+    const pct = progress.getPercentage();
+    console.error(`[${pct}%] [Course Generation] Batch validation failed:`, validationError.message);
     // If validation fails catastrophically, we might choose to save unvalidated content or fail.
     // Given the strict requirement "There should never be a scenario where a low confidence thing is put in the database",
     // we should probably filter out anything that wasn't explicitly validated if we can't run validation.
@@ -378,7 +452,8 @@ async function runContentWorker(courseId, options = {}) {
   }
 
   // --- DEFERRED DATABASE PERSISTENCE ---
-  console.log(`[Course Generation] Saving ${validatedContent.length} validated items to database...`);
+  progress.setPhase('persistence');
+  progress.log(`Saving ${validatedContent.length} validated items to database...`, userName, courseTitle);
   
   for (const item of validatedContent) {
     try {
@@ -392,7 +467,8 @@ async function runContentWorker(courseId, options = {}) {
         .single();
 
       if (updateError) {
-        console.error(`[Course Generation] Failed to save node ${item.nodeId}:`, updateError.message);
+        const pct = progress.getPercentage();
+        console.error(`[${pct}%] [Course Generation] Failed to save node ${item.nodeId}:`, updateError.message);
         continue;
       }
 
@@ -425,13 +501,14 @@ async function runContentWorker(courseId, options = {}) {
       }
       
     } catch (saveError) {
-      console.error(`[Course Generation] Error saving item ${item.nodeId}:`, saveError.message);
+      const pct = progress.getPercentage();
+      console.error(`[${pct}%] [Course Generation] Error saving item ${item.nodeId}:`, saveError.message);
     }
   }
 
   const endStats = getCostTotals();
   const totalCalls = endStats.calls - startStats.calls;
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | Total LLM Calls: ${totalCalls}`);
+  console.log(`[100%] [Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | Total LLM Calls: ${totalCalls}`);
 
   const summary = {
     processed: totalProcessed,
@@ -3149,13 +3226,15 @@ Select ONE video per lesson.`
  * @param {Map} prereqMap - Map of lesson_id -> prerequisite titles
  * @param {string} mode - 'deep' or 'cram'
  * @param {string} userName - User name for logging
+ * @param {ProgressTracker} [progress] - Optional progress tracker for percentage logging
  * @returns {Promise<{processed: number, failed: number, stats: object}>}
  */
-async function processModuleBatched(moduleLessons, supabase, courseName, moduleName, prereqMap, mode, userName) {
+async function processModuleBatched(moduleLessons, supabase, courseName, moduleName, prereqMap, mode, userName, progress = null) {
   const userId = moduleLessons[0]?.user_id;
   const courseId = moduleLessons[0]?.course_id;
   
-  console.log(`[processModuleBatched] Processing module "${moduleName}" with ${moduleLessons.length} lessons`);
+  const pctPrefix = progress ? `[${progress.getPercentage()}%] ` : '';
+  console.log(`${pctPrefix}[processModuleBatched] Processing module "${moduleName}" with ${moduleLessons.length} lessons`);
   
   // Filter lessons that need each content type
   const needsReading = moduleLessons.filter(l => l.content_payload?.generation_plans?.reading);
@@ -3250,21 +3329,21 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
 
       // If batch didn't generate content but plan exists, fall back to individual generation
       if (!finalReading && plans.reading) {
-        console.log(`[processModuleBatched] Falling back to individual reading for ${lesson.id}`);
+        console.log(`${pctPrefix}[processModuleBatched] Falling back to individual reading for ${lesson.id}`);
         const prereqs = prereqMap.get(lesson.id) || [];
         const result = await generateReading(lesson.title, plans.reading, courseName, moduleName, prereqs, mode, userId, courseId);
         finalReading = result?.data || null;
       }
 
       if (!finalQuiz && plans.quiz) {
-        console.log(`[processModuleBatched] Falling back to individual quiz for ${lesson.id}`);
+        console.log(`${pctPrefix}[processModuleBatched] Falling back to individual quiz for ${lesson.id}`);
         const prereqs = prereqMap.get(lesson.id) || [];
         const result = await generateQuiz(lesson.title, plans.quiz, courseName, moduleName, prereqs, mode, userId, courseId);
         finalQuiz = result?.data || null;
       }
 
       if (!finalFlashcards && plans.flashcards) {
-        console.log(`[processModuleBatched] Falling back to individual flashcards for ${lesson.id}`);
+        console.log(`${pctPrefix}[processModuleBatched] Falling back to individual flashcards for ${lesson.id}`);
         const result = await generateFlashcards(lesson.title, plans.flashcards, courseName, moduleName, userId, courseId);
         finalFlashcards = result?.data || null;
       }
@@ -3306,9 +3385,9 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       if (videos.length) aggregateStats.video.successful++; else aggregateStats.video.failed++;
 
       processed++;
-      console.log(`[processModuleBatched] Completed ${lesson.title}`);
+      console.log(`${pctPrefix}[processModuleBatched] Completed ${lesson.title}`);
     } catch (error) {
-      console.error(`[processModuleBatched] Failed to process ${lesson.id}:`, error.message);
+      console.error(`${pctPrefix}[processModuleBatched] Failed to process ${lesson.id}:`, error.message);
       await markNodeError(lesson, supabase, error);
       failed++;
     }

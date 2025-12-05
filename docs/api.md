@@ -329,6 +329,11 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
      - **Confidence Rating**: Each generated question includes an internal chain-of-thought confidence score (0-1). Questions with `confidence_score < 0.7` are flagged with `_needsValidation: true`.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
      - Updates each node's `content_payload` to `{ reading, quiz, flashcards, practice_problems, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
+     - **Progress Logging**: All console logs during generation are prefixed with a percentage (e.g., `[10%]`, `[40%]`, `[70%]`) indicating overall progress through the generation pipeline:
+       - **0-10%**: Initialization and setup
+       - **10-70%**: Content generation (parallel module processing) - percentage updates dynamically based on started and completed modules
+       - **70-90%**: Batch validation phase
+       - **90-100%**: Database persistence
   6. **Batch Validation**: After all nodes are processed, runs a single batch validation pass using Grok 4.1 Fast:
      - Collects all low-confidence questions/problems across all nodes (threshold: 0.7)
      - Validates and repairs in batches of 10 items per API call
@@ -566,7 +571,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
 - **Behavior**:
   1. Fetches existing practice exams from storage to use as style/format references.
   2. Determines the next exam number (e.g., if `midterm_exam_1.pdf` exists, creates `midterm_exam_2.pdf`).
-  3. Calls Gemini 1.5 Pro to generate a LaTeX exam covering the specified lessons.
+  3. Calls Gemini 3 Pro Preview with high-effort reasoning to generate a LaTeX exam covering the specified lessons.
   4. Sanitizes and checks the LaTeX for semantic issues (repairing via LLM if needed).
   5. Compiles the LaTeX to PDF (retrying via LLM if compilation fails).
   6. Saves the generated PDF file to storage.

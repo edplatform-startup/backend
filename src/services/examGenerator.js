@@ -553,7 +553,7 @@ Generate the ${examType} exam questions now. Remember:
 `;
 
   // 3. Initial generation: questions block only
-  let { result } = await callStageLLM({
+  let { result } = await deps.callStageLLM({
     stage: STAGES.EXAM_GENERATOR,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -566,6 +566,7 @@ Generate the ${examType} exam questions now. Remember:
     userId,
     source: 'exam_generator',
     courseId,
+    reasoning: { enabled: true, effort: 'high' },
   });
 
   let questionsBlock = sanitizeQuestionBlock(result.content);
@@ -589,7 +590,7 @@ ${QUESTION_BLOCK_INSTRUCTIONS}
 
 Return the FULL corrected questions block, with no preamble or document wrappers.`;
 
-    const repairResult = await callStageLLM({
+    const repairResult = await deps.callStageLLM({
       stage: STAGES.EXAM_GENERATOR,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -602,6 +603,7 @@ Return the FULL corrected questions block, with no preamble or document wrappers
       userId,
       source: 'exam_generator_repair',
       courseId,
+      reasoning: { enabled: true, effort: 'high' },
     });
 
     questionsBlock = sanitizeQuestionBlock(repairResult.result.content);
@@ -671,7 +673,7 @@ Ensure each contains the proper commands and no environment is left empty.
 `;
         }
 
-        const fixResult = await callStageLLM({
+        const fixResult = await deps.callStageLLM({
           stage: STAGES.EXAM_GENERATOR,
           messages: [
             { role: 'system', content: systemPrompt },
@@ -684,6 +686,7 @@ Ensure each contains the proper commands and no environment is left empty.
           userId,
           source: 'exam_generator_fix',
           courseId,
+          reasoning: { enabled: true, effort: 'high' },
         });
 
         questionsBlock = sanitizeQuestionBlock(fixResult.result.content);
