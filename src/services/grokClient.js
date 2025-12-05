@@ -472,8 +472,11 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
       const attemptDurationMs = Date.now() - attemptStartTime;
       const totalDurationMs = Date.now() - requestStartTime;
       const isAbort = error?.name === 'AbortError';
+      // "terminated" error occurs when fetch connection is abruptly closed
+      const isTerminated = error?.message === 'terminated' || error?.name === 'TypeError' && error?.message?.includes?.('terminated');
+      const isNetworkError = error?.name === 'TypeError' && (error?.message?.includes?.('fetch') || error?.message?.includes?.('network'));
 
-      if (shouldRetry && (isAbort || error?.statusCode === 502 || error?.statusCode === 400)) {
+      if (shouldRetry && (isAbort || isTerminated || isNetworkError || error?.statusCode === 502 || error?.statusCode === 400)) {
         const backoff = 2000 * (attempt + 1);
         console.warn(`[openrouter] [${requestId}] Retry ${attempt + 1}/${MAX_RETRIES}: ${error.message} (attempt took ${attemptDurationMs}ms, total ${totalDurationMs}ms)`);
         await new Promise((resolve) => setTimeout(resolve, backoff));
@@ -487,6 +490,9 @@ async function callOpenRouterApi({ endpoint, apiKey, body, signal, meta = {} }) 
       console.error(`[openrouter] [${requestId}] Request had ${messageCount} messages, first: "${firstMsgPreview}..."`);
       if (isAbort) {
         console.error(`[openrouter] [${requestId}] ABORT detected - request exceeded timeout or was cancelled`);
+      }
+      if (isTerminated || isNetworkError) {
+        console.error(`[openrouter] [${requestId}] NETWORK ERROR detected - connection terminated or fetch failed`);
       }
 
       throw error;
