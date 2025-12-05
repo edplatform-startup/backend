@@ -12,6 +12,7 @@ import { generateStudyPlan } from '../services/studyPlan.js';
 import { parseSharedCourseInputs, buildAttachmentList, toTrimmedString } from '../utils/courseInputParser.js';
 import { gradeExam } from '../services/examGrader.js';
 import { logUsageEvent } from '../utils/analytics.js';
+import { getCostTotals } from '../services/grokClient.js';
 import multer from 'multer';
 
 const upload = multer({
@@ -1107,16 +1108,22 @@ router.post('/', async (req, res) => {
       }
     }
 
+    const startUsage = getCostTotals();
     const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode, courseId, rag_session_id || null);
 
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);
 
+    const endUsage = getCostTotals();
+    const totalCalls = (endUsage.calls || 0) - (startUsage.calls || 0);
+    console.log(`[courses] Total LLM calls for course generation: ${totalCalls}`);
+
     // Log course creation
     await logUsageEvent(userId, 'course_created', {
       courseId,
       title,
-      nodeCount: persistResult.nodeCount
+      nodeCount: persistResult.nodeCount,
+      totalLlmCalls: totalCalls
     });
 
     return res.status(201).json({

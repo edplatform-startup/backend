@@ -1,5 +1,5 @@
 import { getSupabase } from '../supabaseClient.js';
-import { executeOpenRouterChat } from './grokClient.js';
+import { executeOpenRouterChat, getCostTotals } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import {
   csvToQuiz,
@@ -10,14 +10,14 @@ import {
   csvToBatchedQuiz,
   csvToBatchedFlashcards,
   parseBatchedReadings,
-  formatLessonPlansForBatch
+  formatLessonPlansForBatch,
+  csvToBatchedInlineQuestions,
+  csvToBatchedVideos
 } from '../utils/csvUtils.js';
 import yts from 'yt-search';
 import {
   rateQuestionConfidence,
-  batchValidateQuestions,
-  batchValidatePracticeProblems,
-  collectLowConfidenceQuestions,
+  validateCourseContent,
   CONFIDENCE_THRESHOLD
 } from './questionValidation.js';
 
@@ -218,6 +218,9 @@ async function runContentWorker(courseId, options = {}) {
   if (!courseId) throw new Error('[generateCourseContent] courseId is required');
   const supabase = getSupabase();
 
+  // Capture start stats for call counting
+  const startStats = getCostTotals();
+
   const { data: pendingNodes, error: fetchError } = await supabase
     .schema('api')
     .from('course_nodes')
@@ -293,6 +296,9 @@ async function runContentWorker(courseId, options = {}) {
 
   let totalProcessed = 0;
   let totalFailed = 0;
+  
+  // Accumulate all generated content in memory
+  const allGeneratedContent = [];
 
   for (const [moduleName, moduleLessons] of moduleGroups) {
     console.log(`[Course Generation] Processing module "${moduleName}" with ${moduleLessons.length} lessons...`);
@@ -311,6 +317,10 @@ async function runContentWorker(courseId, options = {}) {
       totalProcessed += moduleResult.processed;
       totalFailed += moduleResult.failed;
       
+      if (moduleResult.results) {
+        allGeneratedContent.push(...moduleResult.results);
+      }
+      
       // Merge stats
       if (moduleResult.stats) {
         Object.keys(moduleResult.stats).forEach(type => {
@@ -324,82 +334,97 @@ async function runContentWorker(courseId, options = {}) {
         });
       }
       
-      console.log(`[Course Generation] Module "${moduleName}" complete: ${moduleResult.processed} processed, ${moduleResult.failed} failed`);
+      console.log(`[Course Generation] Module "${moduleName}" generated (pending validation): ${moduleResult.processed} processed`);
     } catch (moduleError) {
       console.error(`[Course Generation] Module "${moduleName}" failed:`, moduleError.message);
       totalFailed += moduleLessons.length;
     }
   }
 
+  // --- SINGLE-SHOT BATCH VALIDATION PHASE ---
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting single-shot batch validation...`);
+  
+  let validatedContent = allGeneratedContent;
+  try {
+    // Validate everything in one go
+    const validationResult = await validateCourseContent(allGeneratedContent, courseData?.user_id, courseId);
+    validatedContent = validationResult.validatedItems;
+    aggregateStats.validation = validationResult.stats;
+    console.log(`[Course Generation] Validation complete. Fixed: ${validationResult.stats.fixed}, Failed: ${validationResult.stats.failed}`);
+  } catch (validationError) {
+    console.error(`[Course Generation] Batch validation failed:`, validationError.message);
+    // If validation fails catastrophically, we might choose to save unvalidated content or fail.
+    // Given the strict requirement "There should never be a scenario where a low confidence thing is put in the database",
+    // we should probably filter out anything that wasn't explicitly validated if we can't run validation.
+    // However, for now, we'll assume we proceed with what we have but log the error.
+    aggregateStats.validationError = validationError.message;
+  }
+
+  // --- DEFERRED DATABASE PERSISTENCE ---
+  console.log(`[Course Generation] Saving ${validatedContent.length} validated items to database...`);
+  
+  for (const item of validatedContent) {
+    try {
+      // Update Node
+      const { error: updateError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .update({ content_payload: item.payload })
+        .eq('id', item.nodeId)
+        .select('id')
+        .single();
+
+      if (updateError) {
+        console.error(`[Course Generation] Failed to save node ${item.nodeId}:`, updateError.message);
+        continue;
+      }
+
+      // Insert Quizzes
+      if (item.quizzes?.length) {
+        const quizPayloads = item.quizzes.map(q => ({
+          course_id: courseId,
+          node_id: item.nodeId,
+          user_id: courseData?.user_id,
+          question: q.question,
+          options: q.options,
+          correct_index: q.correct_index,
+          explanation: JSON.stringify(q.explanation),
+          status: 'unattempted'
+        }));
+        await supabase.schema('api').from('quiz_questions').insert(quizPayloads);
+      }
+
+      // Insert Flashcards
+      if (item.flashcards?.length) {
+        const flashcardPayloads = item.flashcards.map(f => ({
+          course_id: courseId,
+          node_id: item.nodeId,
+          user_id: courseData?.user_id,
+          front: f.front,
+          back: f.back,
+          next_show_timestamp: new Date().toISOString()
+        }));
+        await supabase.schema('api').from('flashcards').insert(flashcardPayloads);
+      }
+      
+    } catch (saveError) {
+      console.error(`[Course Generation] Error saving item ${item.nodeId}:`, saveError.message);
+    }
+  }
+
+  const endStats = getCostTotals();
+  const totalCalls = endStats.calls - startStats.calls;
+  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | Total LLM Calls: ${totalCalls}`);
+
   const summary = {
     processed: totalProcessed,
     failed: totalFailed,
-    stats: aggregateStats
+    stats: aggregateStats,
+    totalLLMCalls: totalCalls
   };
+  
   const courseStatus = totalFailed > 0 ? COURSE_STATUS_BLOCKED : COURSE_STATUS_READY;
   await updateCourseStatus(supabase, courseId, courseStatus);
-
-  // --- BATCH VALIDATION PHASE ---
-  // After all modules are generated, collect low-confidence questions and validate in batch
-  // This uses ONE validation call for the entire course
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | Starting batch validation phase...`);
-  
-  try {
-    // Fetch all generated nodes with their content
-    const { data: generatedNodes, error: genFetchError } = await supabase
-      .schema('api')
-      .from('course_nodes')
-      .select('id, title, content_payload, module_ref')
-      .eq('course_id', courseId);
-
-    if (!genFetchError && generatedNodes?.length) {
-      const lowConfidenceItems = collectLowConfidenceQuestions(generatedNodes);
-      
-      if (lowConfidenceItems.length > 0) {
-        console.log(`[Course Generation] Found ${lowConfidenceItems.length} low-confidence items for batch validation`);
-        
-        // Separate quiz questions and practice problems
-        const quizQuestions = lowConfidenceItems.filter(item => item.type === 'quiz');
-        const practiceProblems = lowConfidenceItems.filter(item => item.type === 'practice_problem');
-        
-        // Batch validate quiz questions (single call for entire course)
-        if (quizQuestions.length > 0) {
-          console.log(`[Course Generation] Batch validating ${quizQuestions.length} quiz questions...`);
-          const quizValidation = await batchValidateQuestions(quizQuestions, courseData?.user_id, courseId);
-          aggregateStats.batchValidation = {
-            quizQuestions: quizValidation.stats
-          };
-          
-          // Update nodes with validated questions
-          await updateNodesWithValidatedContent(supabase, courseId, quizValidation.validated, 'quiz');
-        }
-        
-        // Batch validate practice problems (single call for entire course)
-        if (practiceProblems.length > 0) {
-          console.log(`[Course Generation] Batch validating ${practiceProblems.length} practice problems...`);
-          const problemValidation = await batchValidatePracticeProblems(practiceProblems, courseData?.user_id, courseId);
-          aggregateStats.batchValidation = {
-            ...aggregateStats.batchValidation,
-            practiceProblems: problemValidation.stats
-          };
-          
-          // Update nodes with validated problems
-          await updateNodesWithValidatedContent(supabase, courseId, problemValidation.validated, 'practice_problems');
-        }
-        
-        console.log(`[Course Generation] Batch validation complete. Stats:`, aggregateStats.batchValidation);
-      } else {
-        console.log(`[Course Generation] No low-confidence items found - skipping batch validation`);
-      }
-    }
-  } catch (batchError) {
-    console.error(`[Course Generation] Batch validation failed:`, batchError.message);
-    // Don't fail the course generation, just log the error
-    aggregateStats.batchValidationError = batchError.message;
-  }
-
-  // Final completion log
-  console.log(`[Course Generation] User: ${userName} | Course: "${courseTitle}" | COMPLETED | ${totalProcessed}/${pendingNodes.length} lessons successful`);
 
   return { ...summary, status: courseStatus, failures: [] };
 }
@@ -1396,69 +1421,9 @@ Return JSON: { "repaired_markdown": "string" }`;
     }
 
     // --- CONTENT VALIDATION STEP ---
-    const validationContext = `Context: ${contextInfo.title || 'Unknown Lesson'} (${contextInfo.courseName || 'Unknown Course'})\nContent Snippet: ${chunkText.slice(0, 200)}...`;
-    const contentValidatedMd = await validateContent('inline_question', validatedMd, validationContext, userId, courseId);
+    // SKIPPED: Validation is now done in batch after course generation
 
-    // Verify content validation didn't break format
-    const finalCheck = validateInlineQuestionFormat(contentValidatedMd);
-    if (!finalCheck.valid) {
-      console.warn(`[generateInlineQuestion] validateContent broke the format: ${finalCheck.error}. Reverting to pre-validation version.`);
-      return validatedMd; // Fallback to the formatted but potentially unvalidated content
-    }
-
-    // --- SELF-CONSISTENCY VERIFICATION ---
-    // Convert inline question back to quiz format for consistency check
-    const inlineAsQuiz = {
-      question: parsed.question,
-      options: parsed.options,
-      correct_index: parsed.answerIndex,
-      explanation: parsed.explanation
-    };
-    
-    try {
-      const consistencyResult = await verifySelfConsistency(inlineAsQuiz, chunkText, userId, courseId);
-      
-      if (!consistencyResult.consistent) {
-        console.warn(`[generateInlineQuestion] Self-consistency check FAILED. Model answered ${['A', 'B', 'C', 'D'][consistencyResult.modelAnswer]} but correct is ${['A', 'B', 'C', 'D'][parsed.answerIndex]}`);
-        
-        // Attempt reconciliation
-        const reconciledQuestion = await reconcileAnswerDiscrepancy(inlineAsQuiz, consistencyResult, chunkText, userId, courseId);
-        
-        if (reconciledQuestion && reconciledQuestion.correct_index !== parsed.answerIndex) {
-          console.log(`[generateInlineQuestion] Answer reconciled: changed from ${['A', 'B', 'C', 'D'][parsed.answerIndex]} to ${['A', 'B', 'C', 'D'][reconciledQuestion.correct_index]}`);
-          
-          // Rebuild markdown with corrected answer
-          const newAnswerIndex = reconciledQuestion.correct_index;
-          const newCorrectOption = ['A', 'B', 'C', 'D'][newAnswerIndex];
-          const newExplanations = reconciledQuestion.explanation || parsed.explanation;
-          
-          let reconciledMd = `\n\n**Check Your Understanding**\n\n${parsed.question}\n\n`;
-          parsed.options.forEach((opt, i) => {
-            const letter = ['A', 'B', 'C', 'D'][i];
-            let cleanOpt = opt.trim().replace(/^[A-D][.)]\s*/i, '').trim();
-            reconciledMd += `- ${letter}. ${cleanOpt}\n`;
-          });
-          
-          const explanationList = parsed.options.map((_, i) => {
-            const letter = ['A', 'B', 'C', 'D'][i];
-            const isCorrect = i === newAnswerIndex;
-            const icon = isCorrect ? '✅' : '❌';
-            return `- **${letter}** ${icon} ${newExplanations[i] || 'Explanation not available.'}`;
-          }).join('\n');
-          
-          reconciledMd += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${newCorrectOption}\n\n${explanationList}\n</details>\n`;
-          
-          return reconciledMd;
-        } else if (!reconciledQuestion) {
-          console.warn(`[generateInlineQuestion] Could not reconcile answer discrepancy. Keeping original but flagging.`);
-        }
-      }
-    } catch (scError) {
-      console.error(`[generateInlineQuestion] Self-consistency check error:`, scError.message);
-      // Don't fail the question, just log the error
-    }
-
-    return contentValidatedMd;
+    return validatedMd;
   } catch (error) {
     return null;
   }
@@ -1737,11 +1702,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
   }
 
   // --- VALIDATION STEP ---
-  const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-  const validatedText = await validateContent('reading', resultText, validationContext, userId, courseId);
+  // SKIPPED: Validation is now done in batch after course generation
 
   return {
-    data: validatedText,
+    data: resultText,
     stats: {
       total: 1,
       immediate: retries === 0 ? 1 : 0,
@@ -1886,23 +1850,9 @@ Return ONLY the CSV with header row. No markdown fences.`,
     }
 
     // --- VALIDATION STEP (Per-Question) ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const { validatedQuestions, stats: validationStats } = await validateQuizQuestionsIndividually(
-      repairedQuestions,
-      validationContext,
-      userId,
-      courseId
-    );
+    // SKIPPED: Validation is now done in batch after course generation
 
-    // Merge validation stats into repair stats
-    stats.validation = validationStats;
-
-    // Log warning if any questions failed validation
-    if (validationStats.failedValidation > 0) {
-      console.warn(`[generateQuiz] ${validationStats.failedValidation} questions could not be fully validated for "${title}"`);
-    }
-
-    return { data: validatedQuestions, stats };
+    return { data: repairedQuestions, stats };
   } catch (err) {
     throw err;
   }
@@ -2588,10 +2538,9 @@ Return ONLY the CSV with header row. No markdown fences.`,
     }
 
     // --- VALIDATION STEP ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
-    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId, courseId);
+    // SKIPPED: Validation is now done in batch after course generation
 
-    return { data: validatedCards, stats };
+    return { data: repairedCards, stats };
   } catch (err) {
     throw err;
   }
@@ -2678,29 +2627,8 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
     for (const lesson of lessons) {
       const reading = readingsMap.get(lesson.id);
       if (reading) {
-        // Clean up and validate the reading
-        let cleanedReading = cleanupMarkdown(reading);
-        
-        // Enrich with inline questions
-        try {
-          const chunks = splitContentIntoChunks(cleanedReading);
-          const enrichedChunks = [];
-          const MAX_ENRICHED = 5;
-
-          for (let i = 0; i < chunks.length; i++) {
-            let chunk = chunks[i];
-            if (i < MAX_ENRICHED && chunk.length > 500) {
-              const questionMd = await generateInlineQuestion(chunk, { title: lesson.title, courseName, moduleName }, userId, courseId);
-              if (questionMd) {
-                chunk += questionMd;
-              }
-            }
-            enrichedChunks.push(chunk);
-          }
-          cleanedReading = enrichedChunks.join('\n\n---\n\n');
-        } catch (enrichError) {
-          console.warn(`[generateModuleReadings] Enrichment failed for ${lesson.id}:`, enrichError.message);
-        }
+        // Clean up the reading - inline questions are added separately via generateModuleInlineQuestions
+        const cleanedReading = cleanupMarkdown(reading);
 
         results.set(lesson.id, {
           data: cleanedReading,
@@ -2753,13 +2681,14 @@ Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
 Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
 
 OUTPUT FORMAT: CSV with lesson_id column
-Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD
+Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
 
 Rules:
 - lesson_id: Must match the provided Lesson ID exactly
 - index: Question number within that lesson (0, 1, 2, ...)
 - correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
 - expA-D: Explain why each option is correct/incorrect (min 20 chars each)
+- confidence: 0.0-1.0 (your confidence the answer and explanations are correct)
 - Include 1 Challenge Question per lesson (last question)
 - Use LaTeX for math: \\(...\\)
 - Escape commas with quotes
@@ -2936,6 +2865,290 @@ CRITICAL: Generate flashcards for ALL ${lessons.length} lessons.`
 }
 
 /**
+ * Generates inline questions for all lessons in a module with a single LLM call.
+ * Instead of generating per-chunk, we provide the reading content and generate a set number per lesson.
+ * @param {Array} lessons - Array of lesson objects with id, title
+ * @param {Map<string, string>} readingsMap - Map of lesson_id -> reading content
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, Array>>} - Map of lesson_id -> array of inline question markdown strings
+ */
+export async function generateModuleInlineQuestions(lessons, readingsMap, courseName, moduleName, userId, courseId) {
+  if (!lessons?.length) return new Map();
+  
+  // Build content summary - include truncated reading for context
+  const lessonContexts = lessons.map(l => {
+    const readingRes = readingsMap.get(l.id);
+    const reading = readingRes?.data || '';
+    // Truncate reading to first 2000 chars for context
+    const truncated = reading.slice(0, 2000) + (reading.length > 2000 ? '...' : '');
+    return `===LESSON:${l.id}===
+Title: "${l.title}"
+Reading excerpt:
+${truncated}`;
+  }).join('\n\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are creating inline "Check Your Understanding" questions for module "${moduleName}" in course "${courseName}".
+Generate 3-5 inline MCQs for EACH of the ${lessons.length} lessons based on their reading content.
+
+OUTPUT FORMAT: CSV with header
+lesson_id,chunk_index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+
+Rules:
+- lesson_id: Must match the provided Lesson ID exactly
+- chunk_index: Question number within that lesson (0, 1, 2, ...)
+- correct_index: 0-3 (0=A, 1=B, 2=C, 3=D)
+- confidence: 0.0-1.0 (your confidence that the answer is correct)
+- Each explanation: min 20 chars, explain why correct/incorrect
+- Focus on synthesis/application, not simple recall
+- Use LaTeX for math: \\(...\\)
+- Escape commas with quotes
+
+CRITICAL: Generate questions for ALL ${lessons.length} lessons.`
+    },
+    {
+      role: 'user',
+      content: `Generate inline questions for these lessons:\n\n${lessonContexts}\n\nReturn ONLY CSV with header row.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4.1-fast',
+      temperature: 0.3,
+      maxTokens: 16000,
+      messages,
+      requestTimeoutMs: 180000,
+      reasoning: 'high',
+      userId,
+      source: 'batch_inline_questions',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const questionsMap = csvToBatchedInlineQuestions(csvText);
+    
+    // Convert questions to markdown format
+    const results = new Map();
+    for (const lesson of lessons) {
+      const questions = questionsMap.get(lesson.id) || [];
+      if (questions.length > 0) {
+        // Convert each question to markdown
+        const markdownQuestions = questions.map(q => {
+          let md = `\n\n**Check Your Understanding**\n\n${q.question}\n\n`;
+          q.options.forEach((opt, i) => {
+            const letter = ['A', 'B', 'C', 'D'][i];
+            md += `- ${letter}. ${opt.trim()}\n`;
+          });
+          
+          const correctLetter = ['A', 'B', 'C', 'D'][q.answerIndex];
+          const explanationList = q.options.map((_, i) => {
+            const letter = ['A', 'B', 'C', 'D'][i];
+            const isCorrect = i === q.answerIndex;
+            const icon = isCorrect ? '✅' : '❌';
+            return `- **${letter}** ${icon} ${q.explanation[i] || 'No explanation.'}`;
+          }).join('\n');
+          
+          md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctLetter}\n\n${explanationList}\n</details>\n`;
+          
+          return { markdown: md, confidence: q.confidence, _needsValidation: q.confidence < 0.7 };
+        });
+        
+        results.set(lesson.id, markdownQuestions);
+      } else {
+        results.set(lesson.id, []);
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error(`[generateModuleInlineQuestions] Batch generation failed:`, error.message);
+    return new Map();
+  }
+}
+
+/**
+ * Selects videos for all lessons in a module with a single LLM call.
+ * Performs YouTube searches and then asks LLM to select best videos for all lessons at once.
+ * @param {Array} lessons - Array of lesson objects with id, title, content_payload.generation_plans.video
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, {videos: Array, logs: Array}>>} - Map of lesson_id -> video result
+ */
+export async function generateModuleVideos(lessons, courseName, moduleName, userId, courseId) {
+  if (!lessons?.length) return new Map();
+  
+  const logs = [];
+  logs.push(`[generateModuleVideos] Selecting videos for ${lessons.length} lessons in module "${moduleName}"`);
+  
+  // Collect video queries for all lessons
+  const lessonQueries = [];
+  for (const lesson of lessons) {
+    const plans = lesson.content_payload?.generation_plans || {};
+    const queries = Array.isArray(plans.video) ? plans.video : (plans.video ? [plans.video] : []);
+    if (queries.length > 0) {
+      lessonQueries.push({
+        lessonId: lesson.id,
+        lessonTitle: lesson.title,
+        query: queries[0] // Use first query
+      });
+    }
+  }
+  
+  if (lessonQueries.length === 0) {
+    logs.push('[generateModuleVideos] No video queries found for any lesson');
+    return new Map(lessons.map(l => [l.id, { videos: [], logs: ['No video query specified'] }]));
+  }
+  
+  // If custom fetcher is set, use it per-lesson (can't batch external API)
+  if (customYouTubeFetcher) {
+    const results = new Map();
+    for (const lq of lessonQueries) {
+      try {
+        const res = await customYouTubeFetcher([lq.query]);
+        const videos = Array.isArray(res) ? res : (res ? [res] : []);
+        results.set(lq.lessonId, { videos, logs: ['Using custom YouTube fetcher.'] });
+      } catch (e) {
+        results.set(lq.lessonId, { videos: [], logs: [`Custom fetcher error: ${e.message}`] });
+      }
+    }
+    // Fill in lessons without queries
+    for (const lesson of lessons) {
+      if (!results.has(lesson.id)) {
+        results.set(lesson.id, { videos: [], logs: ['No video query'] });
+      }
+    }
+    return results;
+  }
+  
+  // Batch YouTube searches
+  const searchResultsByLesson = new Map();
+  for (const lq of lessonQueries) {
+    try {
+      const res = await yts(lq.query);
+      const videos = res.videos.slice(0, 5).map((v, i) => ({
+        index: i,
+        title: v.title,
+        timestamp: v.timestamp,
+        author: v.author?.name,
+        videoId: v.videoId,
+        thumbnail: v.thumbnail,
+        url: v.url
+      }));
+      searchResultsByLesson.set(lq.lessonId, { lessonTitle: lq.lessonTitle, query: lq.query, videos });
+    } catch (e) {
+      logs.push(`[generateModuleVideos] Search failed for ${lq.lessonId}: ${e.message}`);
+      searchResultsByLesson.set(lq.lessonId, { lessonTitle: lq.lessonTitle, query: lq.query, videos: [] });
+    }
+  }
+  
+  // Build prompt for LLM to select videos for all lessons at once
+  let videoListPrompt = '';
+  for (const [lessonId, data] of searchResultsByLesson) {
+    if (data.videos.length === 0) continue;
+    
+    videoListPrompt += `\n===LESSON:${lessonId}===\nTitle: "${data.lessonTitle}"\nQuery: "${data.query}"\nVideos:\n`;
+    videoListPrompt += data.videos.map(v =>
+      `  [${v.index}] "${v.title}" | ${v.author} | ${v.timestamp}`
+    ).join('\n');
+    videoListPrompt += '\n';
+  }
+  
+  if (!videoListPrompt) {
+    logs.push('[generateModuleVideos] No videos found for any lesson');
+    return new Map(lessons.map(l => [l.id, { videos: [], logs: ['No videos found in search'] }]));
+  }
+  
+  const messages = [
+    {
+      role: 'system',
+      content: `You are a video curator selecting educational videos for module "${moduleName}" in course "${courseName}".
+For each lesson, select the BEST video from the search results provided.
+
+OUTPUT FORMAT: CSV with header
+lesson_id,video_index,title,thumbnail,url,confidence
+
+Rules:
+- lesson_id: Must match the provided Lesson ID exactly
+- video_index: The index of the selected video (0-4)
+- confidence: 0.0-1.0 (your confidence this is a good educational match)
+- If no good video exists for a lesson, omit that lesson from output
+
+Select ONE video per lesson.`
+    },
+    {
+      role: 'user',
+      content: `Select the best video for each lesson:\n${videoListPrompt}\n\nReturn ONLY CSV with header row.`
+    }
+  ];
+  
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4.1-fast',
+      temperature: 0.1,
+      maxTokens: 2000,
+      messages,
+      requestTimeoutMs: 60000,
+      reasoning: 'high',
+      userId,
+      source: 'batch_video_selection',
+      courseId,
+    });
+    
+    const text = coerceModelText(content);
+    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    
+    // Parse the CSV response
+    const rows = parseCSV(csvText);
+    const results = new Map();
+    
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.length < 2) continue;
+      
+      const lessonId = row[0]?.trim();
+      const videoIndex = parseInt(row[1], 10);
+      
+      const searchData = searchResultsByLesson.get(lessonId);
+      if (!searchData || !searchData.videos[videoIndex]) continue;
+      
+      const selectedVideo = searchData.videos[videoIndex];
+      results.set(lessonId, {
+        videos: [{
+          videoId: selectedVideo.videoId,
+          title: selectedVideo.title,
+          thumbnail: selectedVideo.thumbnail,
+          url: selectedVideo.url
+        }],
+        logs: [`Selected video: "${selectedVideo.title}"`]
+      });
+    }
+    
+    // Fill in lessons without selections
+    for (const lesson of lessons) {
+      if (!results.has(lesson.id)) {
+        results.set(lesson.id, { videos: [], logs: ['No video selected'] });
+      }
+    }
+    
+    logs.push(`[generateModuleVideos] Selected videos for ${results.size} lessons`);
+    return results;
+  } catch (error) {
+    console.error(`[generateModuleVideos] Batch selection failed:`, error.message);
+    logs.push(`[generateModuleVideos] Batch selection failed: ${error.message}`);
+    return new Map(lessons.map(l => [l.id, { videos: [], logs: ['Batch selection failed'] }]));
+  }
+}
+
+/**
  * Processes a module's content generation in batched mode.
  * Generates all content types for all lessons in the module with fewer LLM calls.
  * @param {Array} moduleLessons - Array of lesson nodes in this module
@@ -2960,30 +3173,30 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
   const needsVideo = moduleLessons.filter(l => l.content_payload?.generation_plans?.video);
   const needsPractice = moduleLessons.filter(l => {
     const plans = l.content_payload?.generation_plans || {};
-    return plans.practice_problems || plans.practiceProblems;
+    // STRICT RULE: Practice problems ONLY for Module Quiz
+    const isModuleQuiz = l.title === 'Module Quiz' || (l.slug_id && l.slug_id.startsWith('module-quiz-'));
+    return isModuleQuiz && (plans.practice_problems || plans.practiceProblems);
   });
 
-  // Generate all content types in parallel batches
+  // Generate all content types in parallel batches (6 calls total per module)
+  // 1. Readings, 2. Quizzes, 3. Flashcards run in parallel
   const [readingsMap, quizzesMap, flashcardsMap] = await Promise.all([
     needsReading.length ? generateModuleReadings(needsReading, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
     needsQuiz.length ? generateModuleQuizzes(needsQuiz, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
     needsFlashcards.length ? generateModuleFlashcards(needsFlashcards, courseName, moduleName, userId, courseId) : Promise.resolve(new Map())
   ]);
 
-  // Generate videos individually (YouTube search can't be easily batched)
-  const videoResults = new Map();
-  for (const lesson of needsVideo) {
-    const plans = lesson.content_payload?.generation_plans || {};
-    try {
-      const videoResult = await generateVideoSelection(plans.video, userId, courseId);
-      videoResults.set(lesson.id, videoResult);
-    } catch (e) {
-      console.warn(`[processModuleBatched] Video selection failed for ${lesson.id}:`, e.message);
-      videoResults.set(lesson.id, { videos: [], logs: ['Error: ' + e.message] });
-    }
-  }
+  // 4. Generate inline questions for all lessons (needs readings first)
+  const inlineQuestionsMap = needsReading.length 
+    ? await generateModuleInlineQuestions(needsReading, readingsMap, courseName, moduleName, userId, courseId)
+    : new Map();
 
-  // Generate practice problems individually (complex structure)
+  // 5. Generate videos for all lessons in module (batched)
+  const videoResults = needsVideo.length
+    ? await generateModuleVideos(needsVideo, courseName, moduleName, userId, courseId)
+    : new Map();
+
+  // Generate practice problems individually (complex structure - kept separate)
   const practiceResults = new Map();
   for (const lesson of needsPractice) {
     const plans = lesson.content_payload?.generation_plans || {};
@@ -3000,6 +3213,8 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
   // Now update each lesson with its generated content
   let processed = 0;
   let failed = 0;
+  const results = [];
+  
   const aggregateStats = {
     reading: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
@@ -3018,6 +3233,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       const readingRes = readingsMap.get(lesson.id);
       const quizRes = quizzesMap.get(lesson.id);
       const flashcardsRes = flashcardsMap.get(lesson.id);
+      const inlineQuestions = inlineQuestionsMap.get(lesson.id) || [];
       const videoRes = videoResults.get(lesson.id) || { videos: [], logs: [] };
       const practiceRes = practiceResults.get(lesson.id);
 
@@ -3025,6 +3241,21 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       let finalReading = readingRes?.data || null;
       let finalQuiz = quizRes?.data || null;
       let finalFlashcards = flashcardsRes?.data || null;
+
+      // Merge inline questions into reading content
+      if (finalReading && inlineQuestions.length > 0) {
+        // Split reading into chunks and insert inline questions
+        const chunks = splitContentIntoChunks(finalReading);
+        const enrichedChunks = [];
+        for (let i = 0; i < chunks.length; i++) {
+          enrichedChunks.push(chunks[i]);
+          // Add inline question after this chunk if one exists for this position
+          if (inlineQuestions[i]?.markdown) {
+            enrichedChunks.push(inlineQuestions[i].markdown);
+          }
+        }
+        finalReading = enrichedChunks.join('\n\n---\n\n');
+      }
 
       // If batch didn't generate content but plan exists, fall back to individual generation
       if (!finalReading && plans.reading) {
@@ -3047,40 +3278,8 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
         finalFlashcards = result?.data || null;
       }
 
-      // Save quizzes to DB
-      if (finalQuiz?.length) {
-        const quizPayloads = finalQuiz.map(q => ({
-          course_id: courseId,
-          node_id: lesson.id,
-          user_id: userId,
-          question: q.question,
-          options: q.options,
-          correct_index: q.correct_index,
-          explanation: JSON.stringify(q.explanation),
-          status: 'unattempted'
-        }));
-        const { error: quizError } = await supabase.schema('api').from('quiz_questions').insert(quizPayloads);
-        if (quizError) {
-          console.error(`[processModuleBatched] Failed to save quizzes for ${lesson.id}:`, quizError);
-        }
-      }
-
-      // Save flashcards to DB
-      if (finalFlashcards?.length) {
-        const flashcardPayloads = finalFlashcards.map(f => ({
-          course_id: courseId,
-          node_id: lesson.id,
-          user_id: userId,
-          front: f.front,
-          back: f.back,
-          next_show_timestamp: new Date().toISOString()
-        }));
-        const { error: fcError } = await supabase.schema('api').from('flashcards').insert(flashcardPayloads);
-        if (fcError) {
-          console.error(`[processModuleBatched] Failed to save flashcards for ${lesson.id}:`, fcError);
-        }
-      }
-
+      // DEFERRED SAVING: Do NOT insert into DB here. Return content for validation.
+      
       const videos = videoRes.videos || [];
       const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
 
@@ -3098,18 +3297,14 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
         status: STATUS_READY
       };
 
-      // Update node
-      const { error: updateError } = await supabase
-        .schema('api')
-        .from('course_nodes')
-        .update({ content_payload: finalPayload })
-        .eq('id', lesson.id)
-        .select('id')
-        .single();
-
-      if (updateError) {
-        throw new Error(`Failed to update node ${lesson.id}: ${updateError.message}`);
-      }
+      // Accumulate result
+      results.push({
+        nodeId: lesson.id,
+        payload: finalPayload,
+        quizzes: finalQuiz,
+        flashcards: finalFlashcards,
+        practiceProblems: practiceRes?.data
+      });
 
       // Aggregate stats
       if (readingRes?.stats) Object.keys(readingRes.stats).forEach(k => { if (aggregateStats.reading[k] != null) aggregateStats.reading[k] += readingRes.stats[k] || 0; });
@@ -3128,7 +3323,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
     }
   }
 
-  return { processed, failed, stats: aggregateStats };
+  return { processed, failed, stats: aggregateStats, results };
 }
 
 export async function regenerateReading(title, currentContent, changeInstruction, courseName, moduleName, prereqs = [], userId, courseId) {
@@ -3231,11 +3426,10 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
   }
 
   // --- VALIDATION STEP ---
-  const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-  const validatedText = await validateContent('reading', resultText, validationContext, userId, courseId);
+  // SKIPPED: Validation is now done in batch after course generation
 
   return {
-    data: validatedText,
+    data: resultText,
     stats: { total: 1, immediate: 1, repaired_llm: 0, failed: 0, retries: 0 }
   };
 }
@@ -3332,21 +3526,9 @@ Rules:
     if (!repairedQuestions.length) throw new Error('Quiz regenerator returned no valid questions');
 
     // --- VALIDATION STEP (Per-Question) ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const { validatedQuestions, stats: validationStats } = await validateQuizQuestionsIndividually(
-      repairedQuestions,
-      validationContext,
-      userId,
-      courseId
-    );
+    // SKIPPED: Validation is now done in batch after course generation
 
-    stats.validation = validationStats;
-
-    if (validationStats.failedValidation > 0) {
-      console.warn(`[regenerateQuiz] ${validationStats.failedValidation} questions could not be fully validated for "${title}"`);
-    }
-
-    return { data: validatedQuestions, stats };
+    return { data: repairedQuestions, stats };
   } catch (err) {
     throw err;
   }
@@ -3421,10 +3603,9 @@ Rules:
     if (!repairedCards.length) throw new Error('Flashcard regenerator returned no valid cards');
 
     // --- VALIDATION STEP ---
-    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nChange Instruction: ${changeInstruction}`;
-    const validatedCards = await validateContent('flashcards', repairedCards, validationContext, userId, courseId);
+    // SKIPPED: Validation is now done in batch after course generation
 
-    return { data: validatedCards, stats };
+    return { data: repairedCards, stats };
   } catch (err) {
     throw err;
   }

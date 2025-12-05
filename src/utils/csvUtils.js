@@ -505,8 +505,8 @@ export function csvToArray(csv) {
 // ============================================================================
 
 /**
- * Parses batched quiz CSV with lesson_id column.
- * CSV Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD
+ * Parses batched quiz CSV with lesson_id column and confidence scores.
+ * CSV Header: lesson_id,index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
  * @param {string} csv - CSV string from LLM
  * @returns {Map<string, Array>} - Map of lesson_id -> quiz questions array
  */
@@ -522,6 +522,8 @@ export function csvToBatchedQuiz(csv) {
     const lessonId = unescapeCSV(row[0]);
     if (!lessonId) continue;
     
+    const confidence = row.length >= 13 ? parseFloat(row[12]) || 0.8 : 0.8;
+    
     const question = {
       question: unescapeCSV(row[2]),
       options: [
@@ -536,7 +538,9 @@ export function csvToBatchedQuiz(csv) {
         unescapeCSV(row[9]),
         unescapeCSV(row[10]),
         unescapeCSV(row[11])
-      ] : ['', '', '', '']
+      ] : ['', '', '', ''],
+      _confidence: confidence,
+      _needsValidation: confidence < 0.7
     };
     
     if (question.correct_index < 0 || question.correct_index > 3) {
@@ -619,6 +623,97 @@ export function formatLessonPlansForBatch(lessons) {
     const plans = l.content_payload?.generation_plans || {};
     return `[${l.id}] "${l.title}"\n  Reading plan: ${plans.reading || 'Generate comprehensive reading'}\n  Quiz plan: ${plans.quiz || 'Generate quiz'}\n  Flashcards plan: ${plans.flashcards || 'Generate flashcards'}`;
   }).join('\n\n');
+}
+
+/**
+ * Parses batched inline questions CSV output.
+ * CSV format: lesson_id,chunk_index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+ * @param {string} csv - CSV string with header
+ * @returns {Map<string, Array>} - Map of lesson_id -> array of inline question objects
+ */
+export function csvToBatchedInlineQuestions(csv) {
+  const result = new Map();
+  const rows = parseCSV(csv);
+  if (rows.length < 2) return result;
+  
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length < 12) continue;
+    
+    const lessonId = unescapeCSV(row[0]);
+    const chunkIndex = parseInt(row[1], 10) || 0;
+    const question = unescapeCSV(row[2]);
+    const options = [unescapeCSV(row[3]), unescapeCSV(row[4]), unescapeCSV(row[5]), unescapeCSV(row[6])];
+    const correctIndex = parseInt(row[7], 10) || 0;
+    const explanations = [unescapeCSV(row[8]), unescapeCSV(row[9]), unescapeCSV(row[10]), unescapeCSV(row[11])];
+    const confidence = row.length > 12 ? parseFloat(row[12]) || 0.8 : 0.8;
+    
+    if (!question || options.some(o => !o)) continue;
+    
+    if (!result.has(lessonId)) {
+      result.set(lessonId, []);
+    }
+    
+    result.get(lessonId).push({
+      chunkIndex,
+      question,
+      options,
+      answerIndex: correctIndex,
+      explanation: explanations,
+      confidence,
+      _needsValidation: confidence < 0.7
+    });
+  }
+  
+  return result;
+}
+
+/**
+ * Parses batched video selection CSV output.
+ * CSV format: lesson_id,video_index,title,thumbnail,url,confidence
+ * @param {string} csv - CSV string with header
+ * @returns {Map<string, Array>} - Map of lesson_id -> array of video objects
+ */
+export function csvToBatchedVideos(csv) {
+  const result = new Map();
+  const rows = parseCSV(csv);
+  if (rows.length < 2) return result;
+  
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length < 4) continue;
+    
+    const lessonId = unescapeCSV(row[0]);
+    const videoIndex = parseInt(row[1], 10) || 0;
+    const title = unescapeCSV(row[2]);
+    const thumbnail = row.length > 3 ? unescapeCSV(row[3]) : '';
+    const url = row.length > 4 ? unescapeCSV(row[4]) : '';
+    const confidence = row.length > 5 ? parseFloat(row[5]) || 0.8 : 0.8;
+    
+    if (!title) continue;
+    
+    // Extract videoId from URL if present
+    let videoId = '';
+    if (url) {
+      const match = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      videoId = match ? match[1] : '';
+    }
+    
+    if (!result.has(lessonId)) {
+      result.set(lessonId, []);
+    }
+    
+    result.get(lessonId).push({
+      videoIndex,
+      videoId,
+      title,
+      thumbnail,
+      url,
+      confidence
+    });
+  }
+  
+  return result;
 }
 
 // ============================================================================

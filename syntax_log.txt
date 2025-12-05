@@ -1,0 +1,5 @@
+Syntax check passed!
+[examGenerator] WARNING: pdflatex NOT found. LaTeX compilation will likely fail. Command failed: pdflatex --version
+'pdflatex' is not recognized as an internal or external command,
+operable program or batch file.
+

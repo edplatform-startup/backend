@@ -301,6 +301,17 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     }
   }
 
+  // Step 2.4: Safeguard - Remove practice_problems from individual lessons
+  // Practice problems should ONLY be in Module Quizzes
+  for (const lesson of lessonGraph.lessons) {
+    if (lesson.content_plans && lesson.content_plans.practice_problems) {
+      // If it's not a module quiz (which shouldn't exist yet, but just in case)
+      if (lesson.title !== 'Module Quiz' && !lesson.slug_id.startsWith('module-quiz-')) {
+        delete lesson.content_plans.practice_problems;
+      }
+    }
+  }
+
   // Step 2.5: Inject Module Quizzes
   // Group lessons by module
   const moduleMap = new Map();

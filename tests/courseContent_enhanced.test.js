@@ -71,7 +71,15 @@ Rain falls. When clouds become heavy with water droplets, gravity pulls them dow
         };
       }
 
-      // 2. Inline Question Generation (CSV format)
+      // 2. Batched Inline Question Generation (CSV format)
+      if (systemMessage.includes('Check Your Understanding') || systemMessage.includes('inline MCQs for EACH')) {
+        return {
+          content: `lesson_id,chunk_index,question,optionA,optionB,optionC,optionD,correct_index,expA,expB,expC,expD,confidence
+node-reading-1,0,"What drives evaporation?","The Moon","The Sun","Wind","Magic",1,"The moon does not provide energy for evaporation.","The sun provides the heat energy that causes water to evaporate.","Wind helps with evaporation but is not the primary driver.","Magic is not a scientific explanation.",0.85`
+        };
+      }
+
+      // Legacy per-chunk Inline Question Generation (CSV format)
       if (systemMessage.includes('Generate a deep-understanding MCQ') || systemMessage.includes('deep-understanding MCQ')) {
         return {
           content: `"What drives evaporation?","The Moon","The Sun","Wind","Magic",1,"The moon does not provide energy for evaporation.","The sun provides the heat energy that causes water to evaporate.","Wind helps with evaporation but is not the primary driver.","Magic is not a scientific explanation.",0.85`
