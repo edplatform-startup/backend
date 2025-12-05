@@ -140,9 +140,8 @@ CRITICAL RULES:
    - A lesson can have multiple readings (e.g., theory + examples + edge cases)
    - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
-  - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
-   - ALL content should flow in a logical learning order for maximum comprehension
    - A lesson can include practice exams or longer free-response drills to mirror midterm/final formats
+   - A lesson can include **practice_problems** for exam-style worked problems (more complex than quiz questions, requiring 10-20 min each, with detailed rubrics and sample answers)
    - ALL content should flow in a logical learning order for maximum comprehension
 6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
 7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
@@ -150,7 +149,8 @@ CRITICAL RULES:
    - **video:** ${mode === 'cram' ? 'Only include if the concept is exceptionally difficult or visual. 1-2 high-yield search queries.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). IMPORTANT: Only include video plans if the concept is exceptionally difficult, the user is weak on it, or a visual demonstration is absolutely necessary. Otherwise, omit.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
-  - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
+   - **practice_exam:** Prompt describing the desired number of free-response problems, rubric expectations, and authentic exam traps to include.
+   - **practice_problems:** INCLUDE WHEN: The lesson covers complex problem-solving skills, multi-step procedures, or exam-critical topics where students need to practice authentic exam-style problems. Each practice problem should take 10-20 minutes to complete. Specify: number of problems (typically 2-4), specific topic areas to cover, expected difficulty level, types of reasoning required (e.g., proofs, calculations, analysis), and any common exam traps to incorporate. These are MORE DIFFICULT than quiz questions and should replicate real exam conditions.
 8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
 9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
 10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
@@ -176,7 +176,8 @@ Output STRICT VALID JSON format (no markdown, no comments):
          "reading": "Explain the chain rule using a 'peeling the onion' analogy. Focus on identifying inner vs outer functions.",
          "video": ["chain rule calculus intuition", "chain rule visualization 3blue1brown"],
          "quiz": "Generate 3-5 multiple-choice questions. Question 1 on Chain Rule intuition, Question 2 on identifying inner/outer functions, Question 3 on applying the formula. Include a Challenge Question involving a trigonometric function inside a polynomial.",
-         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions."
+         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions.",
+         "practice_problems": "Create 2 exam-style problems on chain rule application. Problem 1: Differentiate a nested function with 3 layers (e.g., sin(ln(x^2+1))). Problem 2: Apply chain rule combined with implicit differentiation. Include common exam traps like forgetting inner derivative."
       }
     }
   ]

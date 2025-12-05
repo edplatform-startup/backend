@@ -325,10 +325,23 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   3. Inserts or updates `api.courses` with the derived title, optional syllabus/exam context, and sets `status: "pending"` for downstream progress tracking.
   4. Executes `saveCourseStructure(courseId, userId, lessonGraph)` which bulk-inserts `api.course_nodes`, `api.node_dependencies`, and `api.user_node_state`, storing `generation_plans` + metadata inside each node's `content_payload` with `status: "pending"`.
   5. Runs `generateCourseContent(courseId)` immediately. The worker batches pending nodes (≤20 → all at once, otherwise concurrency=5) and, per node:
-     - Calls Grok 4 Fast with high reasoning enabled to generate reading Markdown, quiz JSON, inline questions, and flashcards JSON.
+     - Calls Grok 4 Fast with high reasoning enabled to generate reading Markdown, quiz JSON, inline questions, flashcards JSON, practice_exam JSON, and practice_problems JSON.
      - Searches the YouTube Data API (`YOUTUBE_API_KEY` env var) with the provided video queries; failures are logged and stored as `null`.
-     - Updates each node's `content_payload` to `{ reading, quiz, flashcards, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
+     - Updates each node's `content_payload` to `{ reading, quiz, flashcards, practice_exam, practice_problems, video, generation_plans, metadata, status: "ready" }` without overwriting existing metadata or lineage fields.
     - Marks nodes with failed generations as `status: "error"` and records the message; the parent course row's `status` becomes `"needs_attention"` when any failures occur, otherwise `"ready"`.
+- **Content Types**:
+  - `reading` (string) – Markdown content for the lesson reading material
+  - `quiz` (array) – Multiple-choice questions with explanations
+  - `flashcards` (array) – Front/back flashcard pairs
+  - `practice_exam` (array) – Free-response exam problems with answer keys
+  - `practice_problems` (array) – Exam-style problems with detailed rubrics and sample answers. More complex than quiz questions, designed to replicate authentic exam conditions. Each problem includes:
+    - `question` (string) – Full problem statement with subparts
+    - `estimated_minutes` (number) – Expected completion time (10-20 min)
+    - `difficulty` (string) – "Medium" or "Hard"
+    - `topic_tags` (array) – Relevant topic identifiers
+    - `rubric` (object) – Grading criteria with `total_points`, `grading_criteria` array (each with `criterion`, `points`, `common_errors`), and `partial_credit_policy`
+    - `sample_answer` (object) – Complete solution with `solution_steps` array, `final_answer`, `key_insights`, and `alternative_approaches`
+  - `video` (array) – Selected YouTube videos
 - Responses:
   - `201 Created` →
     ```json
@@ -866,6 +879,9 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `quiz_generation` – Quiz question generation
   - `flashcards_generation` – Flashcard generation
   - `practice_exam_generation` – Practice exam generation
+  - `practice_problems_generation` – Practice problems generation (exam-style problems with rubrics)
+  - `practice_problem_validation` – Practice problem accuracy validation (fresh model verification)
+  - `practice_problem_correction` – Practice problem correction based on validation feedback
   - `inline_question` – Inline question generation
   - `video_selection` – Video selection
   - `content_repair` – Content array repair (broken JSON fix)

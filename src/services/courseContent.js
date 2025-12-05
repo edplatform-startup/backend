@@ -286,6 +286,7 @@ async function runContentWorker(courseId, options = {}) {
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     flashcards: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
     practice_exam: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0 },
+    practice_problems: { total: 0, immediate: 0, repaired_llm: 0, failed: 0, retries: 0, verified: 0, corrected: 0 },
     video: { total: 0, successful: 0, failed: 0 }
   };
 
@@ -372,16 +373,22 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     ? safeGenerate(generatePracticeExam(lessonName, practiceExamPlan, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Practice Exam')
     : Promise.resolve(null);
 
+  const practiceProblemsPlan = plans.practice_problems ?? plans.practiceProblems;
+  const practiceProblemsPromise = practiceProblemsPlan
+    ? safeGenerate(generatePracticeProblems(lessonName, practiceProblemsPlan, courseTitle, moduleName, node.user_id, node.course_id), 'Generating Practice Problems')
+    : Promise.resolve(null);
+
   const videoPromise = plans.video
     ? safeGenerate(generateVideoSelection(plans.video, node.user_id, node.course_id), 'Selecting Video')
     : Promise.resolve({ videos: [], logs: [] });
 
-  const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes] = await Promise.all([
+  const [readingRes, quizRes, flashcardsRes, videoResult, practiceExamRes, practiceProblemsRes] = await Promise.all([
     readingPromise,
     quizPromise,
     flashcardsPromise,
     videoPromise,
     practiceExamPromise,
+    practiceProblemsPromise,
   ]);
 
   // Save Quizzes to DB
@@ -429,6 +436,7 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     quiz: quizRes?.data || null,
     flashcards: flashcardsRes?.data || null,
     practice_exam: practiceExamRes?.data || null,
+    practice_problems: practiceProblemsRes?.data || null,
     video: videos, // Keep original array structure
     video_urls: videoUrls, // New CSV field
     video_logs: videoLogs, // Detailed logs
@@ -455,6 +463,7 @@ async function processNode(node, supabase, courseTitle, prereqs = [], mode = 'de
     quiz: quizRes?.stats || {},
     flashcards: flashcardsRes?.stats || {},
     practice_exam: practiceExamRes?.stats || {},
+    practice_problems: practiceProblemsRes?.stats || {},
     video: { total: 1, successful: videos.length > 0 ? 1 : 0, failed: videos.length === 0 ? 1 : 0 }
   };
 
@@ -1969,6 +1978,460 @@ function normalizePracticeExamItem(item, index) {
     rubric: rubric || 'Award full credit only when every subpart is justified with correct reasoning.',
     estimated_minutes: estimatedMinutes,
   };
+}
+
+/**
+ * Generates practice problems - exam-style questions with detailed rubrics and sample answers.
+ * These are more complex than quiz questions and designed to replicate authentic exam conditions.
+ * @param {string} title - Lesson title
+ * @param {string} plan - Generation plan from lesson architect
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{data: Array, stats: object}>}
+ */
+export async function generatePracticeProblems(title, plan, courseName, moduleName, userId, courseId) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are creating exam-style practice problems for the lesson "${title}" in module "${moduleName}" of course "${courseName}".
+
+These problems should be MORE DIFFICULT than quiz questions and replicate authentic exam conditions.
+Each problem should take 10-20 minutes to solve and require multi-step reasoning.
+
+Always respond with JSON:
+{
+  "internal_audit": "reasoning about problem design, difficulty calibration, and coverage",
+  "practice_problems": [
+    {
+      "validation_check": "Scratchpad verifying the problem is solvable, the rubric is fair, and the sample answer is correct",
+      "question": "Full problem statement with all necessary information. Can include subparts (a, b, c...)",
+      "estimated_minutes": 15,
+      "difficulty": "Hard",
+      "topic_tags": ["tag1", "tag2"],
+      "rubric": {
+        "total_points": 10,
+        "grading_criteria": [
+          {"criterion": "Correct identification of...", "points": 2, "common_errors": ["Forgetting to..."]},
+          {"criterion": "Proper application of...", "points": 3, "common_errors": ["Using wrong formula..."]},
+          {"criterion": "Complete and correct final answer", "points": 3, "common_errors": ["Arithmetic error..."]},
+          {"criterion": "Clear presentation and justification", "points": 2, "common_errors": ["Missing units..."]}
+        ],
+        "partial_credit_policy": "Award partial credit for correct approach even if final answer is wrong"
+      },
+      "sample_answer": {
+        "solution_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
+        "final_answer": "The answer is...",
+        "key_insights": ["Important concept applied here...", "Common trap avoided by..."],
+        "alternative_approaches": ["Could also solve by..."]
+      }
+    }
+  ]
+}
+
+Rules:
+- validation_check is required for every problem and must audit correctness before finalizing
+- Problems should test APPLICATION and ANALYSIS, not just recall
+- Rubrics must be specific enough that different graders would assign the same score
+- Sample answers must show complete work, not just final answers
+- Include common errors to help students learn from mistakes
+- Use inline LaTeX (\\(...\\)) or display math (\\[...\\]) only when required. Do NOT use $ or $$.`,
+    },
+    {
+      role: 'user',
+      content: `Generate JSON with a 'practice_problems' array of exam-style problems for "${title}".
+Plan / emphasis:
+${plan}
+
+Each problem should require 10-20 minutes, test deep understanding, and include a detailed rubric and sample answer.`,
+    },
+  ];
+
+  const { content } = await grokExecutor({
+    model: 'x-ai/grok-4-fast',
+    temperature: 0.25,
+    maxTokens: 8192,
+    messages,
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 180000,
+    reasoning: 'high',
+    userId,
+    source: 'practice_problems_generation',
+    courseId,
+  });
+
+  const text = coerceModelText(content);
+
+  let rawItems;
+  try {
+    rawItems = parseJsonArray(text, 'practice_problems');
+
+    const validator = (item, index) => {
+      try {
+        let cleanItem = item;
+        if (item && typeof item === 'object') {
+          const { validation_check, step_by_step_thinking, ...rest } = item;
+          cleanItem = rest;
+        }
+        return { valid: true, data: normalizePracticeProblem(cleanItem, index) };
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    };
+
+    const repairPrompt = (brokenItems, errors) => {
+      return `The following practice problems are invalid:\n${JSON.stringify(brokenItems, null, 2)}\n\nErrors:\n${JSON.stringify(errors, null, 2)}\n\nPlease regenerate these items correctly. Each must have:
+- 'question': Full problem statement
+- 'rubric': Object with 'total_points', 'grading_criteria' (array), and 'partial_credit_policy'
+- 'sample_answer': Object with 'solution_steps' (array), 'final_answer', 'key_insights' (array)
+- 'estimated_minutes': Number (10-20)
+- 'difficulty': "Medium" or "Hard"
+- 'topic_tags': Array of relevant topic strings`;
+    };
+
+    const { items: repairedItems, stats } = await repairContentArray(rawItems, validator, repairPrompt, 'generatePracticeProblems', userId, courseId);
+
+    if (!repairedItems.length) {
+      throw new Error('Practice problems generator returned no valid problems after repair');
+    }
+
+    // --- VALIDATION STEP: Verify rubric and sample answer accuracy ---
+    const validationContext = `Course: ${courseName}\nModule: ${moduleName}\nLesson: ${title}\nPlan: ${plan}`;
+    const { validatedProblems, validationStats } = await validatePracticeProblemsAccuracy(
+      repairedItems,
+      validationContext,
+      userId,
+      courseId
+    );
+
+    // Merge validation stats
+    stats.validation = validationStats;
+
+    return { data: validatedProblems, stats };
+  } catch (err) {
+    throw err;
+  }
+}
+
+/**
+ * Normalizes a practice problem ensuring all required fields are present.
+ */
+function normalizePracticeProblem(item, index) {
+  const question = typeof item?.question === 'string' ? item.question.trim() : '';
+  const estimatedMinutesRaw = Number(item?.estimated_minutes);
+  const estimatedMinutes = Number.isFinite(estimatedMinutesRaw) && estimatedMinutesRaw > 0
+    ? Math.round(estimatedMinutesRaw)
+    : 15;
+  const difficulty = ['Easy', 'Medium', 'Hard'].includes(item?.difficulty) ? item.difficulty : 'Medium';
+  const topicTags = Array.isArray(item?.topic_tags) ? item.topic_tags.filter(t => typeof t === 'string') : [];
+
+  // Validate rubric structure
+  let rubric = item?.rubric;
+  if (!rubric || typeof rubric !== 'object') {
+    throw new Error(`Practice problem ${index + 1} is missing rubric`);
+  }
+  
+  const totalPoints = typeof rubric.total_points === 'number' ? rubric.total_points : 10;
+  const gradingCriteria = Array.isArray(rubric.grading_criteria) ? rubric.grading_criteria : [];
+  const partialCreditPolicy = typeof rubric.partial_credit_policy === 'string' 
+    ? rubric.partial_credit_policy 
+    : 'Award partial credit for correct approach.';
+
+  if (gradingCriteria.length === 0) {
+    throw new Error(`Practice problem ${index + 1} has no grading criteria`);
+  }
+
+  // Normalize grading criteria
+  const normalizedCriteria = gradingCriteria.map((c, i) => ({
+    criterion: typeof c.criterion === 'string' ? c.criterion.trim() : `Criterion ${i + 1}`,
+    points: typeof c.points === 'number' ? c.points : 1,
+    common_errors: Array.isArray(c.common_errors) ? c.common_errors : []
+  }));
+
+  // Validate sample answer structure
+  let sampleAnswer = item?.sample_answer;
+  if (!sampleAnswer || typeof sampleAnswer !== 'object') {
+    throw new Error(`Practice problem ${index + 1} is missing sample_answer`);
+  }
+
+  const solutionSteps = Array.isArray(sampleAnswer.solution_steps) ? sampleAnswer.solution_steps : [];
+  const finalAnswer = typeof sampleAnswer.final_answer === 'string' ? sampleAnswer.final_answer.trim() : '';
+  const keyInsights = Array.isArray(sampleAnswer.key_insights) ? sampleAnswer.key_insights : [];
+  const alternativeApproaches = Array.isArray(sampleAnswer.alternative_approaches) ? sampleAnswer.alternative_approaches : [];
+
+  if (!question) {
+    throw new Error(`Practice problem ${index + 1} is missing question`);
+  }
+  if (solutionSteps.length === 0) {
+    throw new Error(`Practice problem ${index + 1} has no solution steps`);
+  }
+  if (!finalAnswer) {
+    throw new Error(`Practice problem ${index + 1} is missing final answer`);
+  }
+
+  return {
+    question,
+    estimated_minutes: estimatedMinutes,
+    difficulty,
+    topic_tags: topicTags,
+    rubric: {
+      total_points: totalPoints,
+      grading_criteria: normalizedCriteria,
+      partial_credit_policy: partialCreditPolicy
+    },
+    sample_answer: {
+      solution_steps: solutionSteps.filter(s => typeof s === 'string' && s.trim()),
+      final_answer: finalAnswer,
+      key_insights: keyInsights.filter(i => typeof i === 'string'),
+      alternative_approaches: alternativeApproaches.filter(a => typeof a === 'string')
+    }
+  };
+}
+
+/**
+ * Validates practice problems accuracy using a fresh worker model.
+ * Independently solves each problem and verifies the rubric/sample answer are correct.
+ * @param {Array} problems - Array of practice problem objects
+ * @param {string} context - Validation context
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{validatedProblems: Array, validationStats: object}>}
+ */
+async function validatePracticeProblemsAccuracy(problems, context, userId, courseId) {
+  const stats = {
+    total: problems.length,
+    verified: 0,
+    corrected: 0,
+    failed: 0
+  };
+
+  const validatedProblems = [];
+
+  for (let i = 0; i < problems.length; i++) {
+    const problem = problems[i];
+    console.log(`[validatePracticeProblems] Validating problem ${i + 1}/${problems.length}`);
+
+    try {
+      const validationResult = await verifyPracticeProblemAccuracy(problem, context, userId, courseId);
+
+      if (validationResult.isCorrect) {
+        stats.verified++;
+        validatedProblems.push({
+          ...problem,
+          _validated: true,
+          _validationConfidence: validationResult.confidence
+        });
+      } else {
+        // Problem has issues - attempt to fix
+        console.warn(`[validatePracticeProblems] Problem ${i + 1} has issues: ${validationResult.issues.join(', ')}`);
+
+        const correctedProblem = await correctPracticeProblem(problem, validationResult, context, userId, courseId);
+        
+        if (correctedProblem) {
+          stats.corrected++;
+          validatedProblems.push({
+            ...correctedProblem,
+            _validated: true,
+            _corrected: true,
+            _originalIssues: validationResult.issues
+          });
+        } else {
+          // Could not fix - include with warning
+          stats.failed++;
+          validatedProblems.push({
+            ...problem,
+            _validationFailed: true,
+            _validationIssues: validationResult.issues,
+            _validationNote: 'This problem could not be fully validated. Manual review recommended.'
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`[validatePracticeProblems] Error validating problem ${i + 1}:`, error.message);
+      stats.failed++;
+      validatedProblems.push({
+        ...problem,
+        _validationError: error.message
+      });
+    }
+  }
+
+  console.log(`[validatePracticeProblems] Stats: ${JSON.stringify(stats)}`);
+  return { validatedProblems, validationStats: stats };
+}
+
+/**
+ * Uses a fresh worker model to independently solve the problem and verify correctness.
+ */
+async function verifyPracticeProblemAccuracy(problem, context, userId, courseId) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert educator and subject matter validator. Your task is to:
+1. Independently solve the given problem WITHOUT looking at the provided solution
+2. Compare your answer with the provided sample answer
+3. Evaluate whether the rubric is fair and correctly structured
+4. Identify any issues with the problem, rubric, or sample answer
+
+Return JSON:
+{
+  "my_solution": {
+    "approach": "How I would solve this",
+    "steps": ["Step 1...", "Step 2..."],
+    "final_answer": "My answer"
+  },
+  "comparison": {
+    "answers_match": true/false,
+    "my_answer_is_correct": true/false,
+    "provided_answer_is_correct": true/false,
+    "discrepancy_explanation": "If answers differ, explain why"
+  },
+  "rubric_evaluation": {
+    "is_fair": true/false,
+    "covers_all_steps": true/false,
+    "points_are_reasonable": true/false,
+    "issues": ["Issue 1", "Issue 2"]
+  },
+  "overall_assessment": {
+    "is_correct": true/false,
+    "confidence": "high" | "medium" | "low",
+    "issues": ["List of any issues found"],
+    "recommendations": ["Suggested improvements"]
+  }
+}`
+    },
+    {
+      role: 'user',
+      content: `Context:
+${context}
+
+Problem to validate:
+Question: ${problem.question}
+
+Provided Rubric:
+${JSON.stringify(problem.rubric, null, 2)}
+
+Provided Sample Answer:
+${JSON.stringify(problem.sample_answer, null, 2)}
+
+Please independently solve this problem and validate the provided solution and rubric.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0,
+      maxTokens: 4096,
+      messages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 120000,
+      reasoning: 'high',
+      userId,
+      source: 'practice_problem_validation',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const result = parseJsonObject(raw, 'practice_problem_validation');
+
+    if (!result || !result.overall_assessment) {
+      return { isCorrect: true, confidence: 'low', issues: ['Validation response incomplete'] };
+    }
+
+    return {
+      isCorrect: result.overall_assessment.is_correct,
+      confidence: result.overall_assessment.confidence || 'medium',
+      issues: result.overall_assessment.issues || [],
+      recommendations: result.overall_assessment.recommendations || [],
+      validatorSolution: result.my_solution,
+      comparison: result.comparison,
+      rubricEvaluation: result.rubric_evaluation
+    };
+  } catch (error) {
+    console.error('[verifyPracticeProblemAccuracy] Error:', error.message);
+    return { isCorrect: true, confidence: 'error', issues: [error.message] };
+  }
+}
+
+/**
+ * Attempts to correct a practice problem based on validation feedback.
+ */
+async function correctPracticeProblem(problem, validationResult, context, userId, courseId) {
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert educator correcting a practice problem that has validation issues.
+Based on the validator's feedback, fix the problem's solution, rubric, or question as needed.
+
+Return the COMPLETE corrected problem in this exact JSON format:
+{
+  "question": "Full problem statement",
+  "estimated_minutes": 15,
+  "difficulty": "Hard",
+  "topic_tags": ["tag1"],
+  "rubric": {
+    "total_points": 10,
+    "grading_criteria": [{"criterion": "...", "points": 2, "common_errors": ["..."]}],
+    "partial_credit_policy": "..."
+  },
+  "sample_answer": {
+    "solution_steps": ["Step 1...", "Step 2..."],
+    "final_answer": "...",
+    "key_insights": ["..."],
+    "alternative_approaches": ["..."]
+  }
+}`
+    },
+    {
+      role: 'user',
+      content: `Context:
+${context}
+
+Original Problem:
+${JSON.stringify(problem, null, 2)}
+
+Validation Issues Found:
+${validationResult.issues.join('\n- ')}
+
+Validator's Solution:
+${JSON.stringify(validationResult.validatorSolution, null, 2)}
+
+Recommendations:
+${(validationResult.recommendations || []).join('\n- ')}
+
+Please correct the problem to address these issues. Ensure the sample answer is mathematically/factually correct.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: 'x-ai/grok-4-fast',
+      temperature: 0.2,
+      maxTokens: 4096,
+      messages,
+      responseFormat: { type: 'json_object' },
+      requestTimeoutMs: 90000,
+      reasoning: 'high',
+      userId,
+      source: 'practice_problem_correction',
+      courseId,
+    });
+
+    const raw = coerceModelText(content);
+    const corrected = parseJsonObject(raw, 'practice_problem_correction');
+
+    if (!corrected || !corrected.question || !corrected.rubric || !corrected.sample_answer) {
+      return null;
+    }
+
+    // Normalize the corrected problem
+    return normalizePracticeProblem(corrected, 0);
+  } catch (error) {
+    console.error('[correctPracticeProblem] Error:', error.message);
+    return null;
+  }
 }
 
 export async function generateFlashcards(title, plan, courseName, moduleName, userId, courseId) {

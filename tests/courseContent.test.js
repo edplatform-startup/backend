@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { saveCourseStructure, generateCourseContent, __setGrokExecutor, __resetGrokExecutor, __setYouTubeFetcher, __resetYouTubeFetcher } from '../src/services/courseContent.js';
+import { saveCourseStructure, generateCourseContent, generatePracticeProblems, __setGrokExecutor, __resetGrokExecutor, __setYouTubeFetcher, __resetYouTubeFetcher } from '../src/services/courseContent.js';
 import { setSupabaseClient, clearSupabaseClient } from '../src/supabaseClient.js';
 import { createSupabaseStub } from './helpers/supabaseStub.js';
 
@@ -174,7 +174,12 @@ test('generateCourseContent fills node payloads and marks course ready', async (
           question: 'What is the main implication?',
           options: ['Option A', 'Option B', 'Option C', 'Option D'],
           answerIndex: 1,
-          explanation: ['Expl A', 'Expl B', 'Expl C', 'Expl D'],
+          explanation: [
+            'Option A is incorrect because it does not address the core concept being tested here.',
+            'Option B is correct because it accurately represents the main implication of the concept.',
+            'Option C is incorrect because it represents a common misconception about this topic.',
+            'Option D is incorrect because it only partially addresses the question requirements.'
+          ],
         }),
       };
     }
@@ -186,10 +191,15 @@ test('generateCourseContent fills node payloads and marks course ready', async (
           quiz: [
             {
               validation_check: 'Only option B satisfies constraint.',
-              question: 'Q1',
-              options: ['A', 'B', 'C'],
+              question: 'Q1: Which option is correct?',
+              options: ['Option A is incorrect', 'Option B is the correct answer', 'Option C is also incorrect', 'Option D is not right'],
               correct_index: 1,
-              explanation: 'Because B.',
+              explanation: [
+                'Option A is incorrect because it does not match the expected outcome.',
+                'Option B is correct because it accurately represents the solution.',
+                'Option C is incorrect because it represents a common misconception.',
+                'Option D is incorrect because it only partially addresses the question.'
+              ],
             },
           ],
         }),
@@ -245,5 +255,249 @@ test('generateCourseContent fills node payloads and marks course ready', async (
     __resetGrokExecutor();
     __resetYouTubeFetcher();
     clearSupabaseClient();
+  }
+});
+
+test('generatePracticeProblems creates validated exam-style problems with rubrics', async () => {
+  let callCount = 0;
+  
+  __setGrokExecutor(async ({ messages, source }) => {
+    callCount++;
+    const systemMessage = messages.find(m => m.role === 'system')?.content || '';
+    
+    // Initial generation call
+    if (source === 'practice_problems_generation') {
+      return {
+        content: JSON.stringify({
+          internal_audit: 'Problem design covers key concepts',
+          practice_problems: [
+            {
+              validation_check: 'Verified rubric matches solution steps',
+              question: 'Given the function f(x) = sin(x²), find f\'(x) and evaluate at x = π.',
+              estimated_minutes: 15,
+              difficulty: 'Hard',
+              topic_tags: ['chain-rule', 'trigonometry'],
+              rubric: {
+                total_points: 10,
+                grading_criteria: [
+                  { criterion: 'Correctly identify composite function structure', points: 2, common_errors: ['Treating as simple sine'] },
+                  { criterion: 'Apply chain rule correctly', points: 4, common_errors: ['Forgetting inner derivative 2x'] },
+                  { criterion: 'Evaluate at x = π correctly', points: 3, common_errors: ['Using degrees instead of radians'] },
+                  { criterion: 'Clear presentation', points: 1, common_errors: ['Missing intermediate steps'] }
+                ],
+                partial_credit_policy: 'Award partial credit for correct approach even if arithmetic errors'
+              },
+              sample_answer: {
+                solution_steps: [
+                  'Step 1: Identify f(x) = sin(g(x)) where g(x) = x²',
+                  'Step 2: Apply chain rule: f\'(x) = cos(x²) · 2x',
+                  'Step 3: Evaluate: f\'(π) = cos(π²) · 2π ≈ -5.98'
+                ],
+                final_answer: 'f\'(x) = 2x·cos(x²), f\'(π) ≈ -5.98',
+                key_insights: ['Chain rule requires multiplying by derivative of inner function'],
+                alternative_approaches: ['Could use limit definition but chain rule is more efficient']
+              }
+            }
+          ]
+        })
+      };
+    }
+    
+    // Validation call - confirm the problem is correct
+    if (source === 'practice_problem_validation') {
+      return {
+        content: JSON.stringify({
+          my_solution: {
+            approach: 'Apply chain rule to composite function',
+            steps: ['Identify inner/outer', 'Apply chain rule', 'Evaluate'],
+            final_answer: 'f\'(x) = 2x·cos(x²), f\'(π) ≈ -5.98'
+          },
+          comparison: {
+            answers_match: true,
+            my_answer_is_correct: true,
+            provided_answer_is_correct: true,
+            discrepancy_explanation: ''
+          },
+          rubric_evaluation: {
+            is_fair: true,
+            covers_all_steps: true,
+            points_are_reasonable: true,
+            issues: []
+          },
+          overall_assessment: {
+            is_correct: true,
+            confidence: 'high',
+            issues: [],
+            recommendations: []
+          }
+        })
+      };
+    }
+    
+    return { content: '{}' };
+  });
+
+  try {
+    const result = await generatePracticeProblems(
+      'Chain Rule Mastery',
+      'Create 1 problem testing chain rule with trigonometric functions',
+      'Calculus I',
+      'Differentiation',
+      'user-123',
+      'course-456'
+    );
+
+    assert.ok(result.data, 'Should return data array');
+    assert.equal(result.data.length, 1, 'Should have 1 practice problem');
+    
+    const problem = result.data[0];
+    assert.ok(problem.question.includes('sin'), 'Question should reference trigonometric function');
+    assert.equal(problem.difficulty, 'Hard', 'Difficulty should be Hard');
+    assert.ok(Array.isArray(problem.topic_tags), 'Should have topic tags array');
+    
+    // Verify rubric structure
+    assert.ok(problem.rubric, 'Should have rubric');
+    assert.equal(problem.rubric.total_points, 10, 'Should have total points');
+    assert.ok(Array.isArray(problem.rubric.grading_criteria), 'Should have grading criteria array');
+    assert.ok(problem.rubric.grading_criteria.length >= 2, 'Should have multiple grading criteria');
+    
+    // Verify sample answer structure
+    assert.ok(problem.sample_answer, 'Should have sample answer');
+    assert.ok(Array.isArray(problem.sample_answer.solution_steps), 'Should have solution steps');
+    assert.ok(problem.sample_answer.final_answer, 'Should have final answer');
+    
+    // Verify validation was performed
+    assert.ok(problem._validated, 'Problem should be marked as validated');
+    assert.equal(problem._validationConfidence, 'high', 'Should have high confidence');
+    
+    // Verify stats
+    assert.ok(result.stats, 'Should have stats');
+    assert.ok(result.stats.validation, 'Should have validation stats');
+    assert.equal(result.stats.validation.verified, 1, 'Should have verified 1 problem');
+    
+    assert.ok(callCount >= 2, 'Should have made at least 2 LLM calls (generation + validation)');
+  } finally {
+    __resetGrokExecutor();
+  }
+});
+
+test('generatePracticeProblems corrects problems when validation fails', async () => {
+  let callCount = 0;
+  
+  __setGrokExecutor(async ({ messages, source }) => {
+    callCount++;
+    
+    // Initial generation with an intentional error
+    if (source === 'practice_problems_generation') {
+      return {
+        content: JSON.stringify({
+          practice_problems: [
+            {
+              question: 'What is 2 + 2?',
+              estimated_minutes: 15,
+              difficulty: 'Hard',
+              topic_tags: ['arithmetic'],
+              rubric: {
+                total_points: 10,
+                grading_criteria: [
+                  { criterion: 'Correct answer', points: 10, common_errors: [] }
+                ],
+                partial_credit_policy: 'All or nothing'
+              },
+              sample_answer: {
+                solution_steps: ['Add the numbers'],
+                final_answer: '5', // WRONG - should be 4
+                key_insights: [],
+                alternative_approaches: []
+              }
+            }
+          ]
+        })
+      };
+    }
+    
+    // Validation detects the error
+    if (source === 'practice_problem_validation') {
+      return {
+        content: JSON.stringify({
+          my_solution: {
+            approach: 'Simple addition',
+            steps: ['2 + 2 = 4'],
+            final_answer: '4'
+          },
+          comparison: {
+            answers_match: false,
+            my_answer_is_correct: true,
+            provided_answer_is_correct: false,
+            discrepancy_explanation: 'The provided answer says 5 but 2+2=4'
+          },
+          rubric_evaluation: {
+            is_fair: true,
+            covers_all_steps: true,
+            points_are_reasonable: true,
+            issues: []
+          },
+          overall_assessment: {
+            is_correct: false,
+            confidence: 'high',
+            issues: ['Sample answer is incorrect: 2+2=4, not 5'],
+            recommendations: ['Fix the final answer to 4']
+          }
+        })
+      };
+    }
+    
+    // Correction call
+    if (source === 'practice_problem_correction') {
+      return {
+        content: JSON.stringify({
+          question: 'What is 2 + 2?',
+          estimated_minutes: 15,
+          difficulty: 'Hard',
+          topic_tags: ['arithmetic'],
+          rubric: {
+            total_points: 10,
+            grading_criteria: [
+              { criterion: 'Correct answer', points: 10, common_errors: ['Adding incorrectly'] }
+            ],
+            partial_credit_policy: 'All or nothing'
+          },
+          sample_answer: {
+            solution_steps: ['2 + 2 = 4'],
+            final_answer: '4', // CORRECTED
+            key_insights: ['Basic addition'],
+            alternative_approaches: []
+          }
+        })
+      };
+    }
+    
+    return { content: '{}' };
+  });
+
+  try {
+    const result = await generatePracticeProblems(
+      'Basic Math',
+      'Simple arithmetic problem',
+      'Math 101',
+      'Fundamentals',
+      'user-123',
+      'course-456'
+    );
+
+    assert.ok(result.data, 'Should return data array');
+    assert.equal(result.data.length, 1, 'Should have 1 practice problem');
+    
+    const problem = result.data[0];
+    assert.equal(problem.sample_answer.final_answer, '4', 'Answer should be corrected to 4');
+    assert.ok(problem._corrected, 'Problem should be marked as corrected');
+    assert.ok(problem._originalIssues, 'Should have original issues recorded');
+    
+    // Verify correction stats
+    assert.equal(result.stats.validation.corrected, 1, 'Should have corrected 1 problem');
+    
+    assert.ok(callCount >= 3, 'Should have made at least 3 LLM calls (generation + validation + correction)');
+  } finally {
+    __resetGrokExecutor();
   }
 });
