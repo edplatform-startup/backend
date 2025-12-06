@@ -27,7 +27,7 @@ const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 15;
 
 // Centralized model for all content generation with reasoning
-const CONTENT_GEN_MODEL = 'google/gemini-2.5-pro';
+const CONTENT_GEN_MODEL = 'google/gemini-3-pro-preview';
 const CONTENT_REASONING = { enabled: true, effort: 'high' };
 
 /**
