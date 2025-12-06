@@ -15,7 +15,7 @@ const { courseV2Models = {} } = runtimeConfig;
 const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-3-pro-preview';
 const topicsModel =
   courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'google/gemini-3-pro-preview';
-const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
+const lessonArchitectModel = 'google/gemini-3-pro-preview';
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
 const topicTopPRaw = process.env.TOPIC_MODEL_TOP_P;
@@ -30,27 +30,27 @@ const DEFAULTS = {
     top_p: Number.isFinite(topicTopP) ? topicTopP : 0.6,
   },
   [STAGES.LESSON_ARCHITECT]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: lessonArchitectModel,
     temp: 0.3,
     top_p: 0.8,
   },
   [STAGES.PLAN_VERIFIER]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.2,
     top_p: 0.6,
   },
   [STAGES.EXAM_GENERATOR]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.4,
     top_p: 0.8,
   },
   [STAGES.EXAM_GRADER]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.2,
     top_p: 0.8,
   },
   [STAGES.VALIDATOR]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.1,
     top_p: 0.5,
   },
