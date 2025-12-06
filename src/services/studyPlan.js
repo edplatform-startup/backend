@@ -51,11 +51,11 @@ export async function generateStudyPlan(courseId, userId) {
     }
 
     // 4. Output Formatting
-    const nodesWithExams = insertPracticeExams(sortedNodes);
+    const nodesWithExams = insertPracticeExams(sortedNodes, mode);
     return formatOutput(mode, nodesWithExams, graph, hasHiddenContent);
 }
 
-function insertPracticeExams(nodes) {
+function insertPracticeExams(nodes, mode = 'Deep Study') {
     if (!nodes || nodes.length === 0) return [];
 
     // Calculate total structural cost (based on estimated minutes)
@@ -120,7 +120,8 @@ function insertPracticeExams(nodes) {
         result.push(node);
         precedingIds.push(node.id);
 
-        if (i === bestIndex) {
+        // Only add mid-course exam in Deep Study mode (skip in Cram mode)
+        if (i === bestIndex && mode !== 'Cram') {
             result.push({
                 id: 'practice-exam-mid',
                 title: 'Mid-Course Practice Exam',
