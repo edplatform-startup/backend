@@ -264,6 +264,12 @@ CRITICAL RULES:
 12. **MODE: ${mode.toUpperCase()}**:
     ${mode === 'cram' ? '- MAXIMIZE EXAM VALUE. Structure for speed. Aggressively merge and prune lessons. Generate FEWER lessons overall. Eliminate nice-to-know content. Every lesson must directly contribute to exam performance.' : '- MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Create granular, detailed lessons that explore all nuances. Ensure comprehensive coverage of edge cases, exceptions, and interconnections. Build deep, lasting knowledge that transfers beyond the exam.'}
 13. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
+14. **CONFIDENCE-BASED PRIORITIZATION:** The student has rated their confidence on source topics. Use this to allocate study time efficiently:
+    - **LOW CONFIDENCE (0.0-0.4) + HIGH EXAM VALUE (7-10):** MAXIMUM content depth. These are knowledge gaps that will cost them points. Create detailed, granular lessons with multiple content types.
+    - **LOW CONFIDENCE (0.0-0.4) + LOW EXAM VALUE (1-4):** Moderate coverage. Include but keep concise since exam ROI is lower.
+    - **HIGH CONFIDENCE (0.7-1.0) + HIGH EXAM VALUE (7-10):** Light review only. The student already knows this—just include a brief refresher or skip if time-constrained.
+    - **HIGH CONFIDENCE (0.7-1.0) + LOW EXAM VALUE (1-4):** MINIMAL or SKIP. Do not waste time on content the student already knows AND won't be tested on.
+    - In cram mode, be even MORE aggressive about skipping high-confidence content to focus on knowledge gaps.
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -294,7 +300,13 @@ Output STRICT VALID JSON format (no markdown, no comments):
     ? `\n\n### Authoritative Excerpts (from student's syllabus/exam materials):\nUse these excerpts to ground lesson structure and exam value assignments.\n\n${ragContext}`
     : '';
 
-  const userPrompt = `Rough Draft: ${JSON.stringify(grokDraftJson)}${ragContextSection}`;
+  // Build confidence map section if available
+  const confidenceEntries = Object.entries(userConfidenceMap || {});
+  const confidenceSection = confidenceEntries.length > 0
+    ? `\n\n### Student Confidence Ratings (0=no knowledge, 1=mastered):\nUse these to prioritize content—focus on LOW confidence + HIGH exam value topics.\n${confidenceEntries.map(([id, score]) => `- ${id}: ${score}`).join('\n')}`
+    : '';
+
+  const userPrompt = `Rough Draft: ${JSON.stringify(grokDraftJson)}${ragContextSection}${confidenceSection}`;
 
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
