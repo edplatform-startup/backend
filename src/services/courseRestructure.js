@@ -242,7 +242,9 @@ IMPORTANT:
   const results = [];
   const validNodeIds = new Set((nodes || []).map(n => n.id));
 
-  for (const operation of plan.operations) {
+  const CONCURRENCY_LIMIT = 20;
+
+  const opResults = await runWithConcurrency(plan.operations, CONCURRENCY_LIMIT, async (operation) => {
     try {
       switch (operation.type) {
         case 'add_module':
@@ -277,13 +279,21 @@ IMPORTANT:
         default:
           log.logOperation('unknown', { type: operation.type, status: 'skipped' });
       }
-      results.push({ operation: operation.type, status: 'completed' });
+      return { operation: operation.type, status: 'completed' };
     } catch (opError) {
       console.error(`[Restructure] Operation failed:`, operation.type, opError);
-      results.push({ operation: operation.type, status: 'failed', error: opError.message });
       log.logOperation(operation.type, { status: 'failed', error: opError.message });
+      return { operation: operation.type, status: 'failed', error: opError.message };
     }
-  }
+  });
+
+  opResults.forEach(r => {
+    if (r.status === 'fulfilled') {
+      results.push(r.value);
+    } else {
+      results.push({ operation: 'unknown', status: 'failed', error: r.reason?.message });
+    }
+  });
 
   const summary = log.getSummary();
   console.log(`[Restructure] Complete. Duration: ${summary.durationMs}ms, Operations: ${summary.operationCount}`);
@@ -304,7 +314,7 @@ async function executeAddModule(supabase, courseId, userId, courseTitle, courseM
 
   log.logOperation('add_module', { module_name, lessonCount: lessons.length });
 
-  for (const lessonSpec of lessons) {
+  await runWithConcurrency(lessons, 20, async (lessonSpec) => {
     const lessonId = uuidv4();
     
     // Generate content for the new lesson
@@ -399,7 +409,7 @@ async function executeAddModule(supabase, courseId, userId, courseTitle, courseM
         confidence_score: 0.1,
         familiarity_score: 0.1,
       });
-  }
+  });
 }
 
 /**
@@ -719,4 +729,27 @@ async function executeEditLesson(supabase, courseId, userId, courseTitle, node, 
       throw new Error(`Failed to update lesson: ${updateError.message}`);
     }
   }
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  if (!items.length) return [];
+  const results = new Array(items.length);
+  let index = 0;
+
+  async function next() {
+    const currentIndex = index;
+    index += 1;
+    if (currentIndex >= items.length) return;
+    try {
+      const value = await worker(items[currentIndex], currentIndex);
+      results[currentIndex] = { status: 'fulfilled', value };
+    } catch (error) {
+      results[currentIndex] = { status: 'rejected', reason: error };
+    }
+    return next();
+  }
+
+  const runners = Array.from({ length: Math.min(limit, items.length) }, () => next());
+  await Promise.all(runners);
+  return results;
 }

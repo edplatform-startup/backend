@@ -27,8 +27,8 @@ const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 15;
 
 // Centralized model for all content generation with reasoning
-const CONTENT_GEN_MODEL = 'google/gemini-3-pro-preview';
-const CONTENT_REASONING = { enabled: true, effort: 'high' };
+const CONTENT_GEN_MODEL = 'x-ai/grok-4.1-fast';
+const CONTENT_REASONING = { enabled: true };
 
 /**
  * Progress tracker for course generation.
