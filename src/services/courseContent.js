@@ -3756,8 +3756,10 @@ export async function generateVideoSelection(queries, userId, courseId) {
       const fetchedVideos = Array.isArray(res) ? res : (res ? [res] : []);
       return { videos: fetchedVideos, logs };
     } catch (error) {
-      const msg = `Custom YouTube fetcher failed: ${error?.message || error}`;
-      logs.push(msg);
+      const errorMsg = `Custom YouTube fetcher failed: ${error?.name || 'Error'} - ${error?.message || error}`;
+      logs.push(errorMsg);
+      logs.push(`[Video Error] Stack: ${error?.stack?.split('\n').slice(0, 3).join(' | ') || 'No stack'}`);
+      console.error('[generateVideoSelection] Custom fetcher error:', error);
       return { videos: [], logs };
     }
   }
@@ -3856,12 +3858,33 @@ Select the best video index.`
       }
 
     } catch (err) {
-      logs.push(`Error: ${err.message}`);
+      const errorDetails = {
+        attempt: attempt + 1,
+        maxRetries: maxRetries + 1,
+        query,
+        searchResultsCount: searchResults.length,
+        errorName: err.name || 'UnknownError',
+        errorMessage: err.message || 'No error message',
+        errorStack: err.stack?.split('\n').slice(0, 5).join('\n') || 'No stack trace',
+      };
+      logs.push(`[Video Error] Attempt ${errorDetails.attempt}/${errorDetails.maxRetries}: ${errorDetails.errorName} - ${errorDetails.errorMessage}`);
+      logs.push(`[Video Error] Query: "${query}", Results found: ${searchResults.length}`);
+      console.error('[generateVideoSelection] Error details:', JSON.stringify(errorDetails, null, 2));
+      
+      if (err.response) {
+        logs.push(`[Video Error] API response status: ${err.response.status || 'unknown'}`);
+      }
+      if (err.code) {
+        logs.push(`[Video Error] Error code: ${err.code}`);
+      }
     }
   }
 
   if (videos.length === 0) {
-    logs.push('Failed to select a video after retries.');
+    logs.push('[Video Error] FINAL: Failed to select a video after all retry attempts.');
+    logs.push(`[Video Error] Query attempted: "${query}"`);
+    logs.push(`[Video Error] Total search results found across attempts: ${searchResults.length}`);
+    console.warn('[generateVideoSelection] Video selection failed completely', { query, searchResultsCount: searchResults.length, logsCount: logs.length });
   }
 
   return { videos, logs };
