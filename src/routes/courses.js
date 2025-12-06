@@ -1109,7 +1109,7 @@ router.post('/', async (req, res) => {
     }
 
     const startUsage = getCostTotals();
-    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode, courseId, rag_session_id || null);
+    const { finalNodes, finalEdges } = await generateLessonGraph(grok_draft, user_confidence_map || {}, userId, normalizedMetadata.mode, courseId, rag_session_id || null, finalSecondsToComplete);
 
     const persistResult = await saveCourseStructure(courseId, userId, { finalNodes, finalEdges });
     const workerResult = await generateCourseContent(courseId);

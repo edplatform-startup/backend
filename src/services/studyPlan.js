@@ -29,14 +29,16 @@ export async function generateStudyPlan(courseId, userId) {
     const graph = buildGraph(nodes, edges);
     hydrateNodes(graph, userStateMap);
 
-    // 2. Mode Selection
-    const totalTimeNeeded = calculateTotalTimeNeeded(graph);
-    const mode = minutesAvailable >= totalTimeNeeded * 1.5 ? 'Deep Study' : 'Cram';
+    // 2. Mode Selection - Use original course mode, not calculated
+    // The mode was set when the course was generated ('deep' or 'cram')
+    const originalMode = course?.metadata?.mode?.toLowerCase() || 'deep';
+    const isCramMode = originalMode === 'cram';
+    const mode = isCramMode ? 'Cram' : 'Deep Study';
 
     // 3. Optimization Algorithms
     let sortedNodes;
     let hasHiddenContent = false;
-    if (mode === 'Deep Study') {
+    if (!isCramMode) {
         sortedNodes = runDeepStudyAlgorithm(graph);
     } else {
         sortedNodes = runCramModeAlgorithm(graph, minutesAvailable);
@@ -51,11 +53,12 @@ export async function generateStudyPlan(courseId, userId) {
     }
 
     // 4. Output Formatting
-    const nodesWithExams = insertPracticeExams(sortedNodes, mode);
+    // In cram mode, skip mid-course practice exam (only final)
+    const nodesWithExams = insertPracticeExams(sortedNodes, isCramMode);
     return formatOutput(mode, nodesWithExams, graph, hasHiddenContent);
 }
 
-function insertPracticeExams(nodes, mode = 'Deep Study') {
+function insertPracticeExams(nodes, skipMidExam = false) {
     if (!nodes || nodes.length === 0) return [];
 
     // Calculate total structural cost (based on estimated minutes)
@@ -120,8 +123,8 @@ function insertPracticeExams(nodes, mode = 'Deep Study') {
         result.push(node);
         precedingIds.push(node.id);
 
-        // Only add mid-course exam in Deep Study mode (skip in Cram mode)
-        if (i === bestIndex && mode !== 'Cram') {
+        // In cram mode, skip mid-course exam (only include final)
+        if (i === bestIndex && !skipMidExam) {
             result.push({
                 id: 'practice-exam-mid',
                 title: 'Mid-Course Practice Exam',
@@ -157,7 +160,7 @@ async function fetchData(courseId, userId) {
         supabase.schema('api').from('course_nodes').select('*').eq('course_id', courseId),
         supabase.schema('api').from('node_dependencies').select('*').eq('course_id', courseId),
         supabase.schema('api').from('user_node_state').select('*').eq('course_id', courseId).eq('user_id', userId),
-        supabase.schema('api').from('courses').select('seconds_to_complete').eq('id', courseId).single(),
+        supabase.schema('api').from('courses').select('seconds_to_complete, metadata').eq('id', courseId).single(),
     ]);
 
     if (nodesResult.error) throw new Error(`Failed to fetch nodes: ${nodesResult.error.message}`);

@@ -212,7 +212,7 @@ IMPORTANT: Maintain all existing fields and structure. Only modify what's needed
  * @param {string} [ragSessionId] - Optional RAG session ID to retrieve context.
  * @returns {Promise<{ finalNodes: any[], finalEdges: any[] }>}
  */
-export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep', courseId = null, ragSessionId = null) {
+export async function generateLessonGraph(grokDraftJson, userConfidenceMap = {}, userId, mode = 'deep', courseId = null, ragSessionId = null, secondsToComplete = null) {
 
   // Retrieve RAG context if session ID provided
   let ragContext = '';
@@ -242,27 +242,28 @@ OUTPUT: A structured JSON object containing a list of lessons with dependencies.
 
 CRITICAL RULES:
 1. **Granularity:** "Atomic" means a lesson that takes 15-45 minutes to complete. Split broad topics. Merge tiny fragments (unless foundational).
-2. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
-3. **No Cycles:** The graph must be strictly Acyclic.
-4. **Module Organization:** Aim for modules with MORE than 2 lessons whenever possible to keep content properly chunked and modularized. Single-lesson or two-lesson modules should only be used when the topic is genuinely standalone or foundational. Well-organized modules (3-6 lessons) improve learning flow and coherence.
-5. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
+2. **TIME BUDGET CONSTRAINT:** ${secondsToComplete ? `The student has **${Math.floor(secondsToComplete / 3600)} hours and ${Math.floor((secondsToComplete % 3600) / 60)} minutes** total study time available. The SUM of all lesson estimated_minutes MUST NOT exceed ${Math.floor(secondsToComplete / 60)} minutes. Plan accordingly—prioritize high-value content and be aggressive about merging or pruning low-value lessons to fit within this budget.` : 'No specific time constraint provided.'}
+3. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
+4. **No Cycles:** The graph must be strictly Acyclic.
+5. **Module Organization:** Aim for modules with MORE than 2 lessons whenever possible to keep content properly chunked and modularized. Single-lesson or two-lesson modules should only be used when the topic is genuinely standalone or foundational. Well-organized modules (3-6 lessons) improve learning flow and coherence.
+6. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
    - A lesson can have multiple readings (e.g., theory + examples + edge cases)
    - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
    - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
    - ALL content should flow in a logical learning order for maximum comprehension
    - NOTE: Do NOT include practice_problems in individual lessons. Practice problems are automatically added to Module Quizzes.
-6. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
-7. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
+7. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
+8. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** ${mode === 'cram' ? 'MAXIMIZE EXAM VALUE. Concise, laser-focused on exam-critical concepts only. Omit background context and nice-to-know details. Every sentence should directly support exam preparation.' : 'MAXIMIZE UNDERSTANDING AND RETENTION. Provide highly detailed prompts for a writer that explore all nuances, edge cases, intuitive explanations, real-world analogies (e.g., "Use a gear analogy," "Focus on formal proofs"), and interconnections between concepts. Build deep, lasting comprehension.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
    - **video:** ${mode === 'cram' ? 'MINIMIZE VIDEO COUNT. Only include if absolutely essential for a concept that cannot be understood through text. Maximum 1 high-yield search query.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). Include videos that deepen understanding beyond text. Only include if the concept benefits from visual/dynamic explanation.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
-8. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
-9. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.
-10. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
-11. **MODE: ${mode.toUpperCase()}**:
+9. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
+10. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.${secondsToComplete ? ' Also explain how you fit within the time budget.' : ''}
+11. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
+12. **MODE: ${mode.toUpperCase()}**:
     ${mode === 'cram' ? '- MAXIMIZE EXAM VALUE. Structure for speed. Aggressively merge and prune lessons. Generate FEWER lessons overall. Eliminate nice-to-know content. Every lesson must directly contribute to exam performance.' : '- MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Create granular, detailed lessons that explore all nuances. Ensure comprehensive coverage of edge cases, exceptions, and interconnections. Build deep, lasting knowledge that transfers beyond the exam.'}
-12. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
+13. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -326,6 +327,71 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   if (!lessonGraph || !Array.isArray(lessonGraph.lessons)) {
     throw new Error('Invalid response structure: missing lessons array');
+  }
+
+  // Step 1.25: Time Budget Validation
+  // Check if total estimated_minutes exceeds the user's available time
+  if (secondsToComplete) {
+    const budgetMinutes = Math.floor(secondsToComplete / 60);
+    const totalEstimatedMinutes = lessonGraph.lessons.reduce(
+      (sum, lesson) => sum + (lesson.estimated_minutes || 30), 0
+    );
+    
+    console.log(`[courseGenerator] Time budget check: ${totalEstimatedMinutes} min generated vs ${budgetMinutes} min available`);
+    
+    if (totalEstimatedMinutes > budgetMinutes) {
+      console.log(`[courseGenerator] Plan exceeds time budget by ${totalEstimatedMinutes - budgetMinutes} minutes. Asking Grok to fix...`);
+      
+      const hours = Math.floor(budgetMinutes / 60);
+      const mins = budgetMinutes % 60;
+      const repairPrompt = `Your generated course plan has a total of ${totalEstimatedMinutes} minutes, but the student only has ${hours} hours and ${mins} minutes (${budgetMinutes} minutes total) available.
+
+You MUST reduce the total estimated time to fit within ${budgetMinutes} minutes.
+
+Current lessons (${lessonGraph.lessons.length} lessons, ${totalEstimatedMinutes} minutes total):
+${lessonGraph.lessons.map(l => `- ${l.title}: ${l.estimated_minutes || 30} min`).join('\n')}
+
+Strategies to reduce time:
+1. Merge related lessons into single, more efficient lessons
+2. Remove low-value lessons (intrinsic_exam_value < 5)
+3. Reduce estimated_minutes for lessons that are currently overestimated
+4. In cram mode: aggressively cut nice-to-know content
+
+Return the FIXED lesson graph JSON with reduced total time. Maintain all required fields.
+{ "lessons": [...] }`;
+
+      try {
+        const { result: repairResult } = await llmCaller({
+          stage: STAGES.LESSON_ARCHITECT,
+          maxTokens: 20000,
+          messages: [{ role: 'user', content: repairPrompt }],
+          responseFormat: { type: 'json_object' },
+          requestTimeoutMs: 600000,
+          userId,
+          courseId,
+          source: 'lesson_architect_time_budget_repair',
+        });
+
+        const repairedGraph = tryParseJson(repairResult.content, 'LessonArchitect Time Repair');
+        if (repairedGraph?.lessons) {
+          const newTotal = repairedGraph.lessons.reduce(
+            (sum, lesson) => sum + (lesson.estimated_minutes || 30), 0
+          );
+          console.log(`[courseGenerator] Repaired plan: ${newTotal} min (was ${totalEstimatedMinutes} min)`);
+          
+          if (newTotal <= budgetMinutes) {
+            lessonGraph = repairedGraph;
+            console.log('[courseGenerator] Time budget repair successful');
+          } else {
+            console.warn(`[courseGenerator] Repair still exceeds budget (${newTotal} > ${budgetMinutes}), using original`);
+          }
+        }
+      } catch (repairError) {
+        console.warn('[courseGenerator] Time budget repair failed:', repairError.message);
+      }
+    } else {
+      console.log('[courseGenerator] Plan within time budget');
+    }
   }
 
   // Step 1.5: Plan Verification with Gemini
