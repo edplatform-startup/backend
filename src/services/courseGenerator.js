@@ -270,6 +270,14 @@ CRITICAL RULES:
     - **HIGH CONFIDENCE (0.7-1.0) + HIGH EXAM VALUE (7-10):** Light review only. The student already knows this—just include a brief refresher or skip if time-constrained.
     - **HIGH CONFIDENCE (0.7-1.0) + LOW EXAM VALUE (1-4):** MINIMAL or SKIP. Do not waste time on content the student already knows AND won't be tested on.
     - In cram mode, be even MORE aggressive about skipping high-confidence content to focus on knowledge gaps.
+15. **CREATIVE FREEDOM:** The input skeleton/modules are SUGGESTIONS, not constraints. You have full authority to:
+    - Restructure, rename, merge, or split modules as you see fit for optimal learning
+    - Reorder topics if a different sequence makes more pedagogical sense
+    - Add foundational lessons the skeleton missed but are critical for understanding
+    - Remove or deprioritize topics that are peripheral or redundant
+    - Choose your own teaching style and approach (e.g., theory-first vs. example-driven, spiral curriculum vs. linear)
+    - USE WEB SEARCH to research the subject matter thoroughly—look up the course, textbook, and topic to ensure comprehensive, accurate coverage
+    - Your goal is the BEST possible learning experience, not faithfulness to a rough draft
 
 Output STRICT VALID JSON format (no markdown, no comments):
 {
@@ -318,7 +326,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 1800000, // 30 minutes for long-running course generation
     allowWeb: true,
-    maxToolIterations: 16,
+    maxToolIterations: 32, // Increased to allow thorough web research of course content
     userId,
     courseId,
     source: 'lesson_architect',
@@ -406,30 +414,7 @@ Return the FIXED lesson graph JSON with reduced total time. Maintain all require
     }
   }
 
-  // Step 1.5: Plan Verification with Gemini
-  console.log('[courseGenerator] Verifying plan with Gemini...');
-  try {
-    const verification = await verifyCoursePlan(lessonGraph, grokDraftJson, ragContext, userId, courseId);
-    
-    if (!verification.approved && verification.suggested_changes?.length > 0) {
-      console.log('[courseGenerator] Plan needs changes:', verification.suggested_changes.length);
-      console.log('[courseGenerator] Verifier reasoning:', verification.reasoning);
-      const repairedGraph = await applyPlanRepairs(
-        lessonGraph, verification.suggested_changes, grokDraftJson, ragContext, userId, courseId
-      );
-      if (repairedGraph?.lessons) {
-        lessonGraph = repairedGraph;
-        console.log('[courseGenerator] Plan repaired successfully');
-      }
-    } else {
-      console.log('[courseGenerator] Plan approved by verifier');
-      if (verification.reasoning) {
-        console.log('[courseGenerator] Verifier reasoning:', verification.reasoning);
-      }
-    }
-  } catch (verifyError) {
-    console.warn('[courseGenerator] Verification failed, continuing with original plan:', verifyError.message);
-  }
+  // Note: Verification step removed - Gemini is now the Lesson Architect itself
 
   // Step 2: Self-Healing Validation Logic
   const validSlugs = new Set(lessonGraph.lessons.map((l) => l.slug_id));
