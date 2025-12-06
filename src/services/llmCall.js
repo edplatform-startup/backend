@@ -14,6 +14,7 @@ export async function callStageLLM({
   source,
   courseId,
   reasoning = { enabled: true, effort: 'high' },
+  responseFormat,
 }) {
   const {
     model,
@@ -51,6 +52,7 @@ export async function callStageLLM({
     requestTimeoutMs,
     plugins,
     reasoning,
+    responseFormat,
     userId,
     source: source || stage?.toLowerCase() || 'unknown',
     courseId,

@@ -139,7 +139,8 @@ export async function restructureCourse(courseId, userId, prompt, initialAffecte
   };
 
   // 2. Ask Gemini to create a restructuring plan
-  const planSystemPrompt = `You are the Course Architect (Gemini). Your job is to analyze a course restructuring request and create a detailed execution plan.
+  const planSystemPrompt = `You are the Course Architect. Your job is to analyze a course restructuring request and create a detailed execution plan.
+  RETURN JSON ONLY. DO NOT Return Markdown. DO NOT return any preamble or explanation text.
 
 Current Course: "${courseTitle}"
 Current Structure:
@@ -225,7 +226,7 @@ IMPORTANT:
       .trim();
     plan = JSON.parse(cleanJson);
   } catch (e) {
-    throw new Error(`Failed to parse Gemini restructure plan: ${e.message}`);
+    throw new Error(`Failed to parse Lesson Architect restructure plan: ${e.message}`);
   }
 
   log.logGeminiPlan(plan);

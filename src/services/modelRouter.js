@@ -30,27 +30,27 @@ const DEFAULTS = {
     top_p: Number.isFinite(topicTopP) ? topicTopP : 0.6,
   },
   [STAGES.LESSON_ARCHITECT]: {
-    model: lessonArchitectModel,
+    model: 'x-ai/grok-4.1-fast',
     temp: 0.3,
     top_p: 0.8,
   },
   [STAGES.PLAN_VERIFIER]: {
-    model: 'google/gemini-3-pro-preview',
+    model: 'x-ai/grok-4.1-fast',
     temp: 0.2,
     top_p: 0.6,
   },
   [STAGES.EXAM_GENERATOR]: {
-    model: 'google/gemini-3-pro-preview',
+    model: 'x-ai/grok-4.1-fast',
     temp: 0.4,
     top_p: 0.8,
   },
   [STAGES.EXAM_GRADER]: {
-    model: 'google/gemini-3-pro-preview',
+    model: 'x-ai/grok-4.1-fast',
     temp: 0.2,
     top_p: 0.8,
   },
   [STAGES.VALIDATOR]: {
-    model: 'google/gemini-3-pro-preview',
+    model: 'x-ai/grok-4.1-fast',
     temp: 0.1,
     top_p: 0.5,
   },
