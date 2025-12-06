@@ -513,7 +513,7 @@ export async function executeOpenRouterChat(options = {}) {
     topP,
     frequencyPenalty,
     presencePenalty,
-    maxTokens = 600,
+    maxTokens = 100000,
     reasoning,
     tools = [],
     toolChoice,
