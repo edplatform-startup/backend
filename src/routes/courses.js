@@ -600,12 +600,40 @@ router.post('/topics', async (req, res) => {
       toTrimmedString(selection.title) ||
       'Custom course';
 
+    // Upload large attachments to storage before sending to LLM
+    // This prevents OpenRouter payload size limit errors
+    const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024; // 5MB threshold
+    let processedAttachments = shared.attachments || [];
+    
+    if (processedAttachments.length > 0) {
+      const uploadResults = await Promise.all(
+        processedAttachments.map(async (att) => {
+          // Check if attachment has inline data that exceeds threshold
+          if (att.data && att.data.length > LARGE_FILE_THRESHOLD) {
+            try {
+              console.log(`[topics] Uploading large attachment: ${att.name} (${(att.data.length / 1024 / 1024).toFixed(2)} MB)`);
+              const buffer = Buffer.from(att.data, 'base64');
+              const url = await uploadTempFile(userId, buffer, att.name || 'attachment', att.mimeType || 'application/octet-stream');
+              // Return new attachment with URL instead of inline data
+              return { ...att, data: undefined, url };
+            } catch (uploadError) {
+              console.error(`[topics] Failed to upload large attachment ${att.name}:`, uploadError);
+              // Fall back to original attachment (will likely fail at OpenRouter, but at least we tried)
+              return att;
+            }
+          }
+          return att;
+        })
+      );
+      processedAttachments = uploadResults;
+    }
+
     const result = await generateHierarchicalTopics({
       university,
       courseTitle,
       syllabusText: shared.syllabusText,
       examFormatDetails: shared.examFormatDetails,
-      attachments: shared.attachments,
+      attachments: processedAttachments,
       finishByDate: shared.finishByDateIso,
       mode: req.body.mode || 'deep',
     }, shared.userId);
@@ -642,7 +670,7 @@ import { restructureCourse } from '../services/courseRestructure.js';
 import { generatePracticeExam } from '../services/examGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
-import { uploadExamFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
+import { uploadExamFile, uploadTempFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
 
 router.post('/:courseId/review-modules', async (req, res) => {
   const { courseId } = req.params;

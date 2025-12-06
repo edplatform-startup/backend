@@ -46,6 +46,53 @@ export async function uploadExamFile(courseId, userId, fileBuffer, fileName, con
 }
 
 /**
+ * Uploads a file to Supabase Storage for temporary LLM processing.
+ * Files are stored in a temp folder and signed URLs are valid for 24 hours.
+ * 
+ * @param {string} userId - The user ID (for path organization)
+ * @param {Uint8Array|Buffer} fileBuffer - The file content
+ * @param {string} fileName - The name of the file
+ * @param {string} contentType - MIME type of the file
+ * @returns {Promise<string>} The signed URL of the uploaded file
+ */
+export async function uploadTempFile(userId, fileBuffer, fileName, contentType = 'application/octet-stream') {
+  const supabase = getSupabase();
+
+  // Sanitize filename
+  const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const filePath = `${userId}/temp/${Date.now()}_${safeFileName}`;
+
+  console.log(`[storage] Uploading temp file: ${filePath} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+
+  const { data, error } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .upload(filePath, fileBuffer, {
+      contentType,
+      upsert: true
+    });
+
+  if (error) {
+    console.error('[storage] Temp file upload failed:', error);
+    throw new Error(`Failed to upload temp file: ${error.message}`);
+  }
+
+  // Get signed URL (valid for 24 hours - sufficient for LLM processing)
+  const { data: urlData, error: urlError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .createSignedUrl(filePath, 60 * 60 * 24);
+
+  if (urlError) {
+    console.error('[storage] Failed to create signed URL for temp file:', urlError);
+    throw new Error(`Failed to create signed URL: ${urlError.message}`);
+  }
+
+  console.log(`[storage] Temp file uploaded successfully: ${urlData.signedUrl.substring(0, 80)}...`);
+  return urlData.signedUrl;
+}
+
+/**
  * Deletes all files for a course from Supabase Storage.
  * 
  * @param {string} courseId - The course ID
