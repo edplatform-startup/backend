@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { getCourseExamFiles, uploadExamFile } from './storage.js';
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
+import { getSupabase } from '../supabase.js';
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -504,6 +505,26 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
   // 1. Fetch existing practice exams to determine the next number
   const existingExams = await getCourseExamFiles(courseId, userId);
 
+  // 1b. Fetch exam details from the database
+  const supabase = getSupabase();
+  let examDetails = '';
+  try {
+    const { data: courseData, error: courseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('exam_details, title')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (!courseError && courseData?.exam_details) {
+      examDetails = courseData.exam_details;
+      console.log(`[examGenerator] Found exam details for course "${courseData.title}": ${examDetails.length} chars`);
+    }
+  } catch (err) {
+    console.warn('[examGenerator] Failed to fetch exam details from database:', err.message);
+  }
+
   // Filter for exams of the same type and find the max number
   // Expected format: [timestamp]_[type]_exam_[number].pdf
   // But we also need to support the legacy format: [timestamp]_[type]_exam.pdf (treat as #1)
@@ -534,10 +555,15 @@ export async function generatePracticeExam(courseId, userId, lessons, examType) 
       mimeType: 'application/pdf',
     }));
 
+  // Build exam format context from database if available
+  const examFormatContext = examDetails
+    ? `\n\nEXAM FORMAT DETAILS (from professor/syllabus - MATCH THIS STYLE):\n${examDetails}\n`
+    : '';
+
   // 2. System & user prompts (LLM outputs ONLY the questions block)
   const systemPrompt = `
 You are an expert academic exam creator. Your task is to create a high-quality ${examType} practice exam (Exam #${nextNumber}) in LaTeX for an undergraduate course.
-
+${examFormatContext}
 ${LATEX_ENV_SPEC}
 
 ${QUESTION_BLOCK_INSTRUCTIONS}
@@ -549,7 +575,7 @@ ${lessons.map((l) => `- ${l}`).join('\n')}
 Generate the ${examType} exam questions now. Remember:
 - ONLY output the LaTeX for the questions block (no preamble, no \\documentclass, no \\begin{document}).
 - Use \\question and optional \\begin{parts}...\\part...\\end{parts}.
-- No TikZ, no graphics, only basic LaTeX constructs.
+- No TikZ, no graphics, only basic LaTeX constructs.${examDetails ? '\n- Follow the exam format details provided above (time limit, question types, point distribution, etc.).' : ''}
 `;
 
   // 3. Initial generation: questions block only
