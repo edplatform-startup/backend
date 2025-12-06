@@ -136,7 +136,7 @@ Remember to honestly assess your confidence in the answer's correctness.`
     const { content } = await grokExecutor({
       model: BATCH_VALIDATION_MODEL,
       temperature: 0.3,
-      maxTokens: 2048,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 60000,
@@ -218,7 +218,7 @@ Assess the accuracy of this question.`
     const { content } = await grokExecutor({
       model: BATCH_VALIDATION_MODEL,
       temperature: 0,
-      maxTokens: 1024,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
@@ -383,7 +383,7 @@ Return results for ALL IDs.`;
     const { content } = await grokExecutor({
       model: BATCH_VALIDATION_MODEL,
       temperature: 0.1,
-      maxTokens: 16000, // Reduced for smaller chunks
+      maxTokens: 100000, // Reduced for smaller chunks
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }

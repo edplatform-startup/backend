@@ -384,7 +384,7 @@ export async function synthesizeSyllabus({
       stage: STAGES.PLANNER,
       messages,
       allowWeb: true,
-      maxTokens: 8192,
+      maxTokens: 100000,
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 300000, // 5 minutes for PLANNER with web search
@@ -443,7 +443,7 @@ Return corrected JSON only.`,
       stage: STAGES.PLANNER,
       messages: criticMessages,
       allowWeb: false,
-      maxTokens: 8192,
+      maxTokens: 100000,
       attachments,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 300000, // 5 minutes for repair call
@@ -637,7 +637,7 @@ Using this information, produce competency-based overviewTopics with fully popul
     const { result, model } = await courseV2LLMCaller({
       stage: STAGES.TOPICS,
       messages,
-      maxTokens: 8192,
+      maxTokens: 100000,
       allowWeb: false, // Disabled web search to avoid compatibility issues with Grok
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 300000, // 5 minutes for TOPICS
@@ -678,7 +678,7 @@ Please return **only** a correct JSON object for the topic map, with no extra te
         stage: STAGES.TOPICS,
         messages: criticMessages,
         allowWeb: false,
-        maxTokens: 8192,
+        maxTokens: 100000,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 300000, // 5 minutes for topic repair
         userId,

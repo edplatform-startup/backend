@@ -146,7 +146,7 @@ Verify this plan. Use web search if needed to check accuracy.`;
 
   const { result } = await llmCaller({
     stage: STAGES.PLAN_VERIFIER,
-    maxTokens: 8000,
+    maxTokens: 100000,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -190,7 +190,7 @@ IMPORTANT: Maintain all existing fields and structure. Only modify what's needed
 
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
-    maxTokens: 20000,
+    maxTokens: 100000,
     messages: [{ role: 'user', content: repairPrompt }],
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 1800000,
@@ -318,7 +318,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
-    maxTokens: 20000,
+    maxTokens: 100000,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -383,7 +383,7 @@ Return the FIXED lesson graph JSON with reduced total time. Maintain all require
       try {
         const { result: repairResult } = await llmCaller({
           stage: STAGES.LESSON_ARCHITECT,
-          maxTokens: 20000,
+          maxTokens: 100000,
           messages: [{ role: 'user', content: repairPrompt }],
           responseFormat: { type: 'json_object' },
           requestTimeoutMs: 600000,
@@ -461,7 +461,7 @@ Example: { "bad-slug": "good-slug", "another-bad": null }`;
     try {
       const { result: repairResult } = await llmCaller({
         stage: STAGES.LESSON_ARCHITECT, // Re-use same stage/model
-        maxTokens: 8000,
+        maxTokens: 100000,
         messages: [{ role: 'user', content: repairPrompt }],
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 1800000, // 30 minutes for repair call as well
@@ -719,7 +719,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
 
   const { result } = await llmCaller({
     stage: STAGES.LESSON_ARCHITECT,
-    maxTokens: 10000,
+    maxTokens: 100000,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },

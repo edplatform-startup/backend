@@ -887,7 +887,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
       const { content } = await grokExecutor({
         model: CONTENT_GEN_MODEL,
         temperature: 0.2,
-        maxTokens: 2048,
+        maxTokens: 100000,
         messages: [
           { role: 'system', content: 'You are a JSON repair assistant. Fix the provided broken JSON objects based on the error messages. Return a JSON object with a key "repaired_items" containing the array of fixed objects.' },
           { role: 'user', content: prompt }
@@ -1318,7 +1318,7 @@ Example:
     const response = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.3,
-      maxTokens: 1024,
+      maxTokens: 100000,
       messages: [systemPrompt, userPrompt],
       reasoning: CONTENT_REASONING,
       userId,
@@ -1479,7 +1479,7 @@ Return JSON: { "repaired_markdown": "string" }`;
           const response = await grokExecutor({
             model: CONTENT_GEN_MODEL,
             temperature: 0.2,
-            maxTokens: 1024,
+            maxTokens: 100000,
             messages: [
               { role: 'system', content: 'You are a Markdown repair assistant. Return JSON with "repaired_markdown".' },
               { role: 'user', content: repairPrompt([validatedMd], [formatCheck.error]) }
@@ -1533,7 +1533,7 @@ async function validateMermaidBlock(code, userId, courseId) {
     const response = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.1,
-      maxTokens: 512,
+      maxTokens: 100000,
       messages: [
         {
           role: 'system',
@@ -1572,7 +1572,7 @@ async function repairMermaidBlock(code, error, userId, courseId) {
       const response = await grokExecutor({
         model: CONTENT_GEN_MODEL,
         temperature: 0.2,
-        maxTokens: 1024,
+        maxTokens: 100000,
         messages: [
           {
             role: 'system',
@@ -1673,7 +1673,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.35,
-      maxTokens: 8192,
+      maxTokens: 100000,
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
@@ -1874,7 +1874,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
   const { content } = await grokExecutor({
     model: CONTENT_GEN_MODEL,
     temperature: 0.2,
-    maxTokens: 4096,
+    maxTokens: 100000,
     messages,
     requestTimeoutMs: 120000,
     reasoning: CONTENT_REASONING,
@@ -2135,7 +2135,7 @@ Each problem should require 10-20 minutes, test deep understanding, include conf
   const { content } = await grokExecutor({
     model: CONTENT_GEN_MODEL,
     temperature: 0.25,
-    maxTokens: 8192,
+    maxTokens: 100000,
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 180000,
@@ -2412,7 +2412,7 @@ Please independently solve this problem and validate the provided solution and r
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0,
-      maxTokens: 4096,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
@@ -2498,7 +2498,7 @@ Please correct the problem to address these issues. Ensure the sample answer is 
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.2,
-      maxTokens: 4096,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 90000,
@@ -2556,7 +2556,7 @@ Return ONLY the CSV with header row. No markdown fences.`,
   const { content } = await grokExecutor({
     model: CONTENT_GEN_MODEL,
     temperature: 0.25,
-    maxTokens: 1024,
+    maxTokens: 100000,
     messages,
     requestTimeoutMs: 120000,
     reasoning: CONTENT_REASONING,
@@ -2678,7 +2678,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.35,
-      maxTokens: 32000, // Large limit for multiple readings
+      maxTokens: 100000, // Large limit for multiple readings
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 300000, // 5 minutes for batch
       reasoning: CONTENT_REASONING,
@@ -2787,7 +2787,7 @@ Generate questions for ALL ${lessons.length} lessons.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.2,
-      maxTokens: 16000,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
@@ -2906,7 +2906,7 @@ Generate flashcards for ALL ${lessons.length} lessons.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.25,
-      maxTokens: 8000,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
@@ -3032,7 +3032,7 @@ Generate questions for ALL ${lessons.length} lessons.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.3,
-      maxTokens: 16000,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
@@ -3220,7 +3220,7 @@ Select ONE video per lesson.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.1,
-      maxTokens: 2000,
+      maxTokens: 100000,
       messages,
       requestTimeoutMs: 300000, // 5 minutes for batch video selection
       reasoning: CONTENT_REASONING,
@@ -3500,7 +3500,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.3,
-      maxTokens: 8192,
+      maxTokens: 100000,
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
@@ -3600,7 +3600,7 @@ Rules:
   const { content } = await grokExecutor({
     model: CONTENT_GEN_MODEL,
     temperature: 0.2,
-    maxTokens: 2048,
+    maxTokens: 100000,
     messages,
     requestTimeoutMs: 120000,
     reasoning: CONTENT_REASONING,
@@ -3692,7 +3692,7 @@ Rules:
   const { content } = await grokExecutor({
     model: CONTENT_GEN_MODEL,
     temperature: 0.25,
-    maxTokens: 1024,
+    maxTokens: 100000,
     messages,
     requestTimeoutMs: 120000,
     reasoning: CONTENT_REASONING,
@@ -3826,7 +3826,7 @@ Select the best video index.`
       const response = await grokExecutor({
         model: CONTENT_GEN_MODEL,
         temperature: 0.1,
-        maxTokens: 256,
+        maxTokens: 100000,
         messages,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
@@ -4040,7 +4040,7 @@ ${context}`
       model: modelConfig.model,
       temperature: modelConfig.temperature,
       top_p: modelConfig.top_p,
-      maxTokens: 8192, // Allow enough space for full rewrite
+      maxTokens: 100000, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
       reasoning: CONTENT_REASONING,
@@ -4350,7 +4350,7 @@ Provide substantive explanations for each missing option. For the correct answer
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0.3,
-      maxTokens: 1024,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
@@ -4445,7 +4445,7 @@ Analyze this question and determine the correct answer. Show your reasoning.`
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0, // Use temperature 0 for deterministic verification
-      maxTokens: 1024,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
@@ -4545,7 +4545,7 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
       temperature: 0,
-      maxTokens: 1500,
+      maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 45000,
