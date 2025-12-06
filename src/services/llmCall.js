@@ -13,7 +13,7 @@ export async function callStageLLM({
   userId,
   source,
   courseId,
-  reasoning = 'high',
+  reasoning = { enabled: true, effort: 'high' },
 }) {
   const {
     model,

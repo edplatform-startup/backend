@@ -26,6 +26,10 @@ const COURSE_STATUS_READY = 'ready';
 const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 15;
 
+// Centralized model for all content generation with reasoning
+const CONTENT_GEN_MODEL = 'google/gemini-2.5-pro';
+const CONTENT_REASONING = { enabled: true, effort: 'high' };
+
 /**
  * Progress tracker for course generation.
  * Tracks progress through phases and logs with percentage prefixes.
@@ -881,7 +885,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
 
     try {
       const { content } = await grokExecutor({
-        model: 'x-ai/grok-4.1-fast',
+        model: CONTENT_GEN_MODEL,
         temperature: 0.2,
         maxTokens: 2048,
         messages: [
@@ -890,7 +894,7 @@ async function repairContentArray(items, validator, repairPromptBuilder, label, 
         ],
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 600000, // 10 minutes - repair may need time for complex content
-        reasoning: { enabled: true },
+        reasoning: CONTENT_REASONING,
         userId,
         source: 'content_repair',
         courseId,
@@ -1312,11 +1316,11 @@ Example:
 
   try {
     const response = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.3,
       maxTokens: 1024,
       messages: [systemPrompt, userPrompt],
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'inline_question',
       courseId,
@@ -1473,7 +1477,7 @@ Return JSON: { "repaired_markdown": "string" }`;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const response = await grokExecutor({
-            model: 'x-ai/grok-4.1-fast',
+            model: CONTENT_GEN_MODEL,
             temperature: 0.2,
             maxTokens: 1024,
             messages: [
@@ -1481,7 +1485,7 @@ Return JSON: { "repaired_markdown": "string" }`;
               { role: 'user', content: repairPrompt([validatedMd], [formatCheck.error]) }
             ],
             responseFormat: { type: 'json_object' },
-            reasoning: { enabled: true },
+            reasoning: CONTENT_REASONING,
             userId,
             source: 'inline_question_repair',
             courseId,
@@ -1527,7 +1531,7 @@ Return JSON: { "repaired_markdown": "string" }`;
 async function validateMermaidBlock(code, userId, courseId) {
   try {
     const response = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.1,
       maxTokens: 512,
       messages: [
@@ -1541,7 +1545,7 @@ Do not fix the code, just validate it.`
         { role: 'user', content: code }
       ],
       responseFormat: { type: 'json_object' },
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'mermaid_validation',
       courseId,
@@ -1566,7 +1570,7 @@ async function repairMermaidBlock(code, error, userId, courseId) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const response = await grokExecutor({
-        model: 'x-ai/grok-4.1-fast',
+        model: CONTENT_GEN_MODEL,
         temperature: 0.2,
         maxTokens: 1024,
         messages: [
@@ -1582,7 +1586,7 @@ Ensure the code is valid Mermaid syntax. Do not include markdown fences in the s
           }
         ],
         responseFormat: { type: 'json_object' },
-        reasoning: { enabled: true },
+        reasoning: CONTENT_REASONING,
         userId,
         source: 'mermaid_repair',
         courseId,
@@ -1667,13 +1671,13 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
 
   const renderResponse = async (promptMessages) => {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.35,
       maxTokens: 8192,
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'reading_generation',
       courseId,
@@ -1868,12 +1872,12 @@ Return ONLY the CSV with header row. No markdown fences.`,
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4.1-fast',
+    model: CONTENT_GEN_MODEL,
     temperature: 0.2,
     maxTokens: 4096,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: { enabled: true },
+    reasoning: CONTENT_REASONING,
     userId,
     source: 'quiz_generation',
     courseId,
@@ -2129,13 +2133,13 @@ Each problem should require 10-20 minutes, test deep understanding, include conf
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4.1-fast',
+    model: CONTENT_GEN_MODEL,
     temperature: 0.25,
     maxTokens: 8192,
     messages,
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 180000,
-    reasoning: { enabled: true },
+    reasoning: CONTENT_REASONING,
     userId,
     source: 'practice_problems_generation',
     courseId,
@@ -2406,13 +2410,13 @@ Please independently solve this problem and validate the provided solution and r
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0,
       maxTokens: 4096,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'practice_problem_validation',
       courseId,
@@ -2492,13 +2496,13 @@ Please correct the problem to address these issues. Ensure the sample answer is 
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.2,
       maxTokens: 4096,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 90000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'practice_problem_correction',
       courseId,
@@ -2550,12 +2554,12 @@ Return ONLY the CSV with header row. No markdown fences.`,
     },
   ];
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4.1-fast',
+    model: CONTENT_GEN_MODEL,
     temperature: 0.25,
     maxTokens: 1024,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: { enabled: true },
+    reasoning: CONTENT_REASONING,
     userId,
     source: 'flashcards_generation',
     courseId,
@@ -2672,12 +2676,12 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.35,
       maxTokens: 32000, // Large limit for multiple readings
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 300000, // 5 minutes for batch
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'batch_reading_generation',
       courseId,
@@ -2781,13 +2785,13 @@ Generate questions for ALL ${lessons.length} lessons.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.2,
       maxTokens: 16000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'batch_quiz_generation',
       courseId,
@@ -2900,13 +2904,13 @@ Generate flashcards for ALL ${lessons.length} lessons.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.25,
       maxTokens: 8000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'batch_flashcards_generation',
       courseId,
@@ -3026,13 +3030,13 @@ Generate questions for ALL ${lessons.length} lessons.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.3,
       maxTokens: 16000,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'batch_inline_questions',
       courseId,
@@ -3214,12 +3218,12 @@ Select ONE video per lesson.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.1,
       maxTokens: 2000,
       messages,
       requestTimeoutMs: 300000, // 5 minutes for batch video selection
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'batch_video_selection',
       courseId,
@@ -3494,13 +3498,13 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
 
   const renderResponse = async (promptMessages) => {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.3,
       maxTokens: 8192,
       messages: promptMessages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 120000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'reading_regeneration',
       courseId,
@@ -3594,12 +3598,12 @@ Rules:
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4.1-fast',
+    model: CONTENT_GEN_MODEL,
     temperature: 0.2,
     maxTokens: 2048,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: { enabled: true },
+    reasoning: CONTENT_REASONING,
     userId,
     source: 'quiz_regeneration',
     courseId,
@@ -3686,12 +3690,12 @@ Rules:
   ];
 
   const { content } = await grokExecutor({
-    model: 'x-ai/grok-4.1-fast',
+    model: CONTENT_GEN_MODEL,
     temperature: 0.25,
     maxTokens: 1024,
     messages,
     requestTimeoutMs: 120000,
-    reasoning: { enabled: true },
+    reasoning: CONTENT_REASONING,
     userId,
     source: 'flashcards_regeneration',
     courseId,
@@ -3820,13 +3824,13 @@ Select the best video index.`
       ];
 
       const response = await grokExecutor({
-        model: 'x-ai/grok-4.1-fast',
+        model: CONTENT_GEN_MODEL,
         temperature: 0.1,
         maxTokens: 256,
         messages,
         responseFormat: { type: 'json_object' },
         requestTimeoutMs: 30000,
-        reasoning: { enabled: true },
+        reasoning: CONTENT_REASONING,
         userId,
         source: 'video_selection',
         courseId,
@@ -4039,7 +4043,7 @@ ${context}`
       maxTokens: 8192, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 120000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: `validation_${contentType}`,
       courseId,
@@ -4344,7 +4348,7 @@ Provide substantive explanations for each missing option. For the correct answer
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0.3,
       maxTokens: 1024,
       messages,
@@ -4439,13 +4443,13 @@ Analyze this question and determine the correct answer. Show your reasoning.`
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0, // Use temperature 0 for deterministic verification
       maxTokens: 1024,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 30000,
-      reasoning: { enabled: true }, // High reasoning for careful analysis
+      reasoning: CONTENT_REASONING, // High reasoning for careful analysis
       userId,
       source: 'self_consistency_check',
       courseId,
@@ -4539,13 +4543,13 @@ Carefully analyze this dispute and determine the definitively correct answer. Pr
 
   try {
     const { content } = await grokExecutor({
-      model: 'x-ai/grok-4.1-fast',
+      model: CONTENT_GEN_MODEL,
       temperature: 0,
       maxTokens: 1500,
       messages,
       responseFormat: { type: 'json_object' },
       requestTimeoutMs: 45000,
-      reasoning: { enabled: true },
+      reasoning: CONTENT_REASONING,
       userId,
       source: 'answer_reconciliation',
       courseId,

@@ -12,9 +12,9 @@ export const STAGES = Object.freeze({
 
 const { courseV2Models = {} } = runtimeConfig;
 
-const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'x-ai/grok-4.1-fast';
+const plannerModel = courseV2Models.syllabus || process.env.MODEL_PLANNER || 'google/gemini-2.5-pro';
 const topicsModel =
-  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'x-ai/grok-4.1-fast';
+  courseV2Models.topics || process.env.MODEL_TOPICS || process.env.TOPIC_MODEL || 'google/gemini-2.5-pro';
 const lessonArchitectModel = process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview';
 
 const topicTempRaw = process.env.TOPIC_MODEL_TEMP;
@@ -45,12 +45,12 @@ const DEFAULTS = {
     top_p: 0.8,
   },
   [STAGES.EXAM_GRADER]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-2.5-pro',
     temp: 0.2,
     top_p: 0.8,
   },
   [STAGES.VALIDATOR]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-2.5-pro',
     temp: 0.1,
     top_p: 0.5,
   },

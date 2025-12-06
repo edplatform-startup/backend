@@ -1,7 +1,7 @@
 import { runtimeConfig } from '../config/env.js';
 
 const DEFAULT_CHAT_ENDPOINT = process.env.OPENROUTER_CHAT_URL || 'https://openrouter.ai/api/v1/chat/completions';
-const DEFAULT_MODEL = 'x-ai/grok-4.1-fast';
+const DEFAULT_MODEL = 'google/gemini-2.5-pro';
 const DEFAULT_MAX_TOOL_ITERATIONS = 1;
 const MAX_TOTAL_CALLS = 6;
 const TOOL_RESULT_CHAR_LIMIT = 2000;
@@ -864,6 +864,7 @@ function getPriceForModel(model) {
   const envMap = runtimeConfig.openrouterPriceMap;
   const defaultMap = {
     'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
+    'google/gemini-2.5-pro': { in: 0.00125, out: 0.005 },
     'x-ai/grok-4.1-fast': { in: 0.0002, out: 0.0005 },
     'google/gemini-3-pro-preview': { in: 0.002, out: 0.012 },
     'google/gemini-2.5-flash': { in: 0.0006, out: 0.0018 },
