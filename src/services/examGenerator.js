@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { getCourseExamFiles, uploadExamFile } from './storage.js';
 import { callStageLLM } from './llmCall.js';
 import { STAGES } from './modelRouter.js';
-import { getSupabase } from '../supabase.js';
+import { getSupabase } from '../supabaseClient.js';
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
