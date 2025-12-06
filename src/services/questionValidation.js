@@ -512,7 +512,16 @@ Return results for ALL IDs.`;
 
   console.log(`[validateCourseContent] Validation complete. Valid: ${validCount}, Fixed: ${fixedCount}, Discarded: ${discardedCount}`);
 
-  return allGeneratedContent;
+  return {
+    validatedItems: allGeneratedContent,
+    stats: {
+      validated: itemsToValidate.length,
+      skippedHighConfidence,
+      valid: validCount,
+      fixed: fixedCount,
+      failed: discardedCount
+    }
+  };
 }
 
 export { CONFIDENCE_THRESHOLD };
