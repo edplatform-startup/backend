@@ -11,8 +11,8 @@ const app = express();
 
 app.use(cors());
 // Increase JSON and URL-encoded body limits to support inline files and rich context
-app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '1gb' }));
-app.use(express.urlencoded({ extended: true, limit: process.env.REQUEST_BODY_LIMIT || '1gb' }));
+app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '10gb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.REQUEST_BODY_LIMIT || '10gb' }));
 app.use(morgan('dev'));
 
 // Public endpoints (no auth required)
