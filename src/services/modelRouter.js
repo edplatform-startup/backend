@@ -4,6 +4,7 @@ export const STAGES = Object.freeze({
   PLANNER: 'PLANNER',
   TOPICS: 'TOPICS',
   LESSON_ARCHITECT: 'LESSON_ARCHITECT',
+  PLAN_VERIFIER: 'PLAN_VERIFIER',
   EXAM_GENERATOR: 'EXAM_GENERATOR',
   EXAM_GRADER: 'EXAM_GRADER',
   VALIDATOR: 'VALIDATOR',
@@ -32,6 +33,11 @@ const DEFAULTS = {
     model: lessonArchitectModel,
     temp: 0.3,
     top_p: 0.8,
+  },
+  [STAGES.PLAN_VERIFIER]: {
+    model: 'google/gemini-3-pro-preview',
+    temp: 0.2,
+    top_p: 0.6,
   },
   [STAGES.EXAM_GENERATOR]: {
     model: 'google/gemini-3-pro-preview',

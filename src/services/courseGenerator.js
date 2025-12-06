@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import stringSimilarity from 'string-similarity';
 import { callStageLLM as defaultLLMCaller } from './llmCall.js';
 import { retrieveContext } from '../rag/index.js';
+import { createWebSearchTool, createBrowsePageTool } from './grokClient.js';
 
 // RAG configuration
 const RAG_TOP_K = parseInt(process.env.RAG_TOP_K, 10) || 5;
@@ -90,6 +91,115 @@ export function __clearRagContextRetriever() {
 
 async function retrieveContextWrapper(opts) {
   return customRagContextRetriever ? customRagContextRetriever(opts) : retrieveContext(opts);
+}
+
+/**
+ * Verify the course plan using Gemini with web search.
+ * @param {Object} lessonGraph - The generated lesson graph
+ * @param {Object} grokDraftJson - Original course draft
+ * @param {string} ragContext - RAG context if available
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<{approved: boolean, reasoning: string, suggested_changes: Array}>}
+ */
+async function verifyCoursePlan(lessonGraph, grokDraftJson, ragContext, userId, courseId) {
+  const lessonsSummary = lessonGraph.lessons.map(l => 
+    `- ${l.title} (${l.module_group}): ${(l.content_plans?.reading || '').slice(0, 100)}...`
+  ).join('\n');
+
+  const systemPrompt = `You are a Course Plan Verifier. Your role is to verify a course plan for accuracy.
+
+You have access to web search tools. Use them to verify:
+1. The lesson topics are factually accurate for the subject
+2. Prerequisites/dependencies are in the correct order
+3. Content is appropriate for the course level
+4. No critical topics are missing based on the original draft
+
+OUTPUT FORMAT (JSON):
+{
+  "approved": true/false,
+  "reasoning": "Your analysis of the plan",
+  "suggested_changes": [
+    {
+      "lesson_slug": "slug-id",
+      "change_type": "modify|add|remove",
+      "description": "What to change and why"
+    }
+  ]
+}
+
+If approved=true, suggested_changes should be empty.`;
+
+  const userPrompt = `## Original Course Draft:
+${JSON.stringify(grokDraftJson, null, 2)}
+
+${ragContext ? `## Reference Materials:\n${ragContext}\n` : ''}
+## Generated Lesson Plan:
+${lessonsSummary}
+
+Full plan: ${JSON.stringify(lessonGraph.lessons.map(l => ({
+  slug_id: l.slug_id, title: l.title, module_group: l.module_group,
+  dependencies: l.dependencies, bloom_level: l.bloom_level
+})), null, 2)}
+
+Verify this plan. Use web search if needed to check accuracy.`;
+
+  const { result } = await llmCaller({
+    stage: STAGES.PLAN_VERIFIER,
+    maxTokens: 8000,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    responseFormat: { type: 'json_object' },
+    allowWeb: true,
+    maxToolIterations: 8,
+    requestTimeoutMs: 600000,
+    reasoning: { enabled: true, effort: 'high' },
+    userId,
+    courseId,
+    source: 'plan_verifier',
+  });
+
+  return tryParseJson(result.content, 'PlanVerifier');
+}
+
+/**
+ * Apply suggested repairs from the verifier.
+ * @param {Object} lessonGraph - Current lesson graph
+ * @param {Array} suggestedChanges - Suggested changes from verifier
+ * @param {Object} grokDraftJson - Original draft
+ * @param {string} ragContext - RAG context
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Object>} - Repaired lesson graph
+ */
+async function applyPlanRepairs(lessonGraph, suggestedChanges, grokDraftJson, ragContext, userId, courseId) {
+  const repairPrompt = `You are the Lesson Architect. A verifier has identified issues with your plan.
+
+## Suggested Changes:
+${JSON.stringify(suggestedChanges, null, 2)}
+
+## Current Plan:
+${JSON.stringify(lessonGraph.lessons, null, 2)}
+
+Apply these changes to fix the plan. Return the corrected JSON:
+{ "lessons": [...] }
+
+IMPORTANT: Maintain all existing fields and structure. Only modify what's needed.`;
+
+  const { result } = await llmCaller({
+    stage: STAGES.LESSON_ARCHITECT,
+    maxTokens: 20000,
+    messages: [{ role: 'user', content: repairPrompt }],
+    responseFormat: { type: 'json_object' },
+    requestTimeoutMs: 1800000,
+    userId,
+    courseId,
+    source: 'lesson_architect_verification_repair',
+  });
+
+  return tryParseJson(result.content, 'LessonArchitect Verification Repair');
 }
 
 /**
@@ -218,6 +328,30 @@ Output STRICT VALID JSON format (no markdown, no comments):
     throw new Error('Invalid response structure: missing lessons array');
   }
 
+  // Step 1.5: Plan Verification with Gemini
+  console.log('[courseGenerator] Verifying plan with Gemini...');
+  try {
+    const verification = await verifyCoursePlan(lessonGraph, grokDraftJson, ragContext, userId, courseId);
+    
+    if (!verification.approved && verification.suggested_changes?.length > 0) {
+      console.log('[courseGenerator] Plan needs changes:', verification.suggested_changes.length);
+      console.log('[courseGenerator] Verifier reasoning:', verification.reasoning);
+      const repairedGraph = await applyPlanRepairs(
+        lessonGraph, verification.suggested_changes, grokDraftJson, ragContext, userId, courseId
+      );
+      if (repairedGraph?.lessons) {
+        lessonGraph = repairedGraph;
+        console.log('[courseGenerator] Plan repaired successfully');
+      }
+    } else {
+      console.log('[courseGenerator] Plan approved by verifier');
+      if (verification.reasoning) {
+        console.log('[courseGenerator] Verifier reasoning:', verification.reasoning);
+      }
+    }
+  } catch (verifyError) {
+    console.warn('[courseGenerator] Verification failed, continuing with original plan:', verifyError.message);
+  }
 
   // Step 2: Self-Healing Validation Logic
   const validSlugs = new Set(lessonGraph.lessons.map((l) => l.slug_id));

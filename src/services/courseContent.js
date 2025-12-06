@@ -1512,7 +1512,8 @@ Return JSON: { "repaired_markdown": "string" }`;
     // --- CONTENT VALIDATION STEP ---
     // SKIPPED: Validation is now done in batch after course generation
 
-    return validatedMd;
+    // Apply LaTeX validation to final markdown
+    return validateAndRepairLatex(validatedMd);
   } catch (error) {
     return null;
   }
@@ -1814,8 +1815,11 @@ function cleanupMarkdown(md) {
   out = out.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
   // Trim trailing spaces on each line
   out = out.split('\n').map((l) => l.replace(/\s+$/, '')).join('\n');
+  // Apply LaTeX validation/repair to fix common LLM-generated LaTeX issues
+  out = validateAndRepairLatex(out);
   return out.trim();
 }
+
 
 export async function generateQuiz(title, plan, courseName, moduleName, prereqs = [], mode = 'deep', userId, courseId) {
   const contextNote = prereqs.length
@@ -2249,7 +2253,7 @@ function normalizePracticeProblem(item, index) {
   }
 
   return {
-    question,
+    question: validateAndRepairLatex(question),
     estimated_minutes: estimatedMinutes,
     difficulty,
     topic_tags: topicTags,
@@ -2259,12 +2263,15 @@ function normalizePracticeProblem(item, index) {
       partial_credit_policy: partialCreditPolicy
     },
     sample_answer: {
-      solution_steps: solutionSteps.filter(s => typeof s === 'string' && s.trim()),
-      final_answer: finalAnswer,
+      solution_steps: solutionSteps
+        .filter(s => typeof s === 'string' && s.trim())
+        .map(s => validateAndRepairLatex(s)),
+      final_answer: validateAndRepairLatex(finalAnswer),
       key_insights: keyInsights.filter(i => typeof i === 'string'),
       alternative_approaches: alternativeApproaches.filter(a => typeof a === 'string')
     }
   };
+
 }
 
 /**
@@ -3049,10 +3056,13 @@ Generate questions for ALL ${lessons.length} lessons.`
       if (Array.isArray(questions) && questions.length > 0) {
         // Convert each question to markdown
         const markdownQuestions = questions.map(q => {
-          let md = `\n\n**Check Your Understanding**\n\n${q.question}\n\n`;
+          // Apply LaTeX validation to question content
+          const validatedQuestion = validateAndRepairLatex(q.question || '');
+          let md = `\n\n**Check Your Understanding**\n\n${validatedQuestion}\n\n`;
           (q.options || []).forEach((opt, i) => {
             const letter = ['A', 'B', 'C', 'D'][i];
-            md += `- ${letter}. ${String(opt).trim()}\n`;
+            const validatedOpt = validateAndRepairLatex(String(opt).trim());
+            md += `- ${letter}. ${validatedOpt}\n`;
           });
 
           const answerIndex = typeof q.correct_index === 'number' ? q.correct_index : 0;
@@ -3062,7 +3072,8 @@ Generate questions for ALL ${lessons.length} lessons.`
             const letter = ['A', 'B', 'C', 'D'][i];
             const isCorrect = i === answerIndex;
             const icon = isCorrect ? '✅' : '❌';
-            return `- **${letter}** ${icon} ${explanations[i] || 'No explanation.'}`;
+            const validatedExp = validateAndRepairLatex(explanations[i] || 'No explanation.');
+            return `- **${letter}** ${icon} ${validatedExp}`;
           }).join('\n');
 
           md += `\n<details><summary>Show Answer</summary>\n\n**Answer:** ${correctLetter}\n\n${explanationList}\n</details>\n`;
