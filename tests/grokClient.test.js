@@ -76,7 +76,7 @@ test('executeOpenRouterChat logs token-limit error with stage and model', async 
     let threw = false;
     try {
       await (await import('../src/services/grokClient.js')).executeOpenRouterChat({
-        model: 'x-ai/grok-4.1-fast',
+        model: 'google/gemini-3-pro-preview',
         maxTokens: 200,
         messages: [{ role: 'user', content: 'Test' }],
         stage: 'TEST:STAGE',

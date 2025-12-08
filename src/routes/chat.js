@@ -57,8 +57,8 @@ router.post('/', async (req, res) => {
   }
 
   // Log chat usage
-  await logUsageEvent(userId, 'chat_used', { 
-    promptChars: user?.length || 0, 
+  await logUsageEvent(userId, 'chat_used', {
+    promptChars: user?.length || 0,
     useWebSearch,
     courseId: courseId || null
   });
@@ -78,7 +78,7 @@ router.post('/', async (req, res) => {
     const shouldRequestJson = responseFormat === 'json' && !useWebSearch && tools.length === 0;
     const result = await executeOpenRouterChat({
       messages,
-      model: 'x-ai/grok-4.1-fast',
+      model: 'google/gemini-3-pro-preview',
       temperature,
       maxTokens,
       tools,
@@ -105,7 +105,7 @@ router.post('/', async (req, res) => {
     }
 
     return res.status(200).json({
-      model: 'x-ai/grok-4.1-fast',
+      model: 'google/gemini-3-pro-preview',
       content: text,
     });
   } catch (e) {

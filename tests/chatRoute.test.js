@@ -45,12 +45,12 @@ test('POST /chat returns model and content, passes options through', async () =>
 
   const res = await request(app).post('/chat').send(body).set(authHeaders);
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.model, 'x-ai/grok-4.1-fast');
+  assert.equal(res.body.model, 'google/gemini-3-pro-preview');
   assert.equal(res.body.content, 'Hello world');
 
   // Validate payload assembly
   assert.ok(capturedOptions);
-  assert.equal(capturedOptions.model, 'x-ai/grok-4.1-fast');
+  assert.equal(capturedOptions.model, 'google/gemini-3-pro-preview');
   assert.equal(capturedOptions.temperature, 0.2);
   assert.equal(capturedOptions.maxTokens, 128);
   assert.ok(Array.isArray(capturedOptions.messages));

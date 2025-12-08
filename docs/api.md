@@ -100,7 +100,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - 200 OK → Model response (JSON):
     ```json
     {
-      "model": "x-ai/grok-4.1-fast",
+      "model": "google/gemini-3-pro-preview",
       "content": "<string>" // normalized model output (text) or serialized JSON depending on responseFormat
     }
     ```
@@ -123,7 +123,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - Response (200):
     ```json
     {
-      "model": "x-ai/grok-4.1-fast",
+      "model": "google/gemini-3-pro-preview",
       "content": "Supervised learning uses labeled data to train models, while unsupervised learning finds patterns in unlabeled data."
     }
     ```
@@ -279,7 +279,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
           ]
         }
       ],
-      "model": "x-ai/grok-4.1-fast",
+      "model": "google/gemini-3-pro-preview",
       "rag_session_id": "uuid"  // present when RAG is used; reference for subsequent calls
     }
     ```
@@ -952,7 +952,7 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
           "id": "...",
           "user_id": "...",
           "course_id": "...",
-          "model": "x-ai/grok-4.1-fast",
+          "model": "google/gemini-3-pro-preview",
           "prompt_tokens": 150,
           "completion_tokens": 50,
           "total_tokens": 200,
@@ -1295,7 +1295,7 @@ All examples below require the `Authorization: Bearer <token>` header (omitted f
 - Generate topics → `POST https://api.kognolearn.com/courses/topics`
   - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: see `/courses/topics` section.
-  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "x-ai/grok-4.1-fast" }`
+  - Response: `{ "success": true, "overviewTopics": [{"id":"overview_1","title":"...","subtopics":[...]}], "model": "google/gemini-3-pro-preview" }`
 - Persist course → `POST https://api.kognolearn.com/courses`
   - Headers: `Authorization: Bearer <supabase_jwt_token>`, `Content-Type: application/json`
   - Body: include `topics`, optional `topicFamiliarity`, and shared context fields.

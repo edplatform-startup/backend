@@ -27,7 +27,7 @@ const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 15;
 
 // Centralized model for all content generation with reasoning
-const CONTENT_GEN_MODEL = 'x-ai/grok-4.1-fast';
+const CONTENT_GEN_MODEL = 'google/gemini-3-pro-preview';
 const CONTENT_REASONING = { enabled: true };
 
 /**
@@ -3874,7 +3874,7 @@ Select the best video index.`
       logs.push(`[Video Error] Attempt ${errorDetails.attempt}/${errorDetails.maxRetries}: ${errorDetails.errorName} - ${errorDetails.errorMessage}`);
       logs.push(`[Video Error] Query: "${query}", Results found: ${searchResults.length}`);
       console.error('[generateVideoSelection] Error details:', JSON.stringify(errorDetails, null, 2));
-      
+
       if (err.response) {
         logs.push(`[Video Error] API response status: ${err.response.status || 'unknown'}`);
       }

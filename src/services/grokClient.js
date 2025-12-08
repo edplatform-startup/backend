@@ -865,7 +865,7 @@ function getPriceForModel(model) {
   const defaultMap = {
     'anthropic/claude-sonnet-4': { in: 0.003, out: 0.015 },
     'google/gemini-3-pro-preview': { in: 0.00125, out: 0.005 },
-    'x-ai/grok-4.1-fast': { in: 0.0002, out: 0.0005 },
+    'google/gemini-3-pro-preview': { in: 0.0002, out: 0.0005 },
     'google/gemini-3-pro-preview': { in: 0.002, out: 0.012 },
     'google/gemini-2.5-flash': { in: 0.0006, out: 0.0018 },
     'nousresearch/hermes-4-70b': { in: 0.0005, out: 0.001 },
