@@ -375,6 +375,45 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - Set `YOUTUBE_API_KEY` (or `GOOGLE_API_KEY`) to enable video recommendations; if absent, `video` is returned as `null` but other assets continue.
   - The worker output is synchronous; responses include the final DAG plus the worker summary so clients can immediately show generated content.
 
+### POST /courses/load
+- **Purpose**: Load/share an existing course to a new user. Creates a complete copy of the course structure with reset progress scores.
+- **Request body (JSON)**:
+  ```json
+  {
+    "courseId": "uuid-required",
+    "userId": "uuid-required",
+    "seconds_to_complete": 7200
+  }
+  ```
+  - `courseId` (string, required) – UUID of the source course to copy.
+  - `userId` (string, required) – UUID of the target user who will receive the copied course. Must match the authenticated JWT user.
+  - `seconds_to_complete` (number, required) – Time limit in seconds for the copied course.
+- **Behavior**:
+  1. Validates all fields and verifies JWT `req.user.id` matches the provided `userId`.
+  2. Fetches the source course and all its nodes/dependencies.
+  3. Creates a new course row with the source's `title`, `syllabus_text`, `exam_details`, and `metadata`.
+  4. Copies all `course_nodes` with new UUIDs, setting the new `course_id` and `user_id`. Resets `confidence_score` to `0.5`.
+  5. Copies all `node_dependencies` with remapped node IDs.
+  6. Initializes `user_node_state` for all nodes with:
+     - `confidence_score: 0.5`
+     - `familiarity_score: 0.5`
+     - `mastery_status: "pending"`
+- **Security**: The JWT user ID must match the `userId` in the request body (403 if mismatch).
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "courseId": "new-course-uuid",
+      "nodeCount": 24,
+      "edgeCount": 32
+    }
+    ```
+  - `400 Bad Request` → Missing or invalid fields (`courseId`, `userId`, `seconds_to_complete`).
+  - `403 Forbidden` → JWT user ID does not match target `userId`.
+  - `404 Not Found` → Source course does not exist.
+  - `500 Internal Server Error` → Database error during course copying.
+
 ### GET /courses/:id/plan
 - **Purpose**: Generate an optimized, personalized study plan for a course based on available time. Returns a learning path optimized for either comprehensive mastery (Deep Study) or high-yield exam preparation (Cram Mode).
 - **Path parameters**:

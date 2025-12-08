@@ -1651,4 +1651,220 @@ router.patch('/:courseId/flashcards', async (req, res) => {
   }
 });
 
+// POST /courses/load - Load/share a course to a new user
+router.post('/load', async (req, res) => {
+  const { courseId, userId, seconds_to_complete } = req.body;
+
+  // Validate required fields
+  if (!courseId) return res.status(400).json({ error: 'courseId is required' });
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (seconds_to_complete === undefined || seconds_to_complete === null) {
+    return res.status(400).json({ error: 'seconds_to_complete is required' });
+  }
+
+  // Validate UUID formats
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  // Validate seconds_to_complete is a positive integer
+  const parsedSeconds = parseInt(seconds_to_complete, 10);
+  if (isNaN(parsedSeconds) || parsedSeconds < 0) {
+    return res.status(400).json({ error: 'seconds_to_complete must be a non-negative integer' });
+  }
+
+  // Security check: JWT user ID must match the target userId
+  if (req.user && req.user.id !== userId) {
+    return res.status(403).json({ 
+      error: 'Forbidden: JWT user ID does not match target userId',
+      details: 'You can only load courses to your own account'
+    });
+  }
+
+  try {
+    const supabase = getSupabase();
+    const nowIso = new Date().toISOString();
+
+    // 1. Fetch the source course
+    const { data: sourceCourse, error: sourceError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('*')
+      .eq('id', courseId)
+      .single();
+
+    if (sourceError) {
+      if (sourceError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Source course not found' });
+      }
+      console.error('Error fetching source course:', sourceError);
+      return res.status(500).json({ error: 'Failed to fetch source course', details: sourceError.message });
+    }
+
+    if (!sourceCourse) {
+      return res.status(404).json({ error: 'Source course not found' });
+    }
+
+    // 2. Create the new course
+    const newCourseId = uuidv4();
+    const newCourse = {
+      id: newCourseId,
+      user_id: userId,
+      title: sourceCourse.title,
+      syllabus_text: sourceCourse.syllabus_text,
+      exam_details: sourceCourse.exam_details,
+      metadata: sourceCourse.metadata || {},
+      seconds_to_complete: parsedSeconds,
+      status: 'ready',
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    const { error: insertCourseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .insert(newCourse);
+
+    if (insertCourseError) {
+      console.error('Error inserting new course:', insertCourseError);
+      return res.status(500).json({ error: 'Failed to create course copy', details: insertCourseError.message });
+    }
+
+    // 3. Fetch all course nodes from source
+    const { data: sourceNodes, error: nodesError } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (nodesError) {
+      console.error('Error fetching source nodes:', nodesError);
+      return res.status(500).json({ error: 'Failed to fetch course nodes', details: nodesError.message });
+    }
+
+    // Create ID mapping for old -> new node IDs
+    const nodeIdMap = new Map();
+    const newNodes = (sourceNodes || []).map(node => {
+      const newNodeId = uuidv4();
+      nodeIdMap.set(node.id, newNodeId);
+      
+      return {
+        id: newNodeId,
+        course_id: newCourseId,
+        user_id: userId,
+        title: node.title,
+        description: node.description,
+        intrinsic_exam_value: node.intrinsic_exam_value,
+        bloom_level: node.bloom_level,
+        yield_tag: node.yield_tag,
+        estimated_minutes: node.estimated_minutes,
+        is_checkpoint: node.is_checkpoint,
+        in_degree: node.in_degree,
+        out_degree: node.out_degree,
+        content_payload: node.content_payload,
+        generation_prompt: node.generation_prompt,
+        module_ref: node.module_ref,
+        confidence_score: 0.5, // Reset to default
+        metadata: node.metadata,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+    });
+
+    // Insert new nodes
+    if (newNodes.length > 0) {
+      const { error: insertNodesError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .insert(newNodes);
+
+      if (insertNodesError) {
+        console.error('Error inserting new nodes:', insertNodesError);
+        return res.status(500).json({ error: 'Failed to copy course nodes', details: insertNodesError.message });
+      }
+    }
+
+    // 4. Fetch and copy node dependencies
+    const { data: sourceDeps, error: depsError } = await supabase
+      .schema('api')
+      .from('node_dependencies')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (depsError) {
+      console.error('Error fetching source dependencies:', depsError);
+      // Non-fatal, continue without dependencies
+    }
+
+    const newDeps = (sourceDeps || [])
+      .filter(dep => nodeIdMap.has(dep.parent_id) && nodeIdMap.has(dep.child_id))
+      .map(dep => ({
+        course_id: newCourseId,
+        parent_id: nodeIdMap.get(dep.parent_id),
+        child_id: nodeIdMap.get(dep.child_id),
+      }));
+
+    if (newDeps.length > 0) {
+      const { error: insertDepsError } = await supabase
+        .schema('api')
+        .from('node_dependencies')
+        .insert(newDeps);
+
+      if (insertDepsError) {
+        console.error('Error inserting dependencies:', insertDepsError);
+        // Non-fatal, continue
+      }
+    }
+
+    // 5. Initialize user_node_state for all new nodes with 0.5 confidence
+    const userNodeStates = newNodes.map(node => ({
+      course_id: newCourseId,
+      node_id: node.id,
+      user_id: userId,
+      confidence_score: 0.5,
+      familiarity_score: 0.5,
+      mastery_status: 'pending',
+      updated_at: nowIso,
+    }));
+
+    if (userNodeStates.length > 0) {
+      const { error: insertStatesError } = await supabase
+        .schema('api')
+        .from('user_node_state')
+        .insert(userNodeStates);
+
+      if (insertStatesError) {
+        console.error('Error inserting user node states:', insertStatesError);
+        // Non-fatal, continue
+      }
+    }
+
+    // Log course load event
+    await logUsageEvent(userId, 'course_loaded', {
+      sourceCourseId: courseId,
+      newCourseId,
+      nodeCount: newNodes.length,
+      edgeCount: newDeps.length,
+    });
+
+    console.log(`[load-course] Successfully copied course ${courseId} -> ${newCourseId} for user ${userId} (${newNodes.length} nodes, ${newDeps.length} edges)`);
+
+    return res.status(200).json({
+      success: true,
+      courseId: newCourseId,
+      nodeCount: newNodes.length,
+      edgeCount: newDeps.length,
+    });
+  } catch (error) {
+    console.error('Error loading course:', error);
+    return res.status(500).json({ error: 'Failed to load course', details: error.message });
+  }
+});
+
 export default router;
