@@ -232,8 +232,8 @@ IMPORTANT:
   log.logGeminiPlan(plan);
 
   if (!plan.operations || !Array.isArray(plan.operations) || plan.operations.length === 0) {
-    return { 
-      success: true, 
+    return {
+      success: true,
       message: 'No changes needed.',
       log: log.getSummary(),
     };
@@ -271,7 +271,7 @@ IMPORTANT:
         case 'edit_lesson':
           if (validNodeIds.has(operation.lesson_id)) {
             const node = nodes.find(n => n.id === operation.lesson_id);
-            await executeEditLesson(supabase, courseId, userId, courseTitle, node, operation, log);
+            await executeEditLesson(supabase, courseId, userId, courseTitle, courseMode, node, operation, log);
           } else {
             log.logOperation('edit_lesson', { lesson_id: operation.lesson_id, status: 'skipped', reason: 'invalid_id' });
           }
@@ -299,8 +299,8 @@ IMPORTANT:
   const summary = log.getSummary();
   console.log(`[Restructure] Complete. Duration: ${summary.durationMs}ms, Operations: ${summary.operationCount}`);
 
-  return { 
-    success: true, 
+  return {
+    success: true,
     results,
     log: summary,
   };
@@ -317,10 +317,10 @@ async function executeAddModule(supabase, courseId, userId, courseTitle, courseM
 
   await runWithConcurrency(lessons, 20, async (lessonSpec) => {
     const lessonId = uuidv4();
-    
+
     // Generate content for the new lesson
     log.logWorkerExecution(lessonId, lessonSpec.title, 'reading', lessonSpec.content_plan, 'started');
-    
+
     let reading = null;
     let quiz = null;
     let flashcards = null;
@@ -432,8 +432,8 @@ async function executeRemoveModule(supabase, courseId, userId, operation, log) {
     throw new Error(`Failed to fetch lessons for module "${module_name}": ${fetchError.message}`);
   }
 
-  log.logOperation('remove_module', { 
-    module_name, 
+  log.logOperation('remove_module', {
+    module_name,
     lessonCount: moduleLessons?.length || 0,
     lessons: moduleLessons?.map(l => l.title) || [],
   });
@@ -583,8 +583,8 @@ async function executeRemoveLesson(supabase, courseId, userId, operation, log) {
     .eq('id', lesson_id)
     .single();
 
-  log.logOperation('remove_lesson', { 
-    lesson_id, 
+  log.logOperation('remove_lesson', {
+    lesson_id,
     lesson_title: lesson?.title,
     module: lesson?.module_ref,
   });
@@ -617,15 +617,16 @@ async function executeRemoveLesson(supabase, courseId, userId, operation, log) {
 
 /**
  * Execute edit_lesson operation
+ * Now supports both regenerating existing content AND generating new content from scratch.
  */
-async function executeEditLesson(supabase, courseId, userId, courseTitle, node, operation, log) {
+async function executeEditLesson(supabase, courseId, userId, courseTitle, courseMode, node, operation, log) {
   const { lesson_id, changes } = operation;
   const payload = node.content_payload || {};
   const newPayload = { ...payload };
   let updated = false;
 
-  log.logOperation('edit_lesson', { 
-    lesson_id, 
+  log.logOperation('edit_lesson', {
+    lesson_id,
     lesson_title: node.title,
     changes_requested: Object.keys(changes || {}),
   });
@@ -636,19 +637,35 @@ async function executeEditLesson(supabase, courseId, userId, courseTitle, node, 
   if (changes.description) updateFields.description = changes.description;
 
   // Reading changes
-  if (changes.reading && payload.reading) {
+  if (changes.reading) {
     log.logWorkerExecution(lesson_id, node.title, 'reading', changes.reading, 'started');
     try {
-      const res = await regenerateReading(
-        node.title, 
-        payload.reading, 
-        changes.reading, 
-        courseTitle, 
-        node.module_ref, 
-        [], 
-        userId, 
-        courseId
-      );
+      let res;
+      if (payload.reading) {
+        // Regenerate existing content
+        res = await regenerateReading(
+          node.title,
+          payload.reading,
+          changes.reading,
+          courseTitle,
+          node.module_ref,
+          [],
+          userId,
+          courseId
+        );
+      } else {
+        // Generate new content from scratch
+        res = await generateReading(
+          node.title,
+          changes.reading,
+          courseTitle,
+          node.module_ref,
+          [],
+          courseMode,
+          userId,
+          courseId
+        );
+      }
       newPayload.reading = res.data;
       updated = true;
       log.logWorkerExecution(lesson_id, node.title, 'reading', changes.reading, 'success');
@@ -658,19 +675,35 @@ async function executeEditLesson(supabase, courseId, userId, courseTitle, node, 
   }
 
   // Quiz changes
-  if (changes.quiz && payload.quiz) {
+  if (changes.quiz) {
     log.logWorkerExecution(lesson_id, node.title, 'quiz', changes.quiz, 'started');
     try {
-      const res = await regenerateQuiz(
-        node.title, 
-        payload.quiz, 
-        changes.quiz, 
-        courseTitle, 
-        node.module_ref, 
-        [], 
-        userId, 
-        courseId
-      );
+      let res;
+      if (payload.quiz) {
+        // Regenerate existing content
+        res = await regenerateQuiz(
+          node.title,
+          payload.quiz,
+          changes.quiz,
+          courseTitle,
+          node.module_ref,
+          [],
+          userId,
+          courseId
+        );
+      } else {
+        // Generate new content from scratch
+        res = await generateQuiz(
+          node.title,
+          changes.quiz,
+          courseTitle,
+          node.module_ref,
+          [],
+          courseMode,
+          userId,
+          courseId
+        );
+      }
       newPayload.quiz = res.data;
       updated = true;
       log.logWorkerExecution(lesson_id, node.title, 'quiz', changes.quiz, 'success');
@@ -680,18 +713,32 @@ async function executeEditLesson(supabase, courseId, userId, courseTitle, node, 
   }
 
   // Flashcard changes
-  if (changes.flashcards && payload.flashcards) {
+  if (changes.flashcards) {
     log.logWorkerExecution(lesson_id, node.title, 'flashcards', changes.flashcards, 'started');
     try {
-      const res = await regenerateFlashcards(
-        node.title, 
-        payload.flashcards, 
-        changes.flashcards, 
-        courseTitle, 
-        node.module_ref, 
-        userId, 
-        courseId
-      );
+      let res;
+      if (payload.flashcards) {
+        // Regenerate existing content
+        res = await regenerateFlashcards(
+          node.title,
+          payload.flashcards,
+          changes.flashcards,
+          courseTitle,
+          node.module_ref,
+          userId,
+          courseId
+        );
+      } else {
+        // Generate new content from scratch
+        res = await generateFlashcards(
+          node.title,
+          changes.flashcards,
+          courseTitle,
+          node.module_ref,
+          userId,
+          courseId
+        );
+      }
       newPayload.flashcards = res.data;
       updated = true;
       log.logWorkerExecution(lesson_id, node.title, 'flashcards', changes.flashcards, 'success');
