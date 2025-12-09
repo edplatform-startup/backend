@@ -326,7 +326,7 @@ Output STRICT VALID JSON format (no markdown, no comments):
     responseFormat: { type: 'json_object' },
     requestTimeoutMs: 1800000, // 30 minutes for long-running course generation
     allowWeb: true,
-    maxToolIterations: 32, // Increased to allow thorough web research of course content
+    maxToolIterations: 8, // Web research for course content
     userId,
     courseId,
     source: 'lesson_architect',

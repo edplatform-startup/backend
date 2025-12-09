@@ -1264,6 +1264,105 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - 400 Bad Request → Missing required fields or invalid type.
   - 500 Internal Server Error → Database error.
 
+### GET /courses/:courseId/export
+- **Purpose**: Admin endpoint to export an entire course structure as a single JSON object, including all nodes, dependencies, user states, quiz questions, and flashcards.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course to export
+- **Authentication**: Requires valid JWT token. The authenticated user ID is logged but the endpoint does not require course ownership (admin access).
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "export": {
+        "course": {
+          "id": "...",
+          "user_id": "...",
+          "title": "Discrete Mathematics",
+          "syllabus_text": "...",
+          "exam_details": "...",
+          "status": "ready",
+          "seconds_to_complete": 7200,
+          "created_at": "...",
+          "updated_at": "..."
+        },
+        "nodes": [
+          {
+            "id": "...",
+            "course_id": "...",
+            "user_id": "...",
+            "title": "Basic Logic",
+            "module_ref": "Module 1: Foundations",
+            "estimated_minutes": 30,
+            "bloom_level": "Understand",
+            "intrinsic_exam_value": 7,
+            "confidence_score": 0.5,
+            "metadata": { ... },
+            "content_payload": { ... }
+          }
+        ],
+        "dependencies": [
+          {
+            "course_id": "...",
+            "parent_id": "...",
+            "child_id": "..."
+          }
+        ],
+        "user_states": [
+          {
+            "course_id": "...",
+            "node_id": "...",
+            "user_id": "...",
+            "mastery_status": "pending",
+            "familiarity_score": 0.5,
+            "confidence_score": 0.5,
+            "updated_at": "..."
+          }
+        ],
+        "quiz_questions": [
+          {
+            "id": "...",
+            "course_id": "...",
+            "node_id": "...",
+            "user_id": "...",
+            "question": "...",
+            "status": "unattempted",
+            "selected_answer": null
+          }
+        ],
+        "flashcards": [
+          {
+            "id": "...",
+            "course_id": "...",
+            "node_id": "...",
+            "user_id": "...",
+            "front": "...",
+            "back": "...",
+            "next_show_timestamp": "..."
+          }
+        ]
+      },
+      "meta": {
+        "exported_at": "2025-12-09T10:30:00.000Z",
+        "exported_by": "user-uuid",
+        "node_count": 24,
+        "dependency_count": 32,
+        "user_state_count": 24,
+        "quiz_question_count": 72,
+        "flashcard_count": 120
+      }
+    }
+    ```
+  - `400 Bad Request` → Invalid courseId format.
+  - `401 Unauthorized` → Missing or invalid JWT token.
+  - `404 Not Found` → Course not found.
+  - `500 Internal Server Error` → Database error.
+- **Example**:
+  ```bash
+  curl -X GET "https://api.kognolearn.com/courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/export" \
+    -H "Authorization: Bearer <jwt_token>"
+  ```
+
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
 - 500 Internal Server Error → Fallback error handler; body `{ "error": "Internal Server Error: <message>" }`.

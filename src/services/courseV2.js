@@ -612,7 +612,7 @@ Now brainstorm an exhaustive flat list of ALL concepts for this course. Search t
       ],
       maxTokens: 100000,
       allowWeb: true,
-      maxToolIterations: 8, // Heavy web search for comprehensive coverage
+      maxToolIterations: 1, // Reduced web search iterations
       requestTimeoutMs: 300000,
       userId,
       courseId,

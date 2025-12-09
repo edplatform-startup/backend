@@ -1867,4 +1867,133 @@ router.post('/load', async (req, res) => {
   }
 });
 
+// Admin endpoint: Export entire course structure as JSON
+router.get('/:courseId/export', async (req, res) => {
+  const { courseId } = req.params;
+
+  // JWT is already validated by auth middleware - user ID comes from req.user
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // 1. Fetch the course
+    const { data: course, error: courseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('*')
+      .eq('id', courseId)
+      .single();
+
+    if (courseError) {
+      if (courseError.code === 'PGRST116') {
+        return res.status(404).json({ error: 'Course not found' });
+      }
+      console.error('Error fetching course:', courseError);
+      return res.status(500).json({ error: 'Failed to fetch course', details: courseError.message });
+    }
+
+    // 2. Fetch all course nodes
+    const { data: nodes, error: nodesError } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('*')
+      .eq('course_id', courseId)
+      .order('created_at', { ascending: true });
+
+    if (nodesError) {
+      console.error('Error fetching course nodes:', nodesError);
+      return res.status(500).json({ error: 'Failed to fetch course nodes', details: nodesError.message });
+    }
+
+    // 3. Fetch all node dependencies
+    const { data: dependencies, error: depsError } = await supabase
+      .schema('api')
+      .from('node_dependencies')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (depsError) {
+      console.error('Error fetching dependencies:', depsError);
+      return res.status(500).json({ error: 'Failed to fetch dependencies', details: depsError.message });
+    }
+
+    // 4. Fetch all user node states for this course
+    const { data: userStates, error: statesError } = await supabase
+      .schema('api')
+      .from('user_node_state')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (statesError) {
+      console.error('Error fetching user states:', statesError);
+      return res.status(500).json({ error: 'Failed to fetch user states', details: statesError.message });
+    }
+
+    // 5. Fetch quiz questions for this course
+    const { data: quizQuestions, error: quizError } = await supabase
+      .schema('api')
+      .from('quiz_questions')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (quizError) {
+      console.error('Error fetching quiz questions:', quizError);
+      // Non-fatal, continue without quiz questions
+    }
+
+    // 6. Fetch flashcards for this course
+    const { data: flashcards, error: flashcardsError } = await supabase
+      .schema('api')
+      .from('flashcards')
+      .select('*')
+      .eq('course_id', courseId);
+
+    if (flashcardsError) {
+      console.error('Error fetching flashcards:', flashcardsError);
+      // Non-fatal, continue without flashcards
+    }
+
+    // Log admin export
+    await logUsageEvent(userId, 'admin_course_exported', {
+      courseId,
+      nodeCount: nodes?.length || 0,
+      dependencyCount: dependencies?.length || 0,
+      userStateCount: userStates?.length || 0,
+    });
+
+    return res.json({
+      success: true,
+      export: {
+        course,
+        nodes: nodes || [],
+        dependencies: dependencies || [],
+        user_states: userStates || [],
+        quiz_questions: quizQuestions || [],
+        flashcards: flashcards || [],
+      },
+      meta: {
+        exported_at: new Date().toISOString(),
+        exported_by: userId,
+        node_count: nodes?.length || 0,
+        dependency_count: dependencies?.length || 0,
+        user_state_count: userStates?.length || 0,
+        quiz_question_count: quizQuestions?.length || 0,
+        flashcard_count: flashcards?.length || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Error exporting course:', error);
+    return res.status(500).json({ error: 'Failed to export course', details: error.message });
+  }
+});
+
 export default router;

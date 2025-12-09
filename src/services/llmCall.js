@@ -1,5 +1,5 @@
 import { pickModel } from './modelRouter.js';
-import { executeOpenRouterChat, createBrowsePageTool } from './grokClient.js';
+import { executeOpenRouterChat, createBrowsePageTool, createWebSearchTool } from './grokClient.js';
 
 export async function callStageLLM({
   stage,
@@ -7,6 +7,7 @@ export async function callStageLLM({
   attachments = [],
   maxTokens = 1500,
   allowWeb = false,
+  maxToolIterations,
   modelOverride = null,
   requestTimeoutMs,
   plugins,
@@ -25,13 +26,10 @@ export async function callStageLLM({
   } = pickModel(stage);
   const chosenModel = modelOverride || model;
   
-  // Check if model has built-in web search (X.ai Grok models with :online or web plugin)
-  const preferWebPlugin = /:online\b/.test(chosenModel) || /^x-ai\/grok/.test(chosenModel);
-  const enableWebSearch = allowWeb && preferWebPlugin;
-  
-  // Build tool list: only add web_search tool if allowWeb is true AND model does not have built-in web search
+  // Always use custom web_search and browse_page tools (never OpenRouter's web plugin)
   const toolList = [];
-  if (allowWeb && !preferWebPlugin) {
+  if (allowWeb) {
+    toolList.push(createWebSearchTool());
     toolList.push(createBrowsePageTool());
   }
 
@@ -44,8 +42,8 @@ export async function callStageLLM({
     maxTokens,
     tools: toolList,
     toolChoice: toolList.length ? 'auto' : undefined,
-    maxToolIterations: toolList.length ? 1 : undefined,
-    enableWebSearch,
+    maxToolIterations: toolList.length ? (maxToolIterations ?? 1) : undefined,
+    enableWebSearch: false, // Never use OpenRouter's web plugin
     stage,
     messages,
     attachments,
