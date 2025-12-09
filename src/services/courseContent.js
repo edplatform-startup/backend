@@ -3,15 +3,13 @@ import { executeOpenRouterChat, getCostTotals } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import { validateAndRepairLatex } from '../utils/latexUtils.js';
 import {
-  csvToQuiz,
-  csvToFlashcards,
-  quizToCSV,
-  flashcardsToCSV,
-  parseCSV,
-  parseBatchedReadings,
-  formatLessonPlansForBatch,
-  csvToBatchedVideos
-} from '../utils/csvUtils.js';
+  parseXmlReadings,
+  parseXmlQuizzes,
+  parseXmlFlashcards,
+  parseXmlInlineQuestions
+} from '../utils/xmlUtils.js';
+// Keep csvToQuiz for fallback parsing and other non-batch uses
+import { csvToQuiz, parseCSV } from '../utils/csvUtils.js';
 import yts from 'yt-search';
 import {
   rateQuestionConfidence,
@@ -2629,6 +2627,7 @@ function normalizeFlashcard(card, index) {
 
 /**
  * Generates readings for all lessons in a module with a single LLM call.
+ * Uses XML tags to delimit lesson content for reliable parsing.
  * @param {Array} lessons - Array of lesson objects with id, title, content_payload
  * @param {string} courseName - Course name
  * @param {string} moduleName - Module name
@@ -2641,12 +2640,12 @@ function normalizeFlashcard(card, index) {
 export async function generateModuleReadings(lessons, courseName, moduleName, prereqMap, mode, userId, courseId) {
   if (!lessons?.length) return new Map();
 
-  // Build lesson plans summary
+  // Build lesson plans summary with XML format instructions
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
     const prereqs = prereqMap.get(l.id) || [];
     const prereqNote = prereqs.length ? `Prerequisites: ${prereqs.join(', ')}` : 'No prerequisites';
-    return `===LESSON:${l.id}===
+    return `Lesson ID: "${l.id}"
 Title: "${l.title}"
 ${prereqNote}
 Plan: ${plans.reading || 'Generate comprehensive reading content'}`;
@@ -2654,30 +2653,61 @@ Plan: ${plans.reading || 'Generate comprehensive reading content'}`;
 
   const systemPrompt = {
     role: 'system',
-    content: `You are an elite instructional designer producing learning content for module "${moduleName}" in course "${courseName}".
-Generate readings for ALL ${lessons.length} lessons below in a SINGLE response.
+    content: `You are the lead author of a textbook for course "${courseName}".
+You are writing the reading content for Module: "${moduleName}".
 
-${mode === 'cram' ? 'FOCUS: MAXIMIZE EXAM VALUE. Only high-yield, exam-critical topics. Be concise—every sentence must directly support exam preparation.' : 'FOCUS: MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Comprehensive coverage with detailed examples, nuances, and interconnections that build lasting mastery.'}
+TARGET AUDIENCE: University students seeking deep understanding.
+
+TASK: Write the FULL reading content for ALL ${lessons.length} lessons in this module.
+
+CONTENT QUALITY REQUIREMENTS:
+1. **Verbosity**: Do NOT summarize. Write deep, comprehensive paragraphs that thoroughly explain concepts.
+2. **Purpose**: Every section and paragraph must have a clear purpose in enhancing the reader's understanding. No filler content.
+3. **Structure**: Use proper Markdown formatting (## Headers, **Bold**, Lists, code blocks where appropriate).
+4. **Depth**: Include explanations of WHY things work, not just WHAT they are. Provide intuition and mental models.
+5. **Examples**: Include concrete, worked examples that illustrate abstract concepts.
+6. **Connections**: Show how concepts relate to each other and to prerequisite knowledge.
+7. **LaTeX**: Use \\(...\\) for inline math and \\[...\\] for display math. Do NOT use $ or $$.
+
+${mode === 'cram' ? 'MODE: CRAM - Focus on high-yield, exam-critical topics while maintaining depth. Every sentence must contribute to exam preparation. Omit tangential content.' : 'MODE: DEEP - Provide maximum comprehensive coverage. Explore nuances, edge cases, proofs where applicable, and build lasting mastery.'}
 
 OUTPUT FORMAT:
-- Start each lesson reading with: ===LESSON:lesson_id===
-- Follow with the full Markdown reading content for that lesson
-- Use LaTeX only for math: \\(...\\) for inline, \\[...\\] for display
-- Do NOT include inline questions or "Check Your Understanding" - these are added separately
-- Ensure each reading is complete and stands alone
+Separate each lesson using XML tags. Do NOT output JSON.
 
-CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-2000 words depending on complexity.`
+<LESSON id="[exact_lesson_id_from_plan]">
+# [Lesson Title]
+
+[Write the full 800+ word lesson content here with proper markdown formatting...]
+
+## [Section headers as needed]
+
+[Continue with comprehensive content...]
+</LESSON>
+
+<LESSON id="[next_lesson_id]">
+...
+</LESSON>
+
+CRITICAL: 
+- Generate ALL ${lessons.length} readings
+- Each reading should be 800-2000 words depending on complexity
+- Do NOT include inline questions or "Check Your Understanding" sections - these are added separately
+- Ensure each reading is complete and self-contained`
   };
 
   const userPrompt = {
     role: 'user',
-    content: `Generate readings for these lessons:\n\n${lessonPlans}`
+    content: `Generate readings for these ${lessons.length} lessons:
+
+${lessonPlans}
+
+Generate comprehensive, in-depth content for each lesson as XML-delimited Markdown.`
   };
 
   try {
     const { content } = await grokExecutor({
       model: CONTENT_GEN_MODEL,
-      temperature: 0.35,
+      temperature: 0.45, // Slightly higher for better prose flow
       maxTokens: 100000, // Large limit for multiple readings
       messages: [systemPrompt, userPrompt],
       requestTimeoutMs: 300000, // 5 minutes for batch
@@ -2688,7 +2718,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
     });
 
     const raw = coerceModelText(content);
-    const readingsMap = parseBatchedReadings(raw);
+    const readingsMap = parseXmlReadings(raw);
 
     const results = new Map();
     for (const lesson of lessons) {
@@ -2717,6 +2747,7 @@ CRITICAL: Generate ALL ${lessons.length} readings. Each reading should be 800-20
 
 /**
  * Generates quizzes for all lessons in a module with a single LLM call.
+ * Uses XML tags for structured output that gets parsed to JSON.
  * @param {Array} lessons - Array of lesson objects with id, title, content_payload
  * @param {string} courseName - Course name
  * @param {string} moduleName - Module name
@@ -2735,7 +2766,7 @@ export async function generateModuleQuizzes(lessons, courseName, moduleName, pre
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
     const prereqs = prereqMap.get(l.id) || [];
-    return `Lesson ID: ${l.id}
+    return `Lesson ID: "${l.id}"
 Title: "${l.title}"
 Prerequisites: ${prereqs.length ? prereqs.join(', ') : 'None'}
 Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
@@ -2744,42 +2775,49 @@ Quiz Plan: ${plans.quiz || 'Generate comprehensive quiz'}`;
   const messages = [
     {
       role: 'system',
-      content: `You are building quizzes for module "${moduleName}" in course "${courseName}".
+      content: `You are building graduate-level quizzes for module "${moduleName}" in course "${courseName}".
 Generate ${questionCount} questions for EACH of the ${lessons.length} lessons.
 
-OUTPUT FORMAT: JSON object
-{
-  "quizzes": {
-    "<lesson_id>": [
-      {
-        "question": "Full question text",
-        "options": ["Option A", "Option B", "Option C", "Option D"],
-        "correct_index": 0,
-        "explanation": ["Why A is correct/wrong", "Why B is correct/wrong", "Why C is correct/wrong", "Why D is correct/wrong"],
-        "confidence": 0.9
-      }
-    ]
-  }
-}
+CONTENT QUALITY REQUIREMENTS:
+1. **Purpose**: Every question must test genuine understanding, not just recall. Focus on application and analysis.
+2. **Clarity**: Questions must be unambiguous and grammatically perfect.
+3. **Explanations**: Each of the 4 explanation fields must explain WHY that option is correct or incorrect (min 25 chars each).
+4. **Professional Quality**: Write as if publishing in a university textbook.
+5. **Difficulty Progression**: Start with foundational questions, end with a Challenge Question per lesson.
+6. **Confidence**: Be honest - rate lower (< 0.7) if unsure about correctness.
 
-FIELD RULES:
-- question: Clear, complete question text
-- options: Array of exactly 4 answer choices
-- correct_index: 0-3 (index of correct answer)
-- explanation: Array of exactly 4 explanations (one per option, min 20 chars each)
-- confidence: 0.0-1.0 - Rate how confident you are that: (1) the marked correct answer is TRULY correct, (2) NO other option could also be correct, (3) the question is factually accurate. Use lower confidence (< 0.7) if uncertain.
+OUTPUT FORMAT - Use XML tags (NOT JSON):
 
-QUALITY REQUIREMENTS:
-- All text must be complete, grammatically correct sentences
-- Professional quality, as if published in a textbook
-- Include 1 Challenge Question per lesson (last question)
-- Use LaTeX for math: \\(...\\) for inline, \\[...\\] for display
+<QUIZ lesson_id="[exact_lesson_id]">
+<QUESTION correct="[0-3]" confidence="[0.0-1.0]">
+<TEXT>Full question text goes here</TEXT>
+<OPTION_A>First option text</OPTION_A>
+<OPTION_B>Second option text</OPTION_B>
+<OPTION_C>Third option text</OPTION_C>
+<OPTION_D>Fourth option text</OPTION_D>
+<EXPLAIN_A>Why A is correct/incorrect (min 25 chars)</EXPLAIN_A>
+<EXPLAIN_B>Why B is correct/incorrect (min 25 chars)</EXPLAIN_B>
+<EXPLAIN_C>Why C is correct/incorrect (min 25 chars)</EXPLAIN_C>
+<EXPLAIN_D>Why D is correct/incorrect (min 25 chars)</EXPLAIN_D>
+</QUESTION>
+<!-- more questions... -->
+</QUIZ>
+
+<QUIZ lesson_id="[next_lesson_id]">
+...
+</QUIZ>
+
+LaTeX: Use \\(...\\) for inline math, \\[...\\] for display. Do NOT use $ or $$.
 
 Generate questions for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate quiz questions for these lessons:\n\n${lessonPlans}`
+      content: `Generate quiz questions for these lessons:
+
+${lessonPlans}
+
+Output all quizzes as XML-delimited blocks.`
     }
   ];
 
@@ -2789,7 +2827,6 @@ Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.2,
       maxTokens: 100000,
       messages,
-      responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
       reasoning: CONTENT_REASONING,
       userId,
@@ -2798,19 +2835,11 @@ Generate questions for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      console.error(`[generateModuleQuizzes] Failed to parse JSON:`, e.message);
-      return new Map();
-    }
-
-    const quizMap = parsed?.quizzes || {};
+    const quizMap = parseXmlQuizzes(text);
 
     const results = new Map();
     for (const lesson of lessons) {
-      const questions = quizMap[lesson.id]; // JSON object access, not Map
+      const questions = quizMap.get(lesson.id);
       if (Array.isArray(questions) && questions.length > 0) {
         // Validate and repair questions
         const validator = (item, index) => {
@@ -2823,7 +2852,7 @@ Generate questions for ALL ${lessons.length} lessons.`
             }
             const normalized = normalizeQuizItem(item, index, true);
             // Preserve confidence for batch validation (threshold: 0.65)
-            normalized._confidence = typeof item.confidence === 'number' ? item.confidence : 0.8;
+            normalized._confidence = typeof item._confidence === 'number' ? item._confidence : 0.8;
             normalized._needsValidation = normalized._confidence < 0.65;
             return { valid: true, data: normalized };
           } catch (e) {
@@ -2856,6 +2885,7 @@ Generate questions for ALL ${lessons.length} lessons.`
 
 /**
  * Generates flashcards for all lessons in a module with a single LLM call.
+ * Uses XML tags for structured output that gets parsed to JSON.
  * @param {Array} lessons - Array of lesson objects with id, title, content_payload
  * @param {string} courseName - Course name
  * @param {string} moduleName - Module name
@@ -2869,7 +2899,7 @@ export async function generateModuleFlashcards(lessons, courseName, moduleName, 
   // Build lesson plans summary
   const lessonPlans = lessons.map(l => {
     const plans = l.content_payload?.generation_plans || {};
-    return `Lesson ID: ${l.id}
+    return `Lesson ID: "${l.id}"
 Title: "${l.title}"
 Flashcards Plan: ${plans.flashcards || 'Generate key concept flashcards'}`;
   }).join('\n\n');
@@ -2877,28 +2907,45 @@ Flashcards Plan: ${plans.flashcards || 'Generate key concept flashcards'}`;
   const messages = [
     {
       role: 'system',
-      content: `You are building flashcards for module "${moduleName}" in course "${courseName}".
+      content: `You are building study flashcards for module "${moduleName}" in course "${courseName}".
 Generate 5-7 flashcards for EACH of the ${lessons.length} lessons.
 
-OUTPUT FORMAT: JSON object
-{
-  "flashcards": {
-    "<lesson_id>": [
-      { "front": "Question or prompt", "back": "Answer or explanation" }
-    ]
-  }
-}
+CONTENT QUALITY REQUIREMENTS:
+1. **Purpose**: Each flashcard must test a specific, important concept worth memorizing.
+2. **Clarity**: Front side must be a clear, unambiguous question or prompt.
+3. **Completeness**: Back side must give a COMPLETE answer - not just a one-word response.
+4. **Depth**: Include explanations of "why" on the back when appropriate, not just definitions.
+5. **No Trivial Cards**: Avoid superficial questions; focus on concepts that require active recall.
 
-FIELD RULES:
-- front: Clear question or prompt students will see
-- back: Complete answer in full sentences
-- Use LaTeX for math: \\(...\\) for inline, \\[...\\] for display
+OUTPUT FORMAT - Use XML tags (NOT JSON):
+
+<FLASHCARDS lesson_id="[exact_lesson_id]">
+<CARD>
+<FRONT>Clear question or prompt that tests an important concept</FRONT>
+<BACK>Complete answer in full sentences, with explanation when needed</BACK>
+</CARD>
+<CARD>
+<FRONT>Another question</FRONT>
+<BACK>Another complete answer</BACK>
+</CARD>
+<!-- more cards... -->
+</FLASHCARDS>
+
+<FLASHCARDS lesson_id="[next_lesson_id]">
+...
+</FLASHCARDS>
+
+LaTeX: Use \\(...\\) for inline math, \\[...\\] for display. Do NOT use $ or $$.
 
 Generate flashcards for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate flashcards for these lessons:\n\n${lessonPlans}`
+      content: `Generate flashcards for these lessons:
+
+${lessonPlans}
+
+Output all flashcards as XML-delimited blocks.`
     }
   ];
 
@@ -2908,7 +2955,6 @@ Generate flashcards for ALL ${lessons.length} lessons.`
       temperature: 0.25,
       maxTokens: 100000,
       messages,
-      responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
       reasoning: CONTENT_REASONING,
       userId,
@@ -2917,19 +2963,11 @@ Generate flashcards for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      console.error(`[generateModuleFlashcards] Failed to parse JSON:`, e.message);
-      return new Map();
-    }
-
-    const flashcardsMap = parsed?.flashcards || {};
+    const flashcardsMap = parseXmlFlashcards(text);
     const results = new Map();
 
     for (const lesson of lessons) {
-      const cards = flashcardsMap[lesson.id]; // JSON object access
+      const cards = flashcardsMap.get(lesson.id);
       if (Array.isArray(cards) && cards.length > 0) {
         // Validate flashcards
         const validator = (item, index) => {
@@ -2965,7 +3003,7 @@ Generate flashcards for ALL ${lessons.length} lessons.`
 
 /**
  * Generates inline questions for all lessons in a module with a single LLM call.
- * Instead of generating per-chunk, we provide the reading content and generate a set number per lesson.
+ * Uses XML tags for structured output that gets parsed to JSON, then converted to markdown.
  * @param {Array} lessons - Array of lesson objects with id, title
  * @param {Map<string, string>} readingsMap - Map of lesson_id -> reading content
  * @param {string} courseName - Course name
@@ -2983,7 +3021,7 @@ export async function generateModuleInlineQuestions(lessons, readingsMap, course
     const reading = readingRes?.data || '';
     // Truncate reading to first 2000 chars for context
     const truncated = reading.slice(0, 2000) + (reading.length > 2000 ? '...' : '');
-    return `===LESSON:${l.id}===
+    return `Lesson ID: "${l.id}"
 Title: "${l.title}"
 Reading excerpt:
 ${truncated}`;
@@ -2995,36 +3033,45 @@ ${truncated}`;
       content: `You are creating inline "Check Your Understanding" questions for module "${moduleName}" in course "${courseName}".
 Generate 3-5 inline MCQs for EACH of the ${lessons.length} lessons based on their reading content.
 
-OUTPUT FORMAT: JSON object
-{
-  "questions": {
-    "<lesson_id>": [
-      {
-        "question": "Question text",
-        "options": ["Option A", "Option B", "Option C", "Option D"],
-        "correct_index": 0,
-        "explanation": ["Why A...", "Why B...", "Why C...", "Why D..."],
-        "confidence": 0.9
-      }
-    ]
-  }
-}
+CONTENT QUALITY REQUIREMENTS:
+1. **Purpose**: Each question must genuinely test understanding of a concept from the reading.
+2. **Application Focus**: Questions should require application or synthesis, not just recall.
+3. **Comprehensive Explanations**: Each of the 4 explanations must clearly explain WHY that option is correct/incorrect (min 25 chars).
+4. **Clarity**: Questions must be unambiguous and grammatically perfect.
+5. **Confidence**: Be honest - rate lower (< 0.7) if unsure about correctness.
 
-FIELD RULES:
-- question: Clear question text
-- options: Array of exactly 4 answer choices
-- correct_index: 0-3 (index of correct answer)
-- explanation: Array of 4 explanations (min 20 chars each)
-- confidence: 0.0-1.0 - Rate how confident you are that the answer is TRULY correct and NO other option could be correct. Use < 0.7 if uncertain.
+OUTPUT FORMAT - Use XML tags (NOT JSON):
 
-QUALITY: Professional, complete sentences. Focus on synthesis/application, not recall.
-Use LaTeX for math: \\(...\\) for inline.
+<INLINE_QUESTIONS lesson_id="[exact_lesson_id]">
+<QUESTION chunk="0" correct="[0-3]" confidence="[0.0-1.0]">
+<TEXT>Question text goes here</TEXT>
+<OPTION_A>First option</OPTION_A>
+<OPTION_B>Second option</OPTION_B>
+<OPTION_C>Third option</OPTION_C>
+<OPTION_D>Fourth option</OPTION_D>
+<EXPLAIN_A>Why A is correct/incorrect (min 25 chars)</EXPLAIN_A>
+<EXPLAIN_B>Why B is correct/incorrect (min 25 chars)</EXPLAIN_B>
+<EXPLAIN_C>Why C is correct/incorrect (min 25 chars)</EXPLAIN_C>
+<EXPLAIN_D>Why D is correct/incorrect (min 25 chars)</EXPLAIN_D>
+</QUESTION>
+<!-- more questions... -->
+</INLINE_QUESTIONS>
+
+<INLINE_QUESTIONS lesson_id="[next_lesson_id]">
+...
+</INLINE_QUESTIONS>
+
+LaTeX: Use \\(...\\) for inline math. Do NOT use $ or $$.
 
 Generate questions for ALL ${lessons.length} lessons.`
     },
     {
       role: 'user',
-      content: `Generate inline questions for these lessons:\n\n${lessonContexts}`
+      content: `Generate inline questions for these lessons:
+
+${lessonContexts}
+
+Output all questions as XML-delimited blocks.`
     }
   ];
 
@@ -3034,7 +3081,6 @@ Generate questions for ALL ${lessons.length} lessons.`
       temperature: 0.3,
       maxTokens: 100000,
       messages,
-      responseFormat: { type: 'json_object' },
       requestTimeoutMs: 600000,
       reasoning: CONTENT_REASONING,
       userId,
@@ -3043,20 +3089,12 @@ Generate questions for ALL ${lessons.length} lessons.`
     });
 
     const text = coerceModelText(content);
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      console.error(`[generateModuleInlineQuestions] Failed to parse JSON:`, e.message);
-      return new Map();
-    }
-
-    const questionsMap = parsed?.questions || {};
+    const questionsMap = parseXmlInlineQuestions(text);
 
     // Convert questions to markdown format
     const results = new Map();
     for (const lesson of lessons) {
-      const questions = questionsMap[lesson.id] || [];
+      const questions = questionsMap.get(lesson.id) || [];
       if (Array.isArray(questions) && questions.length > 0) {
         // Convert each question to markdown
         const markdownQuestions = questions.map(q => {
@@ -3069,7 +3107,8 @@ Generate questions for ALL ${lessons.length} lessons.`
             md += `- ${letter}. ${validatedOpt}\n`;
           });
 
-          const answerIndex = typeof q.correct_index === 'number' ? q.correct_index : 0;
+          // XML parser returns 'answerIndex', not 'correct_index'
+          const answerIndex = typeof q.answerIndex === 'number' ? q.answerIndex : 0;
           const correctLetter = ['A', 'B', 'C', 'D'][answerIndex];
           const explanations = Array.isArray(q.explanation) ? q.explanation : [];
           const explanationList = (q.options || []).map((_, i) => {
