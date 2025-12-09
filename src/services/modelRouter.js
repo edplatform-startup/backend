@@ -3,6 +3,7 @@ import { runtimeConfig } from '../config/env.js';
 export const STAGES = Object.freeze({
   PLANNER: 'PLANNER',
   TOPICS: 'TOPICS',
+  TOPICS_BRAINSTORM: 'TOPICS_BRAINSTORM', // High-temp brainstorm for 2-pass chain
   LESSON_ARCHITECT: 'LESSON_ARCHITECT',
   PLAN_VERIFIER: 'PLAN_VERIFIER',
   EXAM_GENERATOR: 'EXAM_GENERATOR',
@@ -28,6 +29,11 @@ const DEFAULTS = {
     model: topicsModel,
     temp: Number.isFinite(topicTemp) ? topicTemp : 0.2,
     top_p: Number.isFinite(topicTopP) ? topicTopP : 0.6,
+  },
+  [STAGES.TOPICS_BRAINSTORM]: {
+    model: topicsModel, // Same model but higher temp for brainstorming
+    temp: 0.6,
+    top_p: 0.9,
   },
   [STAGES.LESSON_ARCHITECT]: {
     model: lessonArchitectModel,
@@ -72,7 +78,7 @@ export function pickModel(stage) {
 }
 
 export function shouldUseTools(stage) {
-  return stage === STAGES.PLANNER || stage === STAGES.TOPICS || stage === STAGES.LESSON_ARCHITECT;
+  return stage === STAGES.PLANNER || stage === STAGES.TOPICS || stage === STAGES.TOPICS_BRAINSTORM || stage === STAGES.LESSON_ARCHITECT;
 }
 
 // Fallback models removed - using single model per stage only

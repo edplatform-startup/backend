@@ -558,35 +558,96 @@ export async function generateHierarchicalTopics(input = {}, userId, courseId = 
       }
     }
 
+    // Prepare text for prompts
     const trimmedSyllabus = coerceTopicString(syllabusText, 'Not provided').slice(0, 4000);
-
-    // Build RAG context section for prompt
     const ragContextSection = ragContext
-      ? `\n\n### Authoritative Excerpts (use for specifics):\nThe following excerpts are from the student's actual syllabus and exam materials. Ground your topic coverage and exam relevance claims in these excerpts when possible.\n\n${ragContext}`
+      ? `\n\n### Authoritative Excerpts:\n${ragContext}`
       : '';
 
-    const systemPrompt = `You are an expert exam prep strategist. You are creating a master study plan for a student.
+    // ========================================================================
+    // 2-PASS TOPIC GENERATION CHAIN
+    // Pass 1: Brainstorm (high temp, web search) - Get 95% coverage
+    // Pass 2: Critic & Architect (low temp) - Find missing 5% + structure
+    // ========================================================================
 
-INPUTS:
-1. The Course Skeleton (chronological list of topics).
-2. The specific Exam Format (e.g., "Multiple choice focus" or "Proof heavy").
-3. The raw syllabus text (for context).
-4. Authoritative excerpts from the student's actual syllabus/exam materials (if provided).
+    // --- PASS 1: BRAINSTORM (High Temperature + Web Search) ---
+    const brainstormSystemPrompt = `You are a subject matter expert helping to create an exhaustive study plan.
 
-YOUR TASK:
-Expand the Skeleton into a detailed Topic Map. For every major topic, generate specific "Atomic Concepts" that act as study milestones.
+YOUR TASK: Brainstorm a comprehensive, FLAT LIST of ALL concepts, terms, formulas, theorems, definitions, techniques, edge cases, and topics for a course on "${coerceTopicString(courseTitle, 'Untitled course')}".
+
+CRITICAL RULES:
+1. Focus on MAXIMUM COVERAGE - aim for 95%+ completeness
+2. Do NOT structure or organize them yet - just list EVERYTHING
+3. Use web search to verify you haven't missed any key topics
+4. Include edge cases, advanced nuances, and theoretical underpinnings
+5. Include both foundational concepts AND advanced applications
+6. Think like a professor creating a final exam - what COULD be tested?
+
+FORMAT: Output one concept per line, no numbering, no categories. Just a flat list of topics/concepts.
+
+Example output format:
+The Epsilon-Delta Definition of a Limit
+Calculating limits using L'Hopital's Rule
+One-sided limits and their notation
+Squeeze Theorem applications
+...`;
+
+    const brainstormUserPrompt = `Course: ${coerceTopicString(courseTitle, 'Untitled course')}
+Institution: ${coerceTopicString(university, 'Unknown')}
+Exam format: ${coerceTopicString(examFormatDetails, 'Not specified')}
+
+Course Skeleton (chronological units):
+${JSON.stringify(rawTopicSummaries.map(s => s.title), null, 2)}
+
+Syllabus excerpt:
+${trimmedSyllabus}${ragContextSection}
+
+Now brainstorm an exhaustive flat list of ALL concepts for this course. Search the web if needed to ensure completeness.`;
+
+    const { result: brainstormResult } = await courseV2LLMCaller({
+      stage: STAGES.TOPICS_BRAINSTORM,
+      messages: [
+        { role: 'system', content: brainstormSystemPrompt.trim() },
+        { role: 'user', content: brainstormUserPrompt.trim() },
+      ],
+      maxTokens: 100000,
+      allowWeb: true,
+      maxToolIterations: 8, // Heavy web search for comprehensive coverage
+      requestTimeoutMs: 300000,
+      userId,
+      courseId,
+      source: 'topics_brainstorm',
+    });
+
+    const brainstormList = typeof brainstormResult?.content === 'string' 
+      ? brainstormResult.content.trim() 
+      : '';
+    
+    console.log(`[courseV2] Brainstorm generated ${brainstormList.split('\n').filter(Boolean).length} raw concepts`);
+
+    // --- PASS 2: CRITIC & ARCHITECT (Low Temperature + JSON Structure) ---
+    const criticSystemPrompt = `You are a PhD specialist and expert curriculum designer. You are creating the definitive study plan for a student.
+
+YOU HAVE BEEN GIVEN:
+1. A brainstormed list of topics (from a previous pass)
+2. The course skeleton and exam format
+3. Authoritative excerpts from the student's syllabus/exam materials
+
+YOUR TASK (3 steps):
+1. **CRITIQUE**: Identify ANY missing advanced nuances, edge cases, prerequisite concepts, or theoretical foundations that were overlooked.
+2. **AUGMENT**: Add these missing topics to create 100% coverage.
+3. **STRUCTURE**: Organize everything into a hierarchical Topic Map with overviewTopics and atomic subtopics.
 
 CRITICAL RULES:
 1. Granularity: Avoid generic titles like "Derivatives". Use actionable concepts like "Calculating derivatives using the Chain Rule".
-2. Bloom's Taxonomy: Ensure subtopics vary in cognitive depth (Definitions -> Application -> Analysis).
-3. Yield Scoring: Estimate how likely this topic is to appear on the exam (High/Medium/Low) based on the exam format provided.
-4. Metadata powers Deep vs. Cram study modes, so fill every field carefully.
-   - **MODE: ${mode.toUpperCase()}**
-   ${mode === 'cram' ? '- FOCUS: MAXIMIZE EXAM VALUE. Generate FEWER topics overall—only high-yield, exam-critical concepts. Aggressively prune "nice-to-know" and peripheral information. Every topic must directly contribute to exam performance.' : '- FOCUS: MAXIMAL UNDERSTANDING AND DEEP RETENTION. Generate comprehensive topics that explore all details, nuances, edge cases, and interconnections. Include foundational concepts, theoretical underpinnings, and extended examples. Prioritize building lasting, transferable knowledge over exam shortcuts.'}
-5. TITLES MUST BE CLEAN: Do NOT include numbering prefixes like "Module 1:", "Week 1:", "Chapter 1:". Just use the descriptive topic name.
-6. GROUNDING: When authoritative excerpts are provided, use them to ground specific claims about topic coverage and exam relevance. Reference specific details from the excerpts in your exam_relevance_reasoning fields.
+2. Bloom's Taxonomy: Ensure subtopics vary in cognitive depth (Remember → Understand → Apply → Analyze → Evaluate).
+3. Yield Scoring: Estimate exam likelihood (High/Medium/Low) based on the exam format provided.
+4. MODE: ${mode.toUpperCase()}
+   ${mode === 'cram' ? '- CRAM MODE: Focus on high-yield, exam-critical concepts only. Prune "nice-to-know" topics.' : '- DEEP MODE: Comprehensive coverage with all nuances and theoretical depth.'}
+5. TITLES: Do NOT include numbering prefixes like "Module 1:", "Week 1:". Just use descriptive names.
+6. GROUNDING: Reference the authoritative excerpts in your exam_relevance_reasoning when possible.
 
-ENUM VALUES (use ONLY these exact strings):
+ENUM VALUES (use ONLY these):
 - **bloom_level**: "Remember" | "Understand" | "Apply" | "Analyze" | "Evaluate"
 - **yield**: "High" | "Medium" | "Low"
 
@@ -611,10 +672,14 @@ OUTPUT JSON STRUCTURE:
 Rules:
 - JSON must be valid (double quotes, no trailing commas, no comments).
 - Provide at least 8 overview topics when possible, each with 4-8 atomic concepts.
-- Do not include extra keys or wrapper text.
-- Do NOT include "id", "overviewId", "estimated_study_time_minutes", or "importance_score" fields - these are added automatically.`;
+- Do NOT include "id", "overviewId", "estimated_study_time_minutes", or "importance_score" fields.`;
 
-    const userPrompt = `Course Details:
+    const criticUserPrompt = `BRAINSTORMED TOPIC LIST (from previous pass):
+${brainstormList}
+
+---
+
+Course Details:
 Institution: ${coerceTopicString(university, 'Unknown institution')}
 Course / exam: ${coerceTopicString(courseTitle, 'Untitled course')}
 Structure type: ${coerceTopicString(syllabus?.course_structure_type, 'Not specified')}
@@ -627,23 +692,24 @@ ${JSON.stringify(rawTopicSummaries, null, 2)}
 Raw syllabus text snippet:
 ${trimmedSyllabus}${ragContextSection}
 
-Using this information, produce competency-based overviewTopics with fully populated atomic concept metadata.`;
-
-    const messages = [
-      { role: 'system', content: systemPrompt.trim() },
-      { role: 'user', content: userPrompt.trim() },
-    ];
+Now:
+1. CRITIQUE the brainstormed list for any missing concepts
+2. ADD the missing topics
+3. STRUCTURE everything into the JSON overviewTopics format`;
 
     const { result, model } = await courseV2LLMCaller({
       stage: STAGES.TOPICS,
-      messages,
+      messages: [
+        { role: 'system', content: criticSystemPrompt.trim() },
+        { role: 'user', content: criticUserPrompt.trim() },
+      ],
       maxTokens: 100000,
-      allowWeb: false, // Disabled web search to avoid compatibility issues with Grok
+      allowWeb: false, // No web for the structuring pass
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 300000, // 5 minutes for TOPICS
+      requestTimeoutMs: 300000,
       userId,
       courseId,
-      source: 'hierarchical_topics',
+      source: 'topics_critic',
     });
 
     let parsed = tryParseJson(result?.content);
