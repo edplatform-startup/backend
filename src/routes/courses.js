@@ -667,7 +667,7 @@ router.post('/topics', async (req, res) => {
 
 import { generateLessonGraph, generateReviewModule } from '../services/courseGenerator.js';
 import { restructureCourse } from '../services/courseRestructure.js';
-import { generatePracticeExam } from '../services/examGenerator.js';
+import { generatePracticeExam, modifyPracticeExam } from '../services/examGenerator.js';
 
 import { convertFilesToPdf } from '../services/examConverter.js';
 import { uploadExamFile, uploadTempFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
@@ -895,6 +895,62 @@ router.get('/:courseId/exams/:type', async (req, res) => {
   } catch (error) {
     console.error('Error fetching practice exams:', error);
     return res.status(500).json({ error: 'Failed to fetch practice exams', details: error.message });
+  }
+});
+
+// POST /:courseId/exams/:type/:examNumber/modify - Modify an existing exam based on user prompt
+router.post('/:courseId/exams/:type/:examNumber/modify', async (req, res) => {
+  const { courseId, type, examNumber } = req.params;
+  const { userId, prompt } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  if (!['midterm', 'final'].includes(type)) {
+    return res.status(400).json({ error: 'type must be either "midterm" or "final"' });
+  }
+
+  const number = parseInt(examNumber, 10);
+  if (isNaN(number) || number < 1) {
+    return res.status(400).json({ error: 'examNumber must be a positive integer' });
+  }
+
+  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+    return res.status(400).json({ error: 'prompt is required and must be a non-empty string' });
+  }
+
+  try {
+    const result = await modifyPracticeExam(courseId, userId, type, number, prompt);
+
+    // Log practice exam modification
+    await logUsageEvent(userId, 'practice_exam_modified', {
+      courseId,
+      examType: type,
+      examNumber: number,
+      promptLength: prompt.length
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error modifying practice exam:', error);
+
+    // Check for specific error types
+    if (error.message.includes('Exam not found')) {
+      return res.status(404).json({ error: error.message });
+    }
+
+    return res.status(500).json({ error: 'Failed to modify practice exam', details: error.message });
   }
 });
 

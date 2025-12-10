@@ -438,7 +438,14 @@ Return the FIXED lesson graph JSON with reduced total time. Maintain all require
   const validSlugs = new Set(lessonGraph.lessons.map((l) => l.slug_id));
   const brokenDependenciesMap = new Map(); // lesson_slug -> [bad_deps]
 
+  // Pre-compute the array once to avoid O(n) conversion on each iteration
+  const validSlugsArray = Array.from(validSlugs);
+
+  // Helper to yield to event loop and prevent CPU blocking
+  const yieldToEventLoop = () => new Promise(resolve => setImmediate(resolve));
+
   // Stage 1: Fuzzy Repair & Identification
+  let similarityChecksCount = 0;
   for (const lesson of lessonGraph.lessons) {
     const newDependencies = [];
     const badDepsForLesson = [];
@@ -447,7 +454,15 @@ Return the FIXED lesson graph JSON with reduced total time. Maintain all require
       if (validSlugs.has(dep)) {
         newDependencies.push(dep);
       } else {
-        const matches = stringSimilarity.findBestMatch(dep, Array.from(validSlugs));
+        // Use pre-computed array instead of creating new one each time
+        const matches = stringSimilarity.findBestMatch(dep, validSlugsArray);
+        similarityChecksCount++;
+        
+        // Yield to event loop every 10 similarity checks to prevent CPU blocking
+        if (similarityChecksCount % 10 === 0) {
+          await yieldToEventLoop();
+        }
+        
         if (matches.bestMatch.rating > 0.9) {
           newDependencies.push(matches.bestMatch.target);
         } else {

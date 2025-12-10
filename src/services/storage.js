@@ -244,3 +244,128 @@ export async function getBlankExam(courseId, userId, examType, examNumber) {
 
   return data.signedUrl;
 }
+
+/**
+ * Downloads an exam file's content as a Buffer.
+ * 
+ * @param {string} courseId - The course ID
+ * @param {string} userId - The user ID
+ * @param {string} examType - The type of the exam (e.g., 'midterm', 'final')
+ * @param {number} examNumber - The number of the exam (e.g., 1, 2)
+ * @returns {Promise<{buffer: Buffer, fileName: string}|null>} The file buffer and name, or null if not found
+ */
+export async function downloadExamFile(courseId, userId, examType, examNumber) {
+  const supabase = getSupabase();
+  const folderPath = `${userId}/${courseId}`;
+
+  // List all files in the course folder
+  const { data: files, error: listError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .list(folderPath);
+
+  if (listError) {
+    console.error(`[storage] Failed to list files for exam download (type: ${examType}, number: ${examNumber}):`, listError);
+    return null;
+  }
+
+  if (!files || files.length === 0) {
+    console.warn(`[storage] No files found in folder ${folderPath}`);
+    return null;
+  }
+
+  // Find a file that matches the type and number
+  const typeRegex = new RegExp(`_${examType}_exam(?:_(\\d+))?\\.pdf$`);
+
+  const matchingFile = files.find(f => {
+    const match = f.name.match(typeRegex);
+    if (!match) return false;
+
+    const num = match[1] ? parseInt(match[1], 10) : 1;
+    return num === examNumber;
+  });
+
+  if (!matchingFile) {
+    console.warn(`[storage] No matching exam found for type '${examType}' number '${examNumber}' in ${folderPath}`);
+    return null;
+  }
+
+  const filePath = `${folderPath}/${matchingFile.name}`;
+  console.log(`[storage] Downloading exam file: ${filePath}`);
+
+  const { data, error } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .download(filePath);
+
+  if (error) {
+    console.error(`[storage] Failed to download exam file ${filePath}:`, error);
+    return null;
+  }
+
+  // Convert Blob to Buffer
+  const arrayBuffer = await data.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  return { buffer, fileName: matchingFile.name };
+}
+
+/**
+ * Deletes a specific exam file from Supabase Storage.
+ * 
+ * @param {string} courseId - The course ID
+ * @param {string} userId - The user ID
+ * @param {string} examType - The type of the exam (e.g., 'midterm', 'final')
+ * @param {number} examNumber - The number of the exam (e.g., 1, 2)
+ * @returns {Promise<{success: boolean, error?: string}>} Deletion result
+ */
+export async function deleteExamFile(courseId, userId, examType, examNumber) {
+  const supabase = getSupabase();
+  const folderPath = `${userId}/${courseId}`;
+
+  // List all files in the course folder
+  const { data: files, error: listError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .list(folderPath);
+
+  if (listError) {
+    console.error(`[storage] Failed to list files for exam deletion (type: ${examType}, number: ${examNumber}):`, listError);
+    return { success: false, error: listError.message };
+  }
+
+  if (!files || files.length === 0) {
+    return { success: false, error: 'No files found' };
+  }
+
+  // Find a file that matches the type and number
+  const typeRegex = new RegExp(`_${examType}_exam(?:_(\\d+))?\\.pdf$`);
+
+  const matchingFile = files.find(f => {
+    const match = f.name.match(typeRegex);
+    if (!match) return false;
+
+    const num = match[1] ? parseInt(match[1], 10) : 1;
+    return num === examNumber;
+  });
+
+  if (!matchingFile) {
+    return { success: false, error: `No matching exam found for type '${examType}' number '${examNumber}'` };
+  }
+
+  const filePath = `${folderPath}/${matchingFile.name}`;
+  console.log(`[storage] Deleting exam file: ${filePath}`);
+
+  const { error: deleteError } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .remove([filePath]);
+
+  if (deleteError) {
+    console.error(`[storage] Failed to delete exam file ${filePath}:`, deleteError);
+    return { success: false, error: deleteError.message };
+  }
+
+  console.log(`[storage] Successfully deleted exam file: ${filePath}`);
+  return { success: true };
+}

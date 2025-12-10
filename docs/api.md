@@ -719,6 +719,41 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
     ```
   - `500 Internal Server Error` → Storage error
 
+### POST /courses/:courseId/exams/:type/:examNumber/modify
+- **Purpose**: Modify an existing practice exam based on a user prompt. The LLM analyzes the current exam and applies requested modifications.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+  - `type` (string, required) – Type of exam: `"midterm"` or `"final"`
+  - `examNumber` (number, required) – Number of the exam to modify (e.g., `1`, `2`)
+- **Request body (JSON)**:
+  - `userId` (string, required) – UUID of the user
+  - `prompt` (string, required) – Instructions for how to modify the exam (e.g., "Make the questions easier", "Add more multiple choice questions", "Focus more on derivatives")
+- **Behavior**:
+  1. Fetches the existing exam PDF from storage.
+  2. Uses LLM (Gemini) to analyze the exam and generate modified content based on the prompt.
+  3. Compiles the modified LaTeX to PDF (with semantic validation and repair if needed).
+  4. Replaces the original exam file in storage with the new version.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "url": "https://...",
+      "name": "midterm_exam_2.pdf",
+      "number": 2
+    }
+    ```
+  - `400 Bad Request` → Missing or invalid parameters
+  - `404 Not Found` → Exam not found
+  - `500 Internal Server Error` → Modification or compilation failure
+- **Example**:
+  ```bash
+  curl -X POST "https://api.kognolearn.com/courses/1cb57cda-a88d/exams/midterm/1/modify" \
+    -H "Authorization: Bearer <jwt_token>" \
+    -H "Content-Type: application/json" \
+    -d '{"userId": "e6e04dbb", "prompt": "Make the questions easier and add hints"}'
+  ```
+
 ### POST /courses/:courseId/grade-exam
 - **Purpose**: Grade an answered exam PDF against a blank exam template using Gemini.
 - **Path parameters**:

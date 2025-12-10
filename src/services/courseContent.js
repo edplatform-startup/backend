@@ -1783,7 +1783,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire text. Markdown
       // Only enrich the first N chunks
       if (i < MAX_ENRICHED && chunk.length > 500) {
         // Generate inline question
-        const questionMd = await generateInlineQuestion(chunk, { title, courseName, moduleName }, userId);
+        const questionMd = await generateInlineQuestion(chunk, { title, courseName, moduleName }, userId, courseId);
         if (questionMd) {
           chunk += questionMd;
         }
@@ -4124,7 +4124,7 @@ Return JSON ONLY. Populate final_content.markdown with the entire updated text.`
     for (let i = 0; i < chunks.length; i++) {
       let chunk = chunks[i];
       if (i < MAX_ENRICHED && chunk.length > 500) {
-        const questionMd = await generateInlineQuestion(chunk, { title, courseName, moduleName }, userId);
+        const questionMd = await generateInlineQuestion(chunk, { title, courseName, moduleName }, userId, courseId);
         if (questionMd) {
           chunk += questionMd;
         }
