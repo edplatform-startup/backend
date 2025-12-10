@@ -3,10 +3,10 @@ import { executeOpenRouterChat, getCostTotals } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import { validateAndRepairLatex } from '../utils/latexUtils.js';
 import {
-  parseXmlReadings,
   parseXmlQuizzes,
   parseXmlFlashcards,
-  parseXmlInlineQuestions
+  parseXmlInlineQuestions,
+  parseXmlPracticeProblems
 } from '../utils/xmlUtils.js';
 // Keep csvToQuiz for fallback parsing and other non-batch uses
 import { csvToQuiz, parseCSV } from '../utils/csvUtils.js';
@@ -3002,6 +3002,126 @@ Output all flashcards as XML-delimited blocks.`
 }
 
 /**
+ * Generates practice problems for all lessons in a module with a single LLM call.
+ * Uses XML tags for structured output that gets parsed to JSON.
+ * @param {Array} lessons - Array of lesson objects with id, title, content_payload
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, {data: Array, stats: object}>>} - Map of lesson_id -> practice problems result
+ */
+export async function generateModulePracticeProblems(lessons, courseName, moduleName, userId, courseId) {
+  if (!lessons?.length) return new Map();
+
+  // Build lesson plans summary
+  const lessonPlans = lessons.map(l => {
+    const plans = l.content_payload?.generation_plans || {};
+    return `Lesson ID: "${l.id}"
+Title: "${l.title}"
+Practice Plan: ${plans.practice_problems || plans.practiceProblems || 'Generate exam-style practice problems'}`;
+  }).join('\n\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are creating exam-style practice problems for module "${moduleName}" in course "${courseName}".
+Generate 2-3 practice problems for EACH of the ${lessons.length} lessons.
+
+CONTENT QUALITY REQUIREMENTS:
+1. **Difficulty**: Problems must be harder than quiz questions, requiring multi-step reasoning (10-20 min to solve).
+2. **Completeness**: Include a detailed Rubric and comprehensive Sample Answer for each.
+3. **Rubric**: Break down points (total 10) into specific criteria.
+4. **Sample Answer**: Show step-by-step solution, not just the final result.
+
+OUTPUT FORMAT - Use XML tags:
+
+<PRACTICE_PROBLEMS lesson_id="[exact_lesson_id]">
+<PROBLEM estimated_minutes="15" difficulty="Hard">
+<QUESTION>Full problem statement text...</QUESTION>
+<RUBRIC total_points="10">
+  <CRITERION points="3">Correct setup of equations</CRITERION>
+  <CRITERION points="4">Correct application of theorem</CRITERION>
+  <CRITERION points="3">Final answer with units</CRITERION>
+</RUBRIC>
+<SAMPLE_ANSWER>
+  <STEP>Step 1: Identify variables...</STEP>
+  <STEP>Step 2: Apply formula...</STEP>
+  <FINAL_ANSWER>The velocity is 5 m/s.</FINAL_ANSWER>
+</SAMPLE_ANSWER>
+</PROBLEM>
+<!-- more problems... -->
+</PRACTICE_PROBLEMS>
+
+<PRACTICE_PROBLEMS lesson_id="[next_lesson_id]">
+...
+</PRACTICE_PROBLEMS>
+
+LaTeX: Use \\(...\\) for inline math. Do NOT use $ or $$.`
+    },
+    {
+      role: 'user',
+      content: `Generate practice problems for these lessons:
+
+${lessonPlans}
+
+Output all problems as XML-delimited blocks.`
+    }
+  ];
+
+  try {
+    const { content } = await grokExecutor({
+      model: CONTENT_GEN_MODEL,
+      temperature: 0.25,
+      maxTokens: 100000,
+      messages,
+      requestTimeoutMs: 600000,
+      reasoning: CONTENT_REASONING,
+      userId,
+      source: 'batch_practice_problems',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const problemsMap = parseXmlPracticeProblems(text);
+    const results = new Map();
+
+    for (const lesson of lessons) {
+      const problems = problemsMap.get(lesson.id);
+      if (Array.isArray(problems) && problems.length > 0) {
+        // Validation logic re-used from individual generator
+        const validator = (item, index) => {
+          try {
+            return { valid: true, data: normalizePracticeProblem(item, index) };
+          } catch (e) {
+            return { valid: false, error: e.message };
+          }
+        };
+
+        const repairPrompt = (brokenItems, errors) => {
+          return `Fix these practice problems:\n${JSON.stringify(brokenItems)}\nErrors:\n${JSON.stringify(errors)}`;
+        };
+
+        const { items: repairedProblems, stats } = await repairContentArray(problems, validator, repairPrompt, 'generateModulePracticeProblems', userId, courseId);
+
+        results.set(lesson.id, {
+          data: repairedProblems,
+          stats
+        });
+      } else {
+        console.warn(`[generateModulePracticeProblems] No problems generated for ${lesson.id}`);
+        results.set(lesson.id, null);
+      }
+    }
+
+    return results;
+  } catch (error) {
+    console.error(`[generateModulePracticeProblems] Batch generation failed:`, error.message);
+    return new Map();
+  }
+}
+
+/**
  * Generates inline questions for all lessons in a module with a single LLM call.
  * Uses XML tags for structured output that gets parsed to JSON, then converted to markdown.
  * @param {Array} lessons - Array of lesson objects with id, title
@@ -3345,37 +3465,47 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
     return isModuleQuiz && (plans.practice_problems || plans.practiceProblems);
   });
 
-  // Generate all content types in parallel batches (6 calls total per module)
-  // 1. Readings, 2. Quizzes, 3. Flashcards run in parallel
-  const [readingsMap, quizzesMap, flashcardsMap] = await Promise.all([
-    needsReading.length ? generateModuleReadings(needsReading, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
-    needsQuiz.length ? generateModuleQuizzes(needsQuiz, courseName, moduleName, prereqMap, mode, userId, courseId) : Promise.resolve(new Map()),
-    needsFlashcards.length ? generateModuleFlashcards(needsFlashcards, courseName, moduleName, userId, courseId) : Promise.resolve(new Map())
+  // Generate content types in parallel
+  // 1. Readings, Quizzes, Flashcards, Videos, PracticeProblems (Independent)
+  // 2. InlineQuestions (Dependent on Readings)
+
+  // Start independent tasks
+  const pReadings = needsReading.length 
+    ? generateModuleReadings(needsReading, courseName, moduleName, prereqMap, mode, userId, courseId)
+    : Promise.resolve(new Map());
+
+  const pQuizzes = needsQuiz.length
+    ? generateModuleQuizzes(needsQuiz, courseName, moduleName, prereqMap, mode, userId, courseId)
+    : Promise.resolve(new Map());
+
+  const pFlashcards = needsFlashcards.length
+    ? generateModuleFlashcards(needsFlashcards, courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+  
+  const pVideos = needsVideo.length
+    ? generateModuleVideos(needsVideo, courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+
+  const pPractice = needsPractice.length
+    ? generateModulePracticeProblems(needsPractice, courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+
+  // Wait for readings to start InlineQuestions (but don't block other tasks)
+  const pInlineQuestions = pReadings.then(readingsMap => {
+    return needsReading.length
+      ? generateModuleInlineQuestions(needsReading, readingsMap, courseName, moduleName, userId, courseId)
+      : new Map();
+  });
+
+  // Await all results together
+  const [readingsMap, quizzesMap, flashcardsMap, videoResults, practiceResults, inlineQuestionsMap] = await Promise.all([
+    pReadings,
+    pQuizzes,
+    pFlashcards,
+    pVideos,
+    pPractice,
+    pInlineQuestions
   ]);
-
-  // 4. Generate inline questions for all lessons (needs readings first)
-  const inlineQuestionsMap = needsReading.length
-    ? await generateModuleInlineQuestions(needsReading, readingsMap, courseName, moduleName, userId, courseId)
-    : new Map();
-
-  // 5. Generate videos for all lessons in module (batched)
-  const videoResults = needsVideo.length
-    ? await generateModuleVideos(needsVideo, courseName, moduleName, userId, courseId)
-    : new Map();
-
-  // Generate practice problems individually (complex structure - kept separate)
-  const practiceResults = new Map();
-  for (const lesson of needsPractice) {
-    const plans = lesson.content_payload?.generation_plans || {};
-    const practicePlan = plans.practice_problems || plans.practiceProblems;
-    try {
-      const result = await generatePracticeProblems(lesson.title, practicePlan, courseName, moduleName, userId, courseId);
-      practiceResults.set(lesson.id, result);
-    } catch (e) {
-      console.warn(`[processModuleBatched] Practice problems failed for ${lesson.id}:`, e.message);
-      practiceResults.set(lesson.id, null);
-    }
-  }
 
   // Now update each lesson with its generated content
   let processed = 0;

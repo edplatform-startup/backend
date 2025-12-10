@@ -321,3 +321,105 @@ export function parseXmlInlineQuestions(responseText) {
 
   return result;
 }
+
+/**
+ * Parse practice problems from XML-tagged content.
+ * Format:
+ * <PRACTICE_PROBLEMS lesson_id="...">
+ *   // ... content ...
+ * </PRACTICE_PROBLEMS>
+ * 
+ * @param {string} responseText - Raw XML text from LLM
+ * @returns {Map<string, Array>} - Map of lesson_id -> practice problems array
+ */
+export function parseXmlPracticeProblems(responseText) {
+  const result = new Map();
+  if (!responseText) return result;
+
+  // Match each PRACTICE_PROBLEMS block
+  const blockRegex = /<PRACTICE_PROBLEMS\s+lesson_id="([^"]+)">([\s\S]*?)<\/PRACTICE_PROBLEMS>/g;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(responseText)) !== null) {
+    const lessonId = blockMatch[1].trim();
+    const blockContent = blockMatch[2];
+    
+    if (!lessonId) continue;
+
+    const problems = [];
+    
+    // Match each PROBLEM
+    const problemRegex = /<PROBLEM(?:\s+estimated_minutes="([^"]*)")?(?:\s+difficulty="([^"]*)")?>([\s\S]*?)<\/PROBLEM>/g;
+    let pMatch;
+
+    while ((pMatch = problemRegex.exec(blockContent)) !== null) {
+      const estMinutes = parseInt(pMatch[1], 10) || 15;
+      const difficulty = pMatch[2] || 'Hard';
+      const problemContent = pMatch[3];
+
+      const getText = (tag) => {
+        const match = problemContent.match(new RegExp(`<${tag}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      const getAttr = (tag, attr) => {
+        const match = problemContent.match(new RegExp(`<${tag}[^>]*\\s+${attr}="([^"]*)"`, 'i'));
+        return match ? match[1] : null;
+      };
+
+      // Rubric parsing
+      const rubricContent = getText('RUBRIC');
+      const totalPoints = parseInt(getAttr('RUBRIC', 'total_points'), 10) || 10;
+      const gradingCriteria = [];
+      const critRegex = /<CRITERION\s+points="(\d+)">([\s\S]*?)<\/CRITERION>/g;
+      let cMatch;
+      while ((cMatch = critRegex.exec(rubricContent)) !== null) {
+        gradingCriteria.push({
+          criterion: cMatch[2].trim(),
+          points: parseInt(cMatch[1], 10),
+          common_errors: []
+        });
+      }
+
+      // Sample Answer parsing
+      const answerContent = getText('SAMPLE_ANSWER');
+      const steps = [];
+      const stepRegex = /<STEP>([\s\S]*?)<\/STEP>/g;
+      let sMatch;
+      while ((sMatch = stepRegex.exec(answerContent)) !== null) {
+        steps.push(sMatch[1].trim());
+      }
+      const finalAnswer = getText('FINAL_ANSWER', answerContent) || (answerContent.match(/<FINAL_ANSWER>([\s\S]*?)<\/FINAL_ANSWER>/i)?.[1] || '').trim();
+
+      const problem = {
+        question: getText('QUESTION'),
+        estimated_minutes: estMinutes,
+        difficulty,
+        topic_tags: [],
+        rubric: {
+          total_points: totalPoints,
+          grading_criteria: gradingCriteria,
+          partial_credit_policy: 'Award partial credit for correct approach.'
+        },
+        sample_answer: {
+          solution_steps: steps,
+          final_answer: finalAnswer,
+          key_insights: [],
+          alternative_approaches: []
+        },
+        _needsValidation: false
+      };
+
+      if (problem.question && problem.sample_answer.final_answer) {
+        problems.push(problem);
+      }
+    }
+
+    if (problems.length > 0) {
+      result.set(lessonId, problems);
+    }
+  }
+
+  return result;
+}
+
