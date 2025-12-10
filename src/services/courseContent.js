@@ -14,7 +14,7 @@ import {
   parseXmlBlackboxProblems
 } from '../utils/xmlUtils.js';
 // Keep csvToQuiz for fallback parsing and other non-batch uses
-import { csvToQuiz, csvToFlashcards, parseCSV } from '../utils/csvUtils.js';
+import { csvToQuiz, parseCSV } from '../utils/csvUtils.js';
 import yts from 'yt-search';
 import {
   rateQuestionConfidence,
@@ -2827,33 +2827,35 @@ Please correct the problem to address these issues. Ensure the sample answer is 
 }
 
 export async function generateFlashcards(title, plan, courseName, moduleName, userId, courseId) {
-  // CSV-based prompt for lower token usage
   const messages = [
     {
       role: 'system',
       content: `You are building flashcards for "${title}" in module "${moduleName}" of course "${courseName}".
 
-OUTPUT FORMAT: CSV (to minimize tokens)
-Header: index,front,back
+CONTENT QUALITY REQUIREMENTS:
+1. **Purpose**: Each flashcard must test a specific, important concept worth memorizing.
+2. **Clarity**: Front side must be a clear, unambiguous question or prompt.
+3. **Completeness**: Back side must give a COMPLETE answer - not just a one-word response.
+4. **Depth**: Include explanations of "why" on the back when appropriate, not just definitions.
+5. **No Trivial Cards**: Avoid superficial questions; focus on concepts that require active recall.
 
-Rules:
-- Each row = one flashcard
-- front: Question/prompt for learner
-- back: Concise answer
-- Escape commas with quotes: "text, with comma"
-- Use LaTeX only for math: \\(...\\)
+OUTPUT FORMAT - Use XML tags:
 
-Example:
-index,front,back
-0,"What is the derivative of x²?","2x"
-1,"Define photosynthesis","Process where plants convert light to chemical energy"`,
+<FLASHCARDS lesson_id="${title}">
+<CARD>
+<FRONT>Clear question or prompt that tests an important concept</FRONT>
+<BACK>Complete answer in full sentences, with explanation when needed</BACK>
+</CARD>
+</FLASHCARDS>
+
+LaTeX: Use \\\\(...\\\\) for inline math, \\\\[...\\\\] for display. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
-      content: `Generate 5-7 flashcards as CSV for "${title}".
+      content: `Generate 5-7 flashcards for "${title}".
 Plan: ${plan}
 
-Return ONLY the CSV with header row. No markdown fences.`,
+Output as XML-delimited blocks.`,
     },
   ];
   const { content } = await grokExecutor({
@@ -2869,13 +2871,12 @@ Return ONLY the CSV with header row. No markdown fences.`,
   });
   const text = coerceModelText(content);
 
-  let flashcards;
   try {
-    // Try CSV parsing first
-    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    flashcards = csvToFlashcards(csvText);
+    // Parse XML format
+    const flashcardsMap = parseXmlFlashcards(text);
+    let flashcards = flashcardsMap.get(title) || [];
 
-    // If CSV parsing failed, fallback to JSON
+    // Fallback to JSON if XML parsing failed
     if (!flashcards.length) {
       flashcards = parseJsonArray(text, 'flashcards');
     }
@@ -4242,34 +4243,46 @@ Rules:
 
     return { data: repairedQuestions, stats };
   } catch (err) {
+
     throw err;
   }
 }
 
 export async function regenerateFlashcards(title, currentCards, changeInstruction, courseName, moduleName, userId, courseId) {
-  // Convert current cards to CSV for input (lower tokens)
-  const currentCardsCSV = flashcardsToCSV(currentCards);
+  // Format current cards for the prompt
+  const currentCardsText = (currentCards || []).map((c, i) => 
+    `Card ${i + 1}:\n  Front: ${c.front}\n  Back: ${c.back}`
+  ).join('\n\n');
 
   const messages = [
     {
       role: 'system',
       content: `You are editing flashcards for "${title}" in module "${moduleName}".
 
-Current Cards (CSV):
-${currentCardsCSV}
+Current Cards:
+${currentCardsText}
 
-Change: ${changeInstruction}
+Requested Change: ${changeInstruction}
 
-OUTPUT FORMAT: CSV
-Header: index,front,back
+CONTENT QUALITY REQUIREMENTS:
+1. Each flashcard must test a specific, important concept worth memorizing.
+2. Front side must be a clear, unambiguous question or prompt.
+3. Back side must give a COMPLETE answer, not just one word.
 
-Rules:
-- Modify cards as requested
-- Use LaTeX for math: \\(...\\)`,
+OUTPUT FORMAT - Use XML tags:
+
+<FLASHCARDS lesson_id="${title}">
+<CARD>
+<FRONT>Question or prompt</FRONT>
+<BACK>Complete answer</BACK>
+</CARD>
+</FLASHCARDS>
+
+LaTeX: Use \\\\(...\\\\) for inline math. Do NOT use $ or $$.`,
     },
     {
       role: 'user',
-      content: `Generate the updated flashcards as CSV. Return ONLY CSV with header row.`,
+      content: `Apply the requested change and output the updated flashcards as XML.`,
     },
   ];
 
@@ -4288,14 +4301,15 @@ Rules:
   const text = coerceModelText(content);
 
   try {
-    // Try CSV parsing first
-    const csvText = text.replace(/^```(?:csv)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    let flashcards = csvToFlashcards(csvText);
+    // Parse XML format
+    const flashcardsMap = parseXmlFlashcards(text);
+    let flashcards = flashcardsMap.get(title) || [];
 
-    // Fallback to JSON if CSV fails
+    // Fallback to JSON if XML fails
     if (!flashcards.length) {
       flashcards = parseJsonArray(text, 'flashcards');
     }
+    
     const validator = (item, index) => {
       try {
         let cleanItem = item;

@@ -754,6 +754,89 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
     -d '{"userId": "e6e04dbb", "prompt": "Make the questions easier and add hints"}'
   ```
 
+### POST /courses/:courseId/cheatsheets
+- **Purpose**: Generate a print-ready PDF cheat sheet summarizing course content.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request body (JSON)**:
+  - `userPrompt` (string, required) – Free-form instructions for cheat sheet focus (e.g., "focus on midterm 1 topics and my weak areas in probability")
+  - `lessonIds` (string[], optional) – Specific lesson IDs to include
+  - `includeWeakTopics` (boolean, optional, default: true) – Include user's weak areas based on quiz performance
+- **Behavior**:
+  1. Fetches course content and lesson summaries from the database.
+  2. Optionally retrieves user's incorrect quiz questions to identify weak areas.
+  3. Generates compact LaTeX cheat sheet using Gemini with high-yield content.
+  4. Compiles to PDF with two-column layout, 10pt font, 0.5in margins.
+  5. Uploads to the `cheatsheets` storage bucket.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "url": "https://...",
+      "name": "cheatsheet_1.pdf",
+      "number": 1
+    }
+    ```
+  - `400 Bad Request` → Missing or invalid parameters
+  - `500 Internal Server Error` → Generation failure
+- **Example**:
+  ```bash
+  curl -X POST "https://api.kognolearn.com/courses/1cb57cda-a88d/cheatsheets" \
+    -H "Authorization: Bearer <jwt_token>" \
+    -H "Content-Type: application/json" \
+    -d '{"userPrompt": "Focus on calculus formulas and integration techniques"}'
+  ```
+
+### GET /courses/:courseId/cheatsheets
+- **Purpose**: List all generated cheatsheets for a course.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "cheatsheets": [
+        { "name": "cheatsheet_1.pdf", "url": "https://...", "number": 1 },
+        { "name": "cheatsheet_2.pdf", "url": "https://...", "number": 2 }
+      ]
+    }
+    ```
+  - `500 Internal Server Error` → Storage error
+
+### POST /courses/:courseId/cheatsheets/:number/modify
+- **Purpose**: Modify an existing cheatsheet based on user instructions.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+  - `number` (number, required) – The cheatsheet number to modify
+- **Request body (JSON)**:
+  - `prompt` (string, required) – Instructions for modification (e.g., "Add more formulas for integration", "Make it more concise")
+- **Behavior**:
+  1. Fetches the existing cheatsheet PDF from storage.
+  2. Sends to Gemini with modification instructions.
+  3. Regenerates and replaces the PDF in storage.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "url": "https://...",
+      "name": "cheatsheet_1.pdf",
+      "number": 1
+    }
+    ```
+  - `400 Bad Request` → Missing or invalid parameters
+  - `404 Not Found` → Cheatsheet not found
+  - `500 Internal Server Error` → Modification failure
+- **Example**:
+  ```bash
+  curl -X POST "https://api.kognolearn.com/courses/1cb57cda-a88d/cheatsheets/1/modify" \
+    -H "Authorization: Bearer <jwt_token>" \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "Add integration by parts formula and more trig identities"}'
+  ```
+
 ### POST /courses/:courseId/grade-exam
 - **Purpose**: Grade an answered exam PDF against a blank exam template using Gemini.
 - **Path parameters**:

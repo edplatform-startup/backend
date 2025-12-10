@@ -671,6 +671,8 @@ import { generatePracticeExam, modifyPracticeExam } from '../services/examGenera
 
 import { convertFilesToPdf } from '../services/examConverter.js';
 import { uploadExamFile, uploadTempFile, deleteCourseFiles, getCourseExamFiles } from '../services/storage.js';
+import { generateCheatsheet, modifyCheatsheet } from '../services/cheatsheetGenerator.js';
+import { getCourseCheatsheetFiles } from '../services/cheatsheetStorage.js';
 
 router.post('/:courseId/review-modules', async (req, res) => {
   const { courseId } = req.params;
@@ -951,6 +953,139 @@ router.post('/:courseId/exams/:type/:examNumber/modify', async (req, res) => {
     }
 
     return res.status(500).json({ error: 'Failed to modify practice exam', details: error.message });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Cheatsheet endpoints                                                      */
+/* -------------------------------------------------------------------------- */
+
+// POST /:courseId/cheatsheets - Generate a new cheatsheet
+router.post('/:courseId/cheatsheets', async (req, res) => {
+  const { courseId } = req.params;
+  const userId = req.user.id; // From JWT via requireAuth middleware
+  const { userPrompt, lessonIds, includeWeakTopics } = req.body;
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  if (!userPrompt || typeof userPrompt !== 'string' || userPrompt.trim().length === 0) {
+    return res.status(400).json({ error: 'userPrompt is required and must be a non-empty string' });
+  }
+
+  // Validate lessonIds if provided
+  if (lessonIds !== undefined) {
+    if (!Array.isArray(lessonIds)) {
+      return res.status(400).json({ error: 'lessonIds must be an array if provided' });
+    }
+    for (const id of lessonIds) {
+      const lessonValidation = validateUuid(id, 'lessonId');
+      if (!lessonValidation.valid) {
+        return res.status(400).json({ error: lessonValidation.error });
+      }
+    }
+  }
+
+  try {
+    const result = await generateCheatsheet(courseId, userId, userPrompt, {
+      lessonIds,
+      includeWeakTopics: includeWeakTopics !== false, // Default to true
+    });
+
+    // Log cheatsheet generation
+    await logUsageEvent(userId, 'cheatsheet_generated', {
+      courseId,
+      cheatsheetNumber: result.number,
+      promptLength: userPrompt.length,
+      lessonCount: lessonIds?.length || 0,
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error generating cheatsheet:', error);
+    return res.status(500).json({ error: 'Failed to generate cheatsheet', details: error.message });
+  }
+});
+
+// GET /:courseId/cheatsheets - List all cheatsheets for a course
+router.get('/:courseId/cheatsheets', async (req, res) => {
+  const { courseId } = req.params;
+  const userId = req.user.id;
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  try {
+    const files = await getCourseCheatsheetFiles(courseId, userId);
+
+    // Parse cheatsheet numbers from filenames
+    const cheatsheetRegex = /_cheatsheet_(\d+)\.pdf$/;
+    const cheatsheets = files
+      .filter(f => cheatsheetRegex.test(f.name))
+      .map(f => {
+        const match = f.name.match(cheatsheetRegex);
+        return {
+          name: f.name,
+          url: f.url,
+          number: parseInt(match[1], 10),
+        };
+      })
+      .sort((a, b) => a.number - b.number);
+
+    // Log cheatsheet list view
+    await logUsageEvent(userId, 'cheatsheet_list_viewed', { courseId });
+
+    return res.json({ success: true, cheatsheets });
+  } catch (error) {
+    console.error('Error fetching cheatsheets:', error);
+    return res.status(500).json({ error: 'Failed to fetch cheatsheets', details: error.message });
+  }
+});
+
+// POST /:courseId/cheatsheets/:number/modify - Modify an existing cheatsheet
+router.post('/:courseId/cheatsheets/:number/modify', async (req, res) => {
+  const { courseId, number } = req.params;
+  const userId = req.user.id;
+  const { prompt } = req.body;
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  const cheatsheetNumber = parseInt(number, 10);
+  if (isNaN(cheatsheetNumber) || cheatsheetNumber < 1) {
+    return res.status(400).json({ error: 'number must be a positive integer' });
+  }
+
+  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+    return res.status(400).json({ error: 'prompt is required and must be a non-empty string' });
+  }
+
+  try {
+    const result = await modifyCheatsheet(courseId, userId, cheatsheetNumber, prompt);
+
+    // Log cheatsheet modification
+    await logUsageEvent(userId, 'cheatsheet_modified', {
+      courseId,
+      cheatsheetNumber,
+      promptLength: prompt.length,
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error modifying cheatsheet:', error);
+
+    // Check for specific error types
+    if (error.message.includes('Cheatsheet not found')) {
+      return res.status(404).json({ error: error.message });
+    }
+
+    return res.status(500).json({ error: 'Failed to modify cheatsheet', details: error.message });
   }
 });
 

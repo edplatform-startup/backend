@@ -623,12 +623,12 @@ async function executeRemoveLesson(supabase, courseId, userId, operation, log) {
 /**
  * Execute edit_lesson operation
  * Now supports both regenerating existing content AND generating new content from scratch.
+ * All content types are generated in parallel for maximum speed.
  */
 async function executeEditLesson(supabase, courseId, userId, courseTitle, courseMode, node, operation, log) {
   const { lesson_id, changes } = operation;
   const payload = node.content_payload || {};
   const newPayload = { ...payload };
-  let updated = false;
 
   log.logOperation('edit_lesson', {
     lesson_id,
@@ -641,139 +641,175 @@ async function executeEditLesson(supabase, courseId, userId, courseTitle, course
   if (changes.title) updateFields.title = changes.title;
   if (changes.description) updateFields.description = changes.description;
 
+  // Build parallel content generation tasks
+  const tasks = [];
+
   // Reading changes
   if (changes.reading) {
     log.logWorkerExecution(lesson_id, node.title, 'reading', changes.reading, 'started');
-    try {
-      let res;
-      if (payload.reading) {
-        // Regenerate existing content
-        res = await regenerateReading(
-          node.title,
-          payload.reading,
-          changes.reading,
-          courseTitle,
-          node.module_ref,
-          [],
-          userId,
-          courseId
-        );
-      } else {
-        // Generate new content from scratch
-        res = await generateReading(
-          node.title,
-          changes.reading,
-          courseTitle,
-          node.module_ref,
-          [],
-          courseMode,
-          userId,
-          courseId
-        );
-      }
-      newPayload.reading = res.data;
-      updated = true;
-      log.logWorkerExecution(lesson_id, node.title, 'reading', changes.reading, 'success');
-    } catch (e) {
-      log.logWorkerExecution(lesson_id, node.title, 'reading', changes.reading, 'failed', e.message);
-    }
+    tasks.push({
+      type: 'reading',
+      instruction: changes.reading,
+      promise: (async () => {
+        if (payload.reading) {
+          return regenerateReading(
+            node.title,
+            payload.reading,
+            changes.reading,
+            courseTitle,
+            node.module_ref,
+            [],
+            userId,
+            courseId
+          );
+        } else {
+          return generateReading(
+            node.title,
+            changes.reading,
+            courseTitle,
+            node.module_ref,
+            [],
+            courseMode,
+            userId,
+            courseId
+          );
+        }
+      })()
+    });
   }
 
   // Quiz changes
   if (changes.quiz) {
     log.logWorkerExecution(lesson_id, node.title, 'quiz', changes.quiz, 'started');
-    try {
-      let res;
-      if (payload.quiz) {
-        // Regenerate existing content
-        res = await regenerateQuiz(
-          node.title,
-          payload.quiz,
-          changes.quiz,
-          courseTitle,
-          node.module_ref,
-          [],
-          userId,
-          courseId
-        );
-      } else {
-        // Generate new content from scratch
-        res = await generateQuiz(
-          node.title,
-          changes.quiz,
-          courseTitle,
-          node.module_ref,
-          [],
-          courseMode,
-          userId,
-          courseId
-        );
-      }
-      newPayload.quiz = res.data;
-      updated = true;
-      log.logWorkerExecution(lesson_id, node.title, 'quiz', changes.quiz, 'success');
-    } catch (e) {
-      log.logWorkerExecution(lesson_id, node.title, 'quiz', changes.quiz, 'failed', e.message);
-    }
+    tasks.push({
+      type: 'quiz',
+      instruction: changes.quiz,
+      promise: (async () => {
+        if (payload.quiz) {
+          return regenerateQuiz(
+            node.title,
+            payload.quiz,
+            changes.quiz,
+            courseTitle,
+            node.module_ref,
+            [],
+            userId,
+            courseId
+          );
+        } else {
+          return generateQuiz(
+            node.title,
+            changes.quiz,
+            courseTitle,
+            node.module_ref,
+            [],
+            courseMode,
+            userId,
+            courseId
+          );
+        }
+      })()
+    });
   }
 
   // Flashcard changes
   if (changes.flashcards) {
     log.logWorkerExecution(lesson_id, node.title, 'flashcards', changes.flashcards, 'started');
-    try {
-      let res;
-      if (payload.flashcards) {
-        // Regenerate existing content
-        res = await regenerateFlashcards(
-          node.title,
-          payload.flashcards,
-          changes.flashcards,
-          courseTitle,
-          node.module_ref,
-          userId,
-          courseId
-        );
-      } else {
-        // Generate new content from scratch
-        res = await generateFlashcards(
-          node.title,
-          changes.flashcards,
-          courseTitle,
-          node.module_ref,
-          userId,
-          courseId
-        );
-      }
-      newPayload.flashcards = res.data;
-      updated = true;
-      log.logWorkerExecution(lesson_id, node.title, 'flashcards', changes.flashcards, 'success');
-    } catch (e) {
-      log.logWorkerExecution(lesson_id, node.title, 'flashcards', changes.flashcards, 'failed', e.message);
-    }
+    tasks.push({
+      type: 'flashcards',
+      instruction: changes.flashcards,
+      promise: (async () => {
+        if (payload.flashcards) {
+          return regenerateFlashcards(
+            node.title,
+            payload.flashcards,
+            changes.flashcards,
+            courseTitle,
+            node.module_ref,
+            userId,
+            courseId
+          );
+        } else {
+          return generateFlashcards(
+            node.title,
+            changes.flashcards,
+            courseTitle,
+            node.module_ref,
+            userId,
+            courseId
+          );
+        }
+      })()
+    });
   }
 
   // Video changes
   if (changes.video && Array.isArray(changes.video) && changes.video.length > 0) {
     log.logWorkerExecution(lesson_id, node.title, 'video', changes.video.join(', '), 'started');
-    try {
-      const res = await generateVideoSelection(changes.video, userId, courseId);
-      newPayload.video = res.videos;
-      newPayload.video_logs = res.logs;
-      updated = true;
-      log.logWorkerExecution(lesson_id, node.title, 'video', changes.video.join(', '), 'success');
-    } catch (e) {
-      log.logWorkerExecution(lesson_id, node.title, 'video', changes.video.join(', '), 'failed', e.message);
-    }
+    tasks.push({
+      type: 'video',
+      instruction: changes.video.join(', '),
+      promise: generateVideoSelection(changes.video, userId, courseId)
+    });
   }
 
-  // Persist changes
-  if (updated || Object.keys(updateFields).length > 0) {
+  // Execute all tasks in parallel
+  if (tasks.length > 0) {
+    const results = await Promise.allSettled(tasks.map(t => t.promise));
+    
+    let updated = false;
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const result = results[i];
+      
+      if (result.status === 'fulfilled') {
+        const res = result.value;
+        if (task.type === 'reading') {
+          newPayload.reading = res.data;
+          updated = true;
+          log.logWorkerExecution(lesson_id, node.title, 'reading', task.instruction, 'success');
+        } else if (task.type === 'quiz') {
+          newPayload.quiz = res.data;
+          updated = true;
+          log.logWorkerExecution(lesson_id, node.title, 'quiz', task.instruction, 'success');
+        } else if (task.type === 'flashcards') {
+          newPayload.flashcards = res.data;
+          updated = true;
+          log.logWorkerExecution(lesson_id, node.title, 'flashcards', task.instruction, 'success');
+        } else if (task.type === 'video') {
+          newPayload.video = res.videos;
+          newPayload.video_logs = res.logs;
+          updated = true;
+          log.logWorkerExecution(lesson_id, node.title, 'video', task.instruction, 'success');
+        }
+      } else {
+        log.logWorkerExecution(lesson_id, node.title, task.type, task.instruction, 'failed', result.reason?.message || 'Unknown error');
+      }
+    }
+
+    // Persist changes
+    if (updated || Object.keys(updateFields).length > 0) {
+      const { error: updateError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .update({
+          ...updateFields,
+          content_payload: newPayload,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', lesson_id);
+
+      if (updateError) {
+        throw new Error(`Failed to update lesson: ${updateError.message}`);
+      }
+    }
+  } else if (Object.keys(updateFields).length > 0) {
+    // Only title/description changes, no content changes
     const { error: updateError } = await supabase
       .schema('api')
       .from('course_nodes')
       .update({
         ...updateFields,
-        content_payload: newPayload,
         updated_at: new Date().toISOString(),
       })
       .eq('id', lesson_id);

@@ -9,6 +9,7 @@ export const STAGES = Object.freeze({
   EXAM_GENERATOR: 'EXAM_GENERATOR',
   EXAM_GRADER: 'EXAM_GRADER',
   VALIDATOR: 'VALIDATOR',
+  CHEATSHEET_GENERATOR: 'CHEATSHEET_GENERATOR',
 });
 
 const { courseV2Models = {} } = runtimeConfig;
@@ -59,6 +60,11 @@ const DEFAULTS = {
     model: 'google/gemini-3-pro-preview',
     temp: 0.1,
     top_p: 0.5,
+  },
+  [STAGES.CHEATSHEET_GENERATOR]: {
+    model: 'google/gemini-3-pro-preview',
+    temp: 0.4,
+    top_p: 0.8,
   },
 };
 
