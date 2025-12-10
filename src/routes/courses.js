@@ -13,6 +13,7 @@ import { parseSharedCourseInputs, buildAttachmentList, toTrimmedString } from '.
 import { gradeExam } from '../services/examGrader.js';
 import { logUsageEvent } from '../utils/analytics.js';
 import { getCostTotals } from '../services/grokClient.js';
+import { parseAnkiFile } from '../services/ankiParser.js';
 import multer from 'multer';
 
 const upload = multer({
@@ -1056,7 +1057,7 @@ router.get('/:courseId/cheatsheets', async (req, res) => {
 router.post('/:courseId/cheatsheets/:number/modify', async (req, res) => {
   const { courseId, number } = req.params;
   const userId = req.user.id;
-  const { prompt } = req.body;
+  const { prompt, attachments } = req.body;
 
   const courseValidation = validateUuid(courseId, 'courseId');
   if (!courseValidation.valid) {
@@ -1072,8 +1073,15 @@ router.post('/:courseId/cheatsheets/:number/modify', async (req, res) => {
     return res.status(400).json({ error: 'prompt is required and must be a non-empty string' });
   }
 
+  // Validate attachments if provided
+  if (attachments !== undefined && !Array.isArray(attachments)) {
+    return res.status(400).json({ error: 'attachments must be an array if provided' });
+  }
+
   try {
-    const result = await modifyCheatsheet(courseId, userId, cheatsheetNumber, prompt);
+    const result = await modifyCheatsheet(courseId, userId, cheatsheetNumber, prompt, {
+      attachments: attachments || [],
+    });
 
     // Log cheatsheet modification
     await logUsageEvent(userId, 'cheatsheet_modified', {
@@ -1845,6 +1853,135 @@ router.patch('/:courseId/flashcards', async (req, res) => {
   } catch (error) {
     console.error('Error updating flashcards:', error);
     return res.status(500).json({ error: 'Failed to update flashcards', details: error.message });
+  }
+});
+
+// POST /:courseId/flashcards/upload - Upload Anki flashcard file
+router.post('/:courseId/flashcards/upload', upload.single('ankiFile'), async (req, res) => {
+  const { courseId } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  if (!req.file) return res.status(400).json({ error: 'ankiFile is required' });
+
+  const courseValidation = validateUuid(courseId, 'courseId');
+  if (!courseValidation.valid) {
+    return res.status(400).json({ error: courseValidation.error });
+  }
+
+  const userValidation = validateUuid(userId, 'userId');
+  if (!userValidation.valid) {
+    return res.status(400).json({ error: userValidation.error });
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // Verify course exists and user owns it
+    const { data: course, error: courseError } = await supabase
+      .schema('api')
+      .from('courses')
+      .select('id, title')
+      .eq('id', courseId)
+      .eq('user_id', userId)
+      .single();
+
+    if (courseError || !course) {
+      return res.status(404).json({ error: 'Course not found or access denied' });
+    }
+
+    // Parse the uploaded Anki file
+    const { flashcards, deckName, errors: parseErrors } = await parseAnkiFile(req.file.buffer);
+
+    if (flashcards.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid flashcards found in the file',
+        parseErrors
+      });
+    }
+
+    // Find or create the USER_UPLOADED sentinel node for this course
+    const sentinelTitle = 'USER_UPLOADED';
+    let sentinelNodeId;
+
+    const { data: existingSentinel } = await supabase
+      .schema('api')
+      .from('course_nodes')
+      .select('id')
+      .eq('course_id', courseId)
+      .eq('title', sentinelTitle)
+      .single();
+
+    if (existingSentinel) {
+      sentinelNodeId = existingSentinel.id;
+    } else {
+      // Create the sentinel node
+      const newNodeId = uuidv4();
+      const { error: nodeError } = await supabase
+        .schema('api')
+        .from('course_nodes')
+        .insert({
+          id: newNodeId,
+          course_id: courseId,
+          user_id: userId,
+          title: sentinelTitle,
+          description: 'User-uploaded flashcards from Anki decks',
+          content_payload: { status: 'ready', flashcards: [], source: 'user_upload' },
+          is_checkpoint: false,
+          in_degree: 0,
+          out_degree: 0,
+          confidence_score: 1.0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (nodeError) {
+        console.error('Error creating sentinel node:', nodeError);
+        return res.status(500).json({ error: 'Failed to create upload node', details: nodeError.message });
+      }
+
+      sentinelNodeId = newNodeId;
+    }
+
+    // Insert flashcards into the database
+    const flashcardPayloads = flashcards.map(fc => ({
+      course_id: courseId,
+      node_id: sentinelNodeId,
+      user_id: userId,
+      front: fc.front,
+      back: fc.back,
+      next_show_timestamp: new Date().toISOString(),
+    }));
+
+    const { error: insertError } = await supabase
+      .schema('api')
+      .from('flashcards')
+      .insert(flashcardPayloads);
+
+    if (insertError) {
+      console.error('Error inserting flashcards:', insertError);
+      return res.status(500).json({ error: 'Failed to save flashcards', details: insertError.message });
+    }
+
+    // Log the upload event
+    await logUsageEvent(userId, 'anki_flashcards_uploaded', {
+      courseId,
+      deckName,
+      cardCount: flashcards.length,
+    });
+
+    console.log(`[anki-upload] Imported ${flashcards.length} flashcards from "${deckName}" for course ${courseId}`);
+
+    return res.json({
+      success: true,
+      imported: flashcards.length,
+      deckName,
+      nodeId: sentinelNodeId,
+      parseErrors: parseErrors.length > 0 ? parseErrors : undefined,
+    });
+  } catch (error) {
+    console.error('Error uploading Anki flashcards:', error);
+    return res.status(500).json({ error: 'Failed to upload flashcards', details: error.message });
   }
 });
 

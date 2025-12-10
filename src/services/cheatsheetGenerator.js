@@ -473,9 +473,13 @@ Generate the cheat sheet content now. Remember to output ONLY the LaTeX content 
  * @param {string} userId
  * @param {number} cheatsheetNumber
  * @param {string} prompt - User's modification instructions
+ * @param {Object} options - Additional options
+ * @param {Array} options.attachments - Additional file attachments to include for context
  * @returns {Promise<{ url: string, name: string, number: number }>}
  */
-export async function modifyCheatsheet(courseId, userId, cheatsheetNumber, prompt) {
+export async function modifyCheatsheet(courseId, userId, cheatsheetNumber, prompt, options = {}) {
+  const { attachments: userAttachments = [] } = options;
+
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
     throw new Error('Modification prompt is required');
   }
@@ -533,7 +537,7 @@ Generate the MODIFIED cheat sheet content now.
 Remember to output ONLY the LaTeX content block (no preamble, no document wrappers).
 `;
 
-  // 4. Prepare attachment with existing PDF
+  // 4. Prepare attachments: existing PDF + any user-provided attachments
   const attachments = [
     {
       type: 'file',
@@ -541,6 +545,7 @@ Remember to output ONLY the LaTeX content block (no preamble, no document wrappe
       data: cheatsheetData.buffer.toString('base64'),
       name: cheatsheetData.fileName,
     },
+    ...userAttachments,
   ];
 
   // 5. Call LLM to generate modified content

@@ -818,9 +818,10 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `number` (number, required) – The cheatsheet number to modify
 - **Request body (JSON)**:
   - `prompt` (string, required) – Instructions for modification (e.g., "Add more formulas for integration", "Make it more concise")
+  - `attachments` (array, optional) – Additional file attachments to include as context (same format as POST /cheatsheets)
 - **Behavior**:
   1. Fetches the existing cheatsheet PDF from storage.
-  2. Sends to Gemini with modification instructions.
+  2. Sends existing PDF + user attachments + modification prompt to Gemini.
   3. Regenerates and replaces the PDF in storage.
 - **Responses**:
   - `200 OK` →
@@ -1547,6 +1548,47 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   curl -X GET "https://api.kognolearn.com/courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/export" \
     -H "Authorization: Bearer <jwt_token>"
   ```
+
+### POST /courses/:courseId/flashcards/upload
+- **Purpose**: Upload an Anki flashcard deck (.apkg file) and import the flashcards into the course.
+- **Path parameters**:
+  - `courseId` (string, required) – UUID of the course
+- **Request**:
+  - Content-Type: `multipart/form-data`
+  - Fields:
+    - `ankiFile` (file, required) – The `.apkg` Anki deck file (max 10MB)
+    - `userId` (string, required) – UUID of the user
+- **Behavior**:
+  1. Validates user owns the course.
+  2. Parses the `.apkg` file (ZIP containing SQLite database) to extract flashcards.
+  3. Creates or reuses a `USER_UPLOADED` sentinel node for storing user-uploaded content.
+  4. Inserts all flashcards linked to the sentinel node with `next_show_timestamp` set to current time.
+  5. Logs the upload event for analytics.
+- **Responses**:
+  - `200 OK` →
+    ```json
+    {
+      "success": true,
+      "imported": 42,
+      "deckName": "My Anki Deck",
+      "nodeId": "sentinel-node-uuid",
+      "parseErrors": ["optional array of non-fatal parse warnings"]
+    }
+    ```
+  - `400 Bad Request` → Missing `ankiFile`, missing `userId`, invalid UUIDs, or no valid flashcards found in file.
+  - `404 Not Found` → Course not found or user doesn't have access.
+  - `500 Internal Server Error` → File parsing or database error.
+- **Example**:
+  ```bash
+  curl -X POST "https://api.kognolearn.com/courses/1cb57cda-a88d-41b6-ad77-4f022f12f7de/flashcards/upload" \
+    -H "Authorization: Bearer <jwt_token>" \
+    -F "ankiFile=@my_deck.apkg" \
+    -F "userId=e6e04dbb-1234-5678-9abc-def012345678"
+  ```
+- **Notes**:
+  - Flashcards are stored with a `USER_UPLOADED` node label instead of being associated with a specific lesson.
+  - The sentinel node is created once per course and reused for subsequent uploads.
+  - Supported `.apkg` files are standard Anki deck exports (ZIP archives containing `collection.anki2` SQLite database).
 
 ## Errors (generic)
 - 404 Not Found → Unknown route or unsupported HTTP verb.
