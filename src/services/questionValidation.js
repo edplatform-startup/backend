@@ -12,7 +12,7 @@ import { executeOpenRouterChat } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 
 const CONFIDENCE_THRESHOLD = 0.65; // Questions below this are flagged for validation
-const BATCH_VALIDATION_MODEL = 'x-ai/grok-4.1-fast';
+const BATCH_VALIDATION_MODEL = 'google/gemini-3-pro-preview';
 const BATCH_CHUNK_SIZE = 50; // Max items per validation call to avoid response truncation
 
 let grokExecutor = executeOpenRouterChat;

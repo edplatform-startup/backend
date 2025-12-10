@@ -29,7 +29,7 @@ const COURSE_STATUS_BLOCKED = 'needs_attention';
 const DEFAULT_CONCURRENCY = 15;
 
 // Centralized model for all content generation with reasoning
-const CONTENT_GEN_MODEL = 'x-ai/grok-4.1-fast';
+const CONTENT_GEN_MODEL = 'google/gemini-3-pro-preview';
 const CONTENT_REASONING = { enabled: true };
 
 /**
@@ -4623,9 +4623,9 @@ ${context}`
       model: modelConfig.model,
       temperature: modelConfig.temperature,
       top_p: modelConfig.top_p,
-      maxTokens: 100000, // Allow enough space for full rewrite
+      maxTokens: 500000, // Allow enough space for full rewrite
       messages: [systemPrompt, userPrompt],
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 1800000, // 30 minutes
       reasoning: CONTENT_REASONING,
       userId,
       source: `validation_${contentType}`,
