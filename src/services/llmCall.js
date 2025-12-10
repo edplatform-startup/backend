@@ -26,11 +26,10 @@ export async function callStageLLM({
   } = pickModel(stage);
   const chosenModel = modelOverride || model;
   
-  // Always use custom web_search and browse_page tools (never OpenRouter's web plugin)
+  // Always use custom web_search tool (never OpenRouter's web plugin)
   const toolList = [];
   if (allowWeb) {
     toolList.push(createWebSearchTool());
-    toolList.push(createBrowsePageTool());
   }
 
   const response = await executeOpenRouterChat({

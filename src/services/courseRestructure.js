@@ -142,80 +142,85 @@ export async function restructureCourse(courseId, userId, prompt, initialAffecte
   const planSystemPrompt = `You are the Course Architect. Your job is to analyze a course restructuring request and create a detailed execution plan.
   RETURN JSON ONLY. DO NOT Return Markdown. DO NOT return any preamble or explanation text.
 
-Current Course: "${courseTitle}"
-Current Structure:
-${JSON.stringify(courseStructure, null, 2)}
-
-User Request: "${prompt}"
-User Suggested Lesson IDs: ${JSON.stringify(initialAffectedLessonIds)}
-
-You must return a JSON plan with the following structure:
-{
-  "reasoning": "Your analysis of what needs to change and why",
-  "operations": [
-    {
-      "type": "add_module",
-      "module_name": "New Module Name",
-      "position": "after:ExistingModuleName" | "before:ExistingModuleName" | "start" | "end",
-      "lessons": [
-        {
-          "title": "Lesson Title",
+  You have access to a deep 'web_search' tool. Use it to check syllabus details, exam requirements, or topic info if needed. You can use it up to 5 times.
+  
+  Current Course: "${courseTitle}"
+  Current Structure:
+  ${JSON.stringify(courseStructure, null, 2)}
+  
+  User Request: "${prompt}"
+  User Suggested Lesson IDs: ${JSON.stringify(initialAffectedLessonIds)}
+  
+  You must return a JSON plan with the following structure:
+  {
+    "reasoning": "Your analysis of what needs to change and why",
+    "operations": [
+      {
+        "type": "add_module",
+        "module_name": "New Module Name",
+        "position": "after:ExistingModuleName" | "before:ExistingModuleName" | "start" | "end",
+        "lessons": [
+          {
+            "title": "Lesson Title",
+            "description": "Brief description",
+            "content_plan": "What the lesson should cover"
+          }
+        ]
+      },
+      {
+        "type": "remove_module",
+        "module_name": "Module to Remove"
+      },
+      {
+        "type": "add_lesson",
+        "module_name": "Target Module",
+        "position": "after:LessonId" | "before:LessonId" | "start" | "end",
+        "lesson": {
+          "title": "New Lesson Title",
           "description": "Brief description",
-          "content_plan": "What the lesson should cover"
+          "content_plan": "What to cover"
         }
-      ]
-    },
-    {
-      "type": "remove_module",
-      "module_name": "Module to Remove"
-    },
-    {
-      "type": "add_lesson",
-      "module_name": "Target Module",
-      "position": "after:LessonId" | "before:LessonId" | "start" | "end",
-      "lesson": {
-        "title": "New Lesson Title",
-        "description": "Brief description",
-        "content_plan": "What to cover"
+      },
+      {
+        "type": "remove_lesson",
+        "lesson_id": "uuid-of-lesson-to-remove"
+      },
+      {
+        "type": "edit_lesson",
+        "lesson_id": "uuid",
+        "changes": {
+          "title": "New title (optional)",
+          "description": "New description (optional)",
+          "reading": "Specific instruction for reading changes",
+          "quiz": "Specific instruction for quiz changes",
+          "flashcards": "Specific instruction for flashcard changes",
+          "video": ["new search query 1", "new search query 2"]
+        }
       }
-    },
-    {
-      "type": "remove_lesson",
-      "lesson_id": "uuid-of-lesson-to-remove"
-    },
-    {
-      "type": "edit_lesson",
-      "lesson_id": "uuid",
-      "changes": {
-        "title": "New title (optional)",
-        "description": "New description (optional)",
-        "reading": "Specific instruction for reading changes",
-        "quiz": "Specific instruction for quiz changes",
-        "flashcards": "Specific instruction for flashcard changes",
-        "video": ["new search query 1", "new search query 2"]
-      }
-    }
-  ]
-}
-
-IMPORTANT:
-- Only include operations that are needed to satisfy the user's request
-- For edit_lesson, only include the content types that need changing
-- Be specific in your change instructions so worker models know exactly what to do
-- Ensure lesson IDs reference actual existing lessons when editing/removing`;
-
-  const { result: planResult } = await callStageLLM({
-    stage: STAGES.LESSON_ARCHITECT,
-    maxTokens: 8192,
-    messages: [
-      { role: 'system', content: planSystemPrompt },
-      { role: 'user', content: 'Create the restructuring plan based on the user request.' }
-    ],
-    responseFormat: { type: 'json_object' },
-    userId,
-    courseId,
-    source: 'course_restructure_plan',
-  });
+    ]
+  }
+  
+  IMPORTANT:
+  - Only include operations that are needed to satisfy the user's request
+  - For edit_lesson, only include the content types that need changing
+  - Be specific in your change instructions so worker models know exactly what to do
+  - Ensure lesson IDs reference actual existing lessons when editing/removing`;
+  
+    const { result: planResult } = await callStageLLM({
+      stage: STAGES.LESSON_ARCHITECT,
+      maxTokens: 8192,
+      modelOverride: process.env.MODEL_LESSON_ARCHITECT || 'google/gemini-3-pro-preview',
+      allowWeb: true,
+      maxToolIterations: 5,
+      messages: [
+        { role: 'system', content: planSystemPrompt },
+        { role: 'user', content: 'Create the restructuring plan based on the user request.' }
+      ],
+      responseFormat: { type: 'json_object' },
+      userId,
+      courseId,
+      source: 'course_restructure_plan',
+    });
 
   let plan;
   try {

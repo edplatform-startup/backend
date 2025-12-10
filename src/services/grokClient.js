@@ -306,11 +306,11 @@ export function createBrowsePageTool() {
 export function createWebSearchTool() {
   return {
     name: 'web_search',
-    description: 'Run a quick web search and summarize the top suggestions for further browsing.',
+    description: 'Perform a deep web search. This tool searches for the query, automatically visits the top 5 result pages, extracts their full content, and returns a consolidated summary. Use this to gather comprehensive information on a topic.',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query to run on DuckDuckGo suggestions.' },
+        query: { type: 'string', description: 'The topic or question to search for.' },
       },
       required: ['query'],
     },
@@ -318,10 +318,17 @@ export function createWebSearchTool() {
       const query = (args?.query || '').trim();
       if (!query) return 'No query provided to web_search.';
 
-      const endpoint = `https://duckduckgo.com/ac/?q=${encodeURIComponent(query)}`;
+      // Use lite.duckduckgo.com for simpler HTML
+      const endpoint = `https://lite.duckduckgo.com/lite/`;
       try {
+        console.log(`[web_search] Searching for: "${query}"...`);
         const response = await fetch(endpoint, {
-          headers: { 'User-Agent': 'EdTechBot/1.0' },
+          method: 'POST',
+          headers: { 
+            'User-Agent': 'Mozilla/5.0 (compatible; EdTechBot/1.0)',
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: `q=${encodeURIComponent(query)}`,
           signal: AbortSignal.timeout(10000),
         });
 
@@ -329,36 +336,40 @@ export function createWebSearchTool() {
           return `web_search failed: ${response.status} ${response.statusText}`;
         }
 
-        let suggestions;
-        try {
-          suggestions = await response.json();
-        } catch (error) {
-          console.error('[web_search] failed to parse suggestions:', error);
-          return 'web_search could not parse results.';
+        const html = await response.text();
+        
+        // Regex for lite results: <a class="result-link" href="...">
+        const linkRegex = /class="result-link" href="([^"]+)"/g;
+        let match;
+        const urls = [];
+        
+        while ((match = linkRegex.exec(html)) !== null) {
+            let url = match[1];
+            if (url.startsWith('http') && !urls.includes(url)) {
+                urls.push(url);
+            }
+            if (urls.length >= 5) break;
         }
 
-        if (!Array.isArray(suggestions) || suggestions.length === 0) {
-          return `No web search suggestions found for "${query}".`;
+        if (urls.length === 0) {
+            console.log('[web_search] HTML dump (first 500 chars):', html.slice(0, 500));
+            return `No accessible URLs found for "${query}".`;
         }
 
-        const lines = suggestions
-          .map((entry, index) => {
-            const phrase = (entry?.phrase || entry?.text || entry?.value || '').trim();
-            if (!phrase) return null;
-            return `${index + 1}. ${phrase}`;
-          })
-          .filter(Boolean)
-          .slice(0, 5);
+        // Now browse them in parallel
+        const browseTool = createBrowsePageTool();
+        const browsePromises = urls.map(async (url, idx) => {
+            try {
+                const content = await browseTool.handler({ url });
+                return `--- SOURCE ${idx + 1}: ${url} ---\n${content}\n`;
+            } catch (err) {
+                return `--- SOURCE ${idx + 1}: ${url} ---\nFailed to load: ${err.message}\n`;
+            }
+        });
 
-        if (lines.length === 0) {
-          return `No web search suggestions found for "${query}".`;
-        }
+        const pageContents = await Promise.all(browsePromises);
+        return [`Web Search Results for "${query}":`, ...pageContents].join('\n\n');
 
-        return [
-          `Top web search suggestions for "${query}":`,
-          ...lines,
-          'Use browse_page on one of these results (if a concrete URL is known) to gather details.',
-        ].join('\n');
       } catch (error) {
         console.error('[web_search] error:', error);
         return `Error running web_search: ${error.message}`;
@@ -565,31 +576,17 @@ export async function executeOpenRouterChat(options = {}) {
       messages: conversation,
     };
 
-    if (enableWebSearch) {
-      requestBody.plugins = [{ id: 'web' }];
-    } else if (options.plugins) {
-      requestBody.plugins = options.plugins;
-    }
-
-    // Log the actual payload for debugging multimodal requests
-    if (options.plugins || (options.messages && options.messages.some(m => Array.isArray(m.content)))) {
-      console.log('[grokClient] OpenRouter Request Body:', JSON.stringify(requestBody, null, 2));
-    }
-
-    if (typeof topP === 'number') requestBody.top_p = topP;
-    if (typeof frequencyPenalty === 'number') requestBody.frequency_penalty = frequencyPenalty;
-    if (typeof presencePenalty === 'number') requestBody.presence_penalty = presencePenalty;
-    if (reasoningPayload !== undefined) requestBody.reasoning = reasoningPayload;
     if (responseFormat && typeof responseFormat === 'object') {
       requestBody.response_format = responseFormat;
     }
 
+
     if (!forceFinalRun && toolDefinitions.length > 0) {
       requestBody.tools = toolDefinitions;
       requestBody.tool_choice = toolChoice || 'auto';
-    } else if (forceFinalRun) {
-      requestBody.tool_choice = 'none';
     }
+    // Note: When forceFinalRun is true or no tools defined, we omit both tools and tool_choice
+    // since xAI/Grok rejects requests with tool_choice but no tools array
 
     if (!shouldInlineAttachments && validatedAttachments.length > 0) {
       requestBody.attachments = validatedAttachments.map((attachment, index) => {
@@ -786,7 +783,7 @@ function buildStudyTopicsPrompt({
 }
 
 const STUDY_TOPICS_SYSTEM_PROMPT = [
-  'You are an AI study coach extracting exhaustive, accurate course topics. ALWAYS use your built-in web search before giving the final answer, and call browse_page at most once if needed for a specific URL.',
+  'You are an AI study coach extracting exhaustive, accurate course topics. ALWAYS use your built-in web_search tool before giving the final answer. It will automatically browse sources for you.',
   'Priorities: search for an official syllabus/outline (prefer .edu), extract every bullet/topic, focus strictly on domain concepts (e.g., "Two\'s Complement", "Stack Frames"). Never include meta-skills like study habits, time management, or revision strategies.',
   'Good output example: {"topics":["Instruction Set Architecture","Two\'s Complement Arithmetic","Pipeline Hazards","Cache Coherence"]}',
   'Bad output examples: {"topics":["Study Skills","Time Management"]} or "1. Topic One" (not JSON).',
@@ -975,7 +972,7 @@ export async function generateStudyTopics(input, userId, courseId = null) {
     model: model.includes(':online') ? model : `${model}:online`,
     temperature: 0.45,
     maxTokens: 900,
-    tools: [createWebSearchTool(), createBrowsePageTool()],
+    tools: [createWebSearchTool()],
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
     enableWebSearch: true,
     attachments,
