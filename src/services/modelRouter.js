@@ -46,7 +46,7 @@ const DEFAULTS = {
     top_p: 0.6,
   },
   [STAGES.EXAM_GENERATOR]: {
-    model: 'x-ai/grok-4.1-fast',
+    model: 'google/gemini-3-pro-preview',
     temp: 0.4,
     top_p: 0.8,
   },
