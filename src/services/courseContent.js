@@ -3,6 +3,7 @@ import { executeOpenRouterChat, getCostTotals } from './grokClient.js';
 import { tryParseJson } from '../utils/jsonUtils.js';
 import { validateAndRepairLatex } from '../utils/latexUtils.js';
 import {
+  parseXmlReadings,
   parseXmlQuizzes,
   parseXmlFlashcards,
   parseXmlInlineQuestions,
@@ -2335,7 +2336,7 @@ Return XML as specified above.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 300000,
       reasoning: CONTENT_REASONING,
       userId,
       source: 'parsons_generation',
@@ -2412,7 +2413,7 @@ Return XML as specified above.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 300000,
       reasoning: CONTENT_REASONING,
       userId,
       source: 'skeleton_generation',
@@ -2487,7 +2488,7 @@ Return XML as specified above.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 300000,
       reasoning: CONTENT_REASONING,
       userId,
       source: 'matching_generation',
@@ -2559,7 +2560,7 @@ Return XML as specified above.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      requestTimeoutMs: 120000,
+      requestTimeoutMs: 300000,
       reasoning: CONTENT_REASONING,
       userId,
       source: 'blackbox_generation',
