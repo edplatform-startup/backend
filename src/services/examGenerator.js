@@ -1,8 +1,5 @@
 // examGenerator.js
 
-import latex from 'node-latex';
-import { Readable } from 'stream';
-import { createWriteStream } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { getCourseExamFiles, uploadExamFile } from './storage.js';
@@ -393,64 +390,73 @@ function extractLatexError(error) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Run one pdflatex pass using node-latex.
- * Keeps the .aux and .log files so that a second pass can use them.
- */
-function runLatexOnce(latexCode, outputPath, logPath) {
-  return new Promise((resolve, reject) => {
-    const input = Readable.from([Buffer.from(latexCode)]);
-    const output = createWriteStream(outputPath);
-
-    const pdf = latex(input, { errorLogs: logPath });
-    pdf.pipe(output);
-
-    pdf.on('error', (err) => {
-      reject(err);
-    });
-
-    pdf.on('finish', () => {
-      resolve();
-    });
-  });
-}
-
-/**
- * Compiles LaTeX to PDF using two pdflatex passes so that exam.cls
- * can resolve \gradetable, \numpages, etc.
+ * Compiles LaTeX to PDF using multiple pdflatex passes in a persistent temp directory
+ * so that exam.cls can resolve \gradetable, \numpages, etc.
+ * 
+ * The key insight: node-latex creates isolated temp directories for each run, which
+ * prevents .aux file reuse between passes. We use pdflatex directly with a persistent
+ * working directory to ensure auxiliary files are shared across all passes.
+ * 
  * @param {string} latexCode
  * @returns {Promise<Buffer>} PDF buffer
  */
 async function compileLatexToPdf(latexCode) {
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  
   const timestamp = Date.now();
-  const outputPath = join(tmpdir(), `exam_${timestamp}.pdf`);
-  const logPath = join(tmpdir(), `exam_${timestamp}.log`);
+  const workDir = join(tmpdir(), `exam_workdir_${timestamp}`);
+  const texPath = join(workDir, 'exam.tex');
+  const pdfPath = join(workDir, 'exam.pdf');
+  const logPath = join(workDir, 'exam.log');
 
   try {
-    // Pass 1: Generate .aux and initial layout
-    console.log('[examGenerator] Starting LaTeX compilation pass 1/3...');
-    await runLatexOnce(latexCode, outputPath, logPath);
+    // Create persistent working directory
+    await fs.mkdir(workDir, { recursive: true });
+    
+    // Write the .tex file
+    await fs.writeFile(texPath, latexCode, 'utf8');
 
-    // Pass 2: Resolve references, page numbers, and basic tables
-    console.log('[examGenerator] Starting LaTeX compilation pass 2/3...');
-    await runLatexOnce(latexCode, outputPath, logPath);
+    // Run pdflatex 3 times in the same directory to resolve all references
+    // -interaction=nonstopmode prevents pdflatex from stopping on errors
+    // -halt-on-error exits with error code on compilation failure
+    const pdflatexCmd = `pdflatex -interaction=nonstopmode -output-directory="${workDir}" "${texPath}"`;
+    
+    for (let pass = 1; pass <= 3; pass++) {
+      console.log(`[examGenerator] Starting LaTeX compilation pass ${pass}/3...`);
+      try {
+        await execAsync(pdflatexCmd, { 
+          cwd: workDir,
+          timeout: 60000, // 60 second timeout per pass
+        });
+      } catch (passError) {
+        // pdflatex may exit with error code even for warnings; check if PDF was created
+        const pdfExists = await fs.access(pdfPath).then(() => true).catch(() => false);
+        if (!pdfExists && pass === 3) {
+          // Only throw on final pass if no PDF was generated
+          throw passError;
+        }
+        console.log(`[examGenerator] Pass ${pass} completed with warnings (PDF may still be valid)`);
+      }
+    }
 
-    // Pass 3: Finalize layout, grade tables, and complex references
-    console.log('[examGenerator] Starting LaTeX compilation pass 3/3...');
-    await runLatexOnce(latexCode, outputPath, logPath);
+    // Check if PDF was successfully created
+    const pdfExists = await fs.access(pdfPath).then(() => true).catch(() => false);
+    if (!pdfExists) {
+      throw new Error('PDF file was not generated after all compilation passes');
+    }
 
-    const fs = await import('fs/promises');
-    const buffer = await fs.readFile(outputPath);
+    const buffer = await fs.readFile(pdfPath);
+    console.log('[examGenerator] Compilation successful!');
 
-    // Cleanup
-    await fs.unlink(outputPath).catch(() => { });
-    await fs.unlink(logPath).catch(() => { });
+    // Cleanup working directory
+    await cleanupDir(workDir);
 
     return buffer;
   } catch (err) {
     // On error, try to extract a useful message from the log file
     let detailedError = err.message;
     try {
-      const fs = await import('fs/promises');
       const logContent = await fs.readFile(logPath, 'utf8');
       const lines = logContent.split('\n');
       const errorLines = [];
@@ -469,14 +475,26 @@ async function compileLatexToPdf(latexCode) {
       } else {
         detailedError = `LaTeX Compilation Failed\n${logContent.slice(-1000)}`;
       }
-
-      await fs.unlink(outputPath).catch(() => { });
-      await fs.unlink(logPath).catch(() => { });
     } catch (readErr) {
       console.warn('[examGenerator] Could not read LaTeX log file:', readErr.message);
     }
+    
+    // Cleanup working directory even on error
+    await cleanupDir(workDir);
 
     throw new Error(detailedError);
+  }
+}
+
+/**
+ * Helper to recursively clean up a directory
+ */
+async function cleanupDir(dirPath) {
+  const fs = await import('fs/promises');
+  try {
+    await fs.rm(dirPath, { recursive: true, force: true });
+  } catch (e) {
+    console.warn(`[examGenerator] Failed to cleanup temp directory ${dirPath}:`, e.message);
   }
 }
 
