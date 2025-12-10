@@ -221,7 +221,7 @@ Assess the accuracy of this question.`
       maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 30000,
+      requestTimeoutMs: 120000,
       reasoning: { enabled: true },
       userId,
       source: 'rate_question_confidence',

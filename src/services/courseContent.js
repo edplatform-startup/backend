@@ -4937,7 +4937,7 @@ Provide substantive explanations for each missing option. For the correct answer
       maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 30000,
+      requestTimeoutMs: 120000,
       reasoning: 'medium',
       userId,
       source: 'rationale_fix',
@@ -5032,7 +5032,7 @@ Analyze this question and determine the correct answer. Show your reasoning.`
       maxTokens: 100000,
       messages,
       responseFormat: { type: 'json_object' },
-      requestTimeoutMs: 30000,
+      requestTimeoutMs: 120000,
       reasoning: CONTENT_REASONING, // High reasoning for careful analysis
       userId,
       source: 'self_consistency_check',
