@@ -1,9 +1,10 @@
 /**
  * Anki APKG file parser service.
- * Parses .apkg files and extracts flashcards.
+ * Parses .apkg files (ZIP containing SQLite database) and extracts flashcards.
  */
 
-import { readAnkiPackage } from 'anki-reader';
+import AdmZip from 'adm-zip';
+import initSqlJs from 'sql.js';
 
 /**
  * Parse an Anki .apkg file buffer and extract flashcards.
@@ -16,83 +17,81 @@ export async function parseAnkiFile(fileBuffer) {
   let deckName = 'Imported Deck';
 
   try {
-    // Parse the .apkg file
-    const collection = await readAnkiPackage(fileBuffer);
+    // .apkg files are ZIP archives
+    const zip = new AdmZip(fileBuffer);
+    const zipEntries = zip.getEntries();
     
-    // Get deck name if available
-    if (collection.decks && collection.decks.length > 0) {
-      deckName = collection.decks[0].name || deckName;
-    }
-    
-    // Extract cards from the collection
-    if (collection.cards && Array.isArray(collection.cards)) {
-      for (const card of collection.cards) {
-        try {
-          // Anki cards have fields - typically the first field is front, second is back
-          // The structure varies by note type, but most basic cards have question/answer fields
-          let front = '';
-          let back = '';
-          
-          if (card.note && card.note.fields) {
-            const fields = card.note.fields;
-            if (Array.isArray(fields) && fields.length >= 2) {
-              front = stripHtml(fields[0] || '');
-              back = stripHtml(fields[1] || '');
-            } else if (typeof fields === 'object') {
-              // Handle object-style fields
-              const fieldValues = Object.values(fields);
-              front = stripHtml(fieldValues[0] || '');
-              back = stripHtml(fieldValues[1] || '');
-            }
-          } else if (card.fields) {
-            // Direct field access
-            const fields = card.fields;
-            if (Array.isArray(fields) && fields.length >= 2) {
-              front = stripHtml(fields[0] || '');
-              back = stripHtml(fields[1] || '');
-            }
-          }
-          
-          // Only add if both front and back have content
-          if (front.trim() && back.trim()) {
-            flashcards.push({ front: front.trim(), back: back.trim() });
-          }
-        } catch (cardError) {
-          errors.push(`Failed to parse card: ${cardError.message}`);
-        }
+    // Find the collection database file (collection.anki2 or collection.anki21)
+    let dbEntry = null;
+    for (const entry of zipEntries) {
+      const name = entry.entryName.toLowerCase();
+      if (name === 'collection.anki2' || name === 'collection.anki21' || name.endsWith('.anki2')) {
+        dbEntry = entry;
+        break;
       }
     }
     
-    // Alternative: try to get notes directly if cards didn't work
-    if (flashcards.length === 0 && collection.notes && Array.isArray(collection.notes)) {
-      for (const note of collection.notes) {
-        try {
-          let front = '';
-          let back = '';
-          
-          if (note.fields) {
-            const fields = note.fields;
-            if (Array.isArray(fields) && fields.length >= 2) {
-              front = stripHtml(fields[0] || '');
-              back = stripHtml(fields[1] || '');
-            } else if (typeof fields === 'string') {
-              // Fields might be tab-separated
-              const parts = fields.split('\x1f'); // Anki uses unit separator
-              if (parts.length >= 2) {
-                front = stripHtml(parts[0] || '');
-                back = stripHtml(parts[1] || '');
-              }
+    if (!dbEntry) {
+      errors.push('No Anki database found in the file. Expected collection.anki2 or collection.anki21.');
+      return { flashcards, deckName, errors };
+    }
+    
+    // Extract the SQLite database
+    const dbBuffer = dbEntry.getData();
+    
+    // Initialize sql.js and load the database
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(new Uint8Array(dbBuffer));
+    
+    // Try to get deck name from col table
+    try {
+      const colResult = db.exec("SELECT decks FROM col LIMIT 1");
+      if (colResult.length > 0 && colResult[0].values.length > 0) {
+        const decksJson = colResult[0].values[0][0];
+        if (decksJson) {
+          const decks = JSON.parse(decksJson);
+          const deckValues = Object.values(decks);
+          // Find first non-default deck
+          for (const deck of deckValues) {
+            if (deck.name && deck.name !== 'Default') {
+              deckName = deck.name;
+              break;
             }
           }
-          
-          if (front.trim() && back.trim()) {
-            flashcards.push({ front: front.trim(), back: back.trim() });
-          }
-        } catch (noteError) {
-          errors.push(`Failed to parse note: ${noteError.message}`);
         }
       }
+    } catch (deckError) {
+      // Ignore deck name extraction errors
     }
+    
+    // Query notes table for flashcard content
+    // Notes have 'flds' column with fields separated by unit separator (0x1f)
+    try {
+      const notesResult = db.exec("SELECT flds FROM notes");
+      
+      if (notesResult.length > 0) {
+        for (const row of notesResult[0].values) {
+          const fieldsStr = row[0];
+          if (!fieldsStr) continue;
+          
+          // Anki uses unit separator (ASCII 31) to separate fields
+          const fields = fieldsStr.split('\x1f');
+          
+          if (fields.length >= 2) {
+            const front = stripHtml(fields[0] || '');
+            const back = stripHtml(fields[1] || '');
+            
+            if (front.trim() && back.trim()) {
+              flashcards.push({ front: front.trim(), back: back.trim() });
+            }
+          }
+        }
+      }
+    } catch (queryError) {
+      errors.push(`Failed to query notes: ${queryError.message}`);
+    }
+    
+    db.close();
     
     if (flashcards.length === 0) {
       errors.push('No valid flashcards found in the file. The deck may be empty or use an unsupported format.');
