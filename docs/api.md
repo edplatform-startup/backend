@@ -762,10 +762,16 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `userPrompt` (string, required) – Free-form instructions for cheat sheet focus (e.g., "focus on midterm 1 topics and my weak areas in probability")
   - `lessonIds` (string[], optional) – Specific lesson IDs to include
   - `includeWeakTopics` (boolean, optional, default: true) – Include user's weak areas based on quiz performance
+  - `attachments` (array, optional) – File attachments to include as context for the LLM. Each attachment object can include:
+    - `type` (string) – File type identifier
+    - `mimeType` (string) – MIME type (e.g., "application/pdf", "image/png")
+    - `data` (string) – Base64-encoded file content
+    - `url` (string) – Alternative: URL to the file
+    - `name` (string) – Filename
 - **Behavior**:
   1. Fetches course content and lesson summaries from the database.
   2. Optionally retrieves user's incorrect quiz questions to identify weak areas.
-  3. Generates compact LaTeX cheat sheet using Gemini with high-yield content.
+  3. Sends user prompt and any attachments to Gemini for cheat sheet generation.
   4. Compiles to PDF with two-column layout, 10pt font, 0.5in margins.
   5. Uploads to the `cheatsheets` storage bucket.
 - **Responses**:

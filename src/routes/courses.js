@@ -964,7 +964,7 @@ router.post('/:courseId/exams/:type/:examNumber/modify', async (req, res) => {
 router.post('/:courseId/cheatsheets', async (req, res) => {
   const { courseId } = req.params;
   const userId = req.user.id; // From JWT via requireAuth middleware
-  const { userPrompt, lessonIds, includeWeakTopics } = req.body;
+  const { userPrompt, lessonIds, includeWeakTopics, attachments } = req.body;
 
   const courseValidation = validateUuid(courseId, 'courseId');
   if (!courseValidation.valid) {
@@ -988,10 +988,16 @@ router.post('/:courseId/cheatsheets', async (req, res) => {
     }
   }
 
+  // Validate attachments if provided
+  if (attachments !== undefined && !Array.isArray(attachments)) {
+    return res.status(400).json({ error: 'attachments must be an array if provided' });
+  }
+
   try {
     const result = await generateCheatsheet(courseId, userId, userPrompt, {
       lessonIds,
       includeWeakTopics: includeWeakTopics !== false, // Default to true
+      attachments: attachments || [],
     });
 
     // Log cheatsheet generation

@@ -281,10 +281,11 @@ function extractLatexError(error) {
  * @param {Object} options - Additional options
  * @param {string[]} options.lessonIds - Specific lessons to focus on
  * @param {boolean} options.includeWeakTopics - Include user's weak areas
+ * @param {Array} options.attachments - File attachments (PDFs, images, etc.) to include for context
  * @returns {Promise<{ url: string, name: string, number: number }>}
  */
 export async function generateCheatsheet(courseId, userId, userPrompt, options = {}) {
-  const { lessonIds, includeWeakTopics = true } = options;
+  const { lessonIds, includeWeakTopics = true, attachments = [] } = options;
 
   // 1. Fetch course info and lessons
   const supabase = getSupabase();
@@ -390,13 +391,14 @@ ${courseData.exam_details ? `\nEXAM FORMAT INFO:\n${courseData.exam_details}` : 
 Generate the cheat sheet content now. Remember to output ONLY the LaTeX content block (no preamble, no document wrappers).
 `;
 
-  // 7. Call LLM to generate content
+  // 7. Call LLM to generate content (include any user-provided attachments)
   let { result } = await deps.callStageLLM({
     stage: STAGES.CHEATSHEET_GENERATOR,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPromptFull },
     ],
+    attachments,
     maxTokens: 8192,
     requestTimeoutMs: 300000,
     userId,
