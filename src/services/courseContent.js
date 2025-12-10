@@ -14,7 +14,7 @@ import {
   parseXmlBlackboxProblems
 } from '../utils/xmlUtils.js';
 // Keep csvToQuiz for fallback parsing and other non-batch uses
-import { csvToQuiz, parseCSV } from '../utils/csvUtils.js';
+import { csvToQuiz, csvToFlashcards, parseCSV } from '../utils/csvUtils.js';
 import yts from 'yt-search';
 import {
   rateQuestionConfidence,
@@ -4413,7 +4413,7 @@ Select the best video index.`
         maxTokens: 100000,
         messages,
         responseFormat: { type: 'json_object' },
-        requestTimeoutMs: 30000,
+        requestTimeoutMs: 120000,
         reasoning: CONTENT_REASONING,
         userId,
         source: 'video_selection',
