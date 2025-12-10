@@ -246,31 +246,43 @@ CRITICAL RULES:
 3. **Lineage:** You MUST track the 'original_source_ids' from the input. If you merge topics, list ALL their IDs. This preserves user data.
 4. **No Cycles:** The graph must be strictly Acyclic.
 5. **Module Organization:** Aim for modules with MORE than 2 lessons whenever possible to keep content properly chunked and modularized. Single-lesson or two-lesson modules should only be used when the topic is genuinely standalone or foundational. Well-organized modules (3-6 lessons) improve learning flow and coherence.
-6. **Content Type Diversity:** You may include MULTIPLE instances of each content type per lesson if appropriate for learning:
-   - A lesson can have multiple readings (e.g., theory + examples + edge cases)
-   - A lesson can have multiple videos (e.g., intro + deep dive + worked examples)
-   - A lesson can have multiple quizzes (e.g., conceptual check + application problems)
-   - ALL content should flow in a logical learning order for maximum comprehension
+6. **Content Per Lesson:** Each lesson may have AT MOST ONE of each standard content type:
+   - ONE reading (comprehensive, covers all aspects needed)
+   - ONE video (optional, for visual explanation)
+   - ONE quiz (assessing lesson comprehension)
+   - ONE set of flashcards (key concepts to memorize)
    - NOTE: Do NOT include practice_problems in individual lessons. Practice problems are automatically added to Module Quizzes.
-7. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
-8. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
+7. **Interactive Practice Problems:** A lesson may include MULTIPLE interactive practice problems of various types. These are optional and should be included when the topic benefits from hands-on manipulation:
+   - **parsons**: Ranking/sorting problems where students reorder scrambled items. Use for: algorithm steps, code lines, complexity ordering, historical sequences, process steps.
+   - **skeleton**: Fill-in-the-gap problems with a partially complete solution. Use for: formulas, code completion, proofs, mathematical derivations, template patterns.
+   - **matching**: Many-to-many connection problems between two columns. Use for: term↔definition, cause↔effect, concept↔example, function↔output mappings.
+   - **blackbox**: Input/output inference problems to deduce hidden rules. Use for: functions, algorithms, pattern recognition, transformations.
+   You may include multiple problems of the same type AND multiple different types per lesson.
+   ${secondsToComplete ? `**Time-aware:** With ${Math.floor(secondsToComplete / 60)} minutes available, be conservative—limit interactive problems to 1-2 types per lesson when time is tight.` : ''}
+8. **Lesson-End Quizzes:** IMPORTANT: Always include a quiz as the LAST content type in each lesson. This quiz should assess understanding of the material covered in THAT lesson (and prior lessons if needed). Do not include questions on topics that haven't been taught yet. For the final lesson of a module, the quiz can be cumulative for that module.
+9. **Specific Generation Plans:** For each content type you include, provide detailed, specific prompts:
    - **reading:** ${mode === 'cram' ? 'MAXIMIZE EXAM VALUE. Concise, laser-focused on exam-critical concepts only. Omit background context and nice-to-know details. Every sentence should directly support exam preparation.' : 'MAXIMIZE UNDERSTANDING AND RETENTION. Provide highly detailed prompts for a writer that explore all nuances, edge cases, intuitive explanations, real-world analogies (e.g., "Use a gear analogy," "Focus on formal proofs"), and interconnections between concepts. Build deep, lasting comprehension.'} **Mermaid Diagrams:** If a visual aid is helpful, explicitly request a specific Mermaid diagram type (e.g., "Include a sequence diagram for the handshake protocol" or "Use a class diagram to show the inheritance hierarchy"). Supported types: sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, journey, pie, mindmap, quadrantChart.
    - **video:** ${mode === 'cram' ? 'MINIMIZE VIDEO COUNT. Only include if absolutely essential for a concept that cannot be understood through text. Maximum 1 high-yield search query.' : '2-3 general, high-level YouTube search queries for broad concepts (e.g., "Introduction to Photosynthesis" rather than "Calvin Cycle Step 3"). Include videos that deepen understanding beyond text. Only include if the concept benefits from visual/dynamic explanation.'}
    - **quiz:** Detailed prompt for an examiner. Explicitly enumerate the main topics/subsections of the lesson and ensure the quiz has at least one question per major topic. Request varying difficulty levels (Easy, Medium, Hard) and ensure at least one "Challenge Question" that integrates multiple concepts to test deep understanding. **CRITICAL:** Ensure quiz topics align strictly with the reading and prerequisites.
    - **flashcards:** Prompt focusing on what to memorize (definitions vs. procedural steps).
-9. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
-10. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.${secondsToComplete ? ' Also explain how you fit within the time budget.' : ''}
-11. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
-12. **MODE: ${mode.toUpperCase()}**:
+   - **interactive_practice:** (optional) An object with prompts for each problem type to generate. Only include types that fit the lesson topic:
+     * **parsons:** Prompt describing what items to reorder and the learning goal.
+     * **skeleton:** Prompt describing the template with gaps and what students should learn by filling them.
+     * **matching:** Prompt describing the two columns and what connections students should make.
+     * **blackbox:** Prompt describing the hidden rule and what patterns students should recognize.
+10. **IDs:** Use "Semantic Slugs" (kebab-case) for IDs.
+11. **Reasoning:** The 'architectural_reasoning' field must explain your grouping logic, why you assigned the specific exam value (1-10), and why you chose the specific content mix.${secondsToComplete ? ' Also explain how you fit within the time budget.' : ''}
+12. **Naming:** NEVER number modules or lessons in the title or module_group (e.g., 'Limits', not 'Week 1: Limits').
+13. **MODE: ${mode.toUpperCase()}**:
     ${mode === 'cram' ? '- MAXIMIZE EXAM VALUE. Structure for speed. Aggressively merge and prune lessons. Generate FEWER lessons overall. Eliminate nice-to-know content. Every lesson must directly contribute to exam performance.' : '- MAXIMIZE UNDERSTANDING AND DEEP RETENTION. Create granular, detailed lessons that explore all nuances. Ensure comprehensive coverage of edge cases, exceptions, and interconnections. Build deep, lasting knowledge that transfers beyond the exam.'}
-13. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
-14. **CONFIDENCE-BASED PRIORITIZATION:** The student has rated their confidence on source topics. Use this to allocate study time efficiently:
+14. **GROUNDING:** When authoritative excerpts from syllabus/exam materials are provided, use them to ground lesson structure and exam value assignments. Reference specific details in your architectural_reasoning.
+15. **CONFIDENCE-BASED PRIORITIZATION:** The student has rated their confidence on source topics. Use this to allocate study time efficiently:
     - **LOW CONFIDENCE (0.0-0.4) + HIGH EXAM VALUE (7-10):** MAXIMUM content depth. These are knowledge gaps that will cost them points. Create detailed, granular lessons with multiple content types.
     - **LOW CONFIDENCE (0.0-0.4) + LOW EXAM VALUE (1-4):** Moderate coverage. Include but keep concise since exam ROI is lower.
     - **HIGH CONFIDENCE (0.7-1.0) + HIGH EXAM VALUE (7-10):** Light review only. The student already knows this—just include a brief refresher or skip if time-constrained.
     - **HIGH CONFIDENCE (0.7-1.0) + LOW EXAM VALUE (1-4):** MINIMAL or SKIP. Do not waste time on content the student already knows AND won't be tested on.
     - In cram mode, be even MORE aggressive about skipping high-confidence content to focus on knowledge gaps.
-15. **CREATIVE FREEDOM:** The input skeleton/modules are SUGGESTIONS, not constraints. You have full authority to:
+16. **CREATIVE FREEDOM:** The input skeleton/modules are SUGGESTIONS, not constraints. You have full authority to:
     - Restructure, rename, merge, or split modules as you see fit for optimal learning
     - Reorder topics if a different sequence makes more pedagogical sense
     - Add foundational lessons the skeleton missed but are critical for understanding
@@ -295,9 +307,15 @@ Output STRICT VALID JSON format (no markdown, no comments):
       
       "content_plans": {
          "reading": "Explain the chain rule using a 'peeling the onion' analogy. Focus on identifying inner vs outer functions.",
-         "video": ["chain rule calculus intuition", "chain rule visualization 3blue1brown"],
+         "video": ["chain rule calculus intuition"],
          "quiz": "Generate 3-5 multiple-choice questions. Question 1 on Chain Rule intuition, Question 2 on identifying inner/outer functions, Question 3 on applying the formula. Include a Challenge Question involving a trigonometric function inside a polynomial.",
-         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions."
+         "flashcards": "Focus on the formula f'(g(x))g'(x) and recognizing composite functions.",
+         "interactive_practice": {
+           "parsons": "Create a problem where students order the 5 steps of applying the chain rule to differentiate a nested function like sin(x^2).",
+           "skeleton": "Create a problem with gaps in the chain rule formula: d/dx[f(g(x))] = {{gap_1}} * {{gap_2}}. Include 3 distractors per gap.",
+           "matching": "Create a problem matching 4 composite functions to their derivatives.",
+           "blackbox": "Create a problem where students see input/output pairs and must deduce the derivative rule being applied."
+         }
       }
     }
   ]

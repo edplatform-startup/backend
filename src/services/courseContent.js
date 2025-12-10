@@ -6,7 +6,11 @@ import {
   parseXmlQuizzes,
   parseXmlFlashcards,
   parseXmlInlineQuestions,
-  parseXmlPracticeProblems
+  parseXmlPracticeProblems,
+  parseXmlParsonsProblems,
+  parseXmlSkeletonProblems,
+  parseXmlMatchingProblems,
+  parseXmlBlackboxProblems
 } from '../utils/xmlUtils.js';
 // Keep csvToQuiz for fallback parsing and other non-batch uses
 import { csvToQuiz, parseCSV } from '../utils/csvUtils.js';
@@ -2276,6 +2280,306 @@ function normalizePracticeProblem(item, index) {
 
 }
 
+// ============================================================================
+// Interactive Practice Problem Generation
+// ============================================================================
+
+/**
+ * Generates Parsons (ranking/sorting) problems for a lesson.
+ * Students must reorder scrambled items into the correct sequence.
+ * @param {string} title - Lesson title
+ * @param {string} plan - Generation plan prompt
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{data: Array, stats: object}>}
+ */
+export async function generateParsonsProblems(title, plan, courseName, moduleName, userId, courseId) {
+  const systemPrompt = `You create Parsons problems for "${title}" in "${moduleName}" of "${courseName}".
+
+A Parsons problem presents scrambled items that students must reorder correctly.
+Use cases: ordering algorithm steps, sorting code lines, ranking complexities, sequencing events.
+
+OUTPUT FORMAT (XML):
+<PARSONS_PROBLEMS lesson_id="${title}">
+  <PROBLEM>
+    <PROMPT>Reorder these steps to correctly apply the chain rule</PROMPT>
+    <ITEM id="a">Identify the outer function f</ITEM>
+    <ITEM id="b">Identify the inner function g</ITEM>
+    <ITEM id="c">Compute f'(g(x))</ITEM>
+    <ITEM id="d">Compute g'(x)</ITEM>
+    <ITEM id="e">Multiply the results</ITEM>
+    <CORRECT_ORDER>a,b,c,d,e</CORRECT_ORDER>
+  </PROBLEM>
+</PARSONS_PROBLEMS>
+
+RULES:
+- Generate 1-3 problems based on the plan
+- Each problem should have 4-8 items to reorder
+- Items should be meaningful steps, not trivial
+- Use LaTeX (\\\\(...\\\\)) for any math content
+- CORRECT_ORDER is a comma-separated list of item IDs in the correct sequence`;
+
+  const userPrompt = `Generate Parsons problems for "${title}".
+Plan/emphasis: ${plan}
+
+Return XML as specified above.`;
+
+  try {
+    const { content } = await grokExecutor({
+      model: CONTENT_GEN_MODEL,
+      temperature: 0.3,
+      maxTokens: 100000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      requestTimeoutMs: 120000,
+      reasoning: CONTENT_REASONING,
+      userId,
+      source: 'parsons_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const problemsMap = parseXmlParsonsProblems(text);
+    const problems = problemsMap.get(title) || [];
+
+    return {
+      data: problems,
+      stats: { total: problems.length, immediate: problems.length, repaired_llm: 0, failed: 0 }
+    };
+  } catch (err) {
+    console.error('[generateParsonsProblems] Error:', err.message);
+    return { data: [], stats: { total: 0, immediate: 0, repaired_llm: 0, failed: 1 } };
+  }
+}
+
+/**
+ * Generates Skeleton (faded example/fill-in-gap) problems for a lesson.
+ * Students must fill in missing gaps in a partially complete solution.
+ * @param {string} title - Lesson title
+ * @param {string} plan - Generation plan prompt
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{data: Array, stats: object}>}
+ */
+export async function generateSkeletonProblems(title, plan, courseName, moduleName, userId, courseId) {
+  const systemPrompt = `You create Skeleton (fill-in-the-gap) problems for "${title}" in "${moduleName}" of "${courseName}".
+
+A Skeleton problem presents a mostly complete solution with missing gaps. Students select correct values for each gap.
+Use cases: formula completion, code gaps, proof steps, derivation blanks.
+
+OUTPUT FORMAT (XML):
+<SKELETON_PROBLEMS lesson_id="${title}">
+  <PROBLEM>
+    <CONTEXT>Complete the chain rule formula</CONTEXT>
+    <TEMPLATE>The derivative of \\(f(g(x))\\) is {{gap_1}} times {{gap_2}}</TEMPLATE>
+    <GAP id="gap_1" correct="f'(g(x))">
+      <DISTRACTOR>f(g'(x))</DISTRACTOR>
+      <DISTRACTOR>g'(x)</DISTRACTOR>
+      <DISTRACTOR>f'(x)</DISTRACTOR>
+    </GAP>
+    <GAP id="gap_2" correct="g'(x)">
+      <DISTRACTOR>f'(x)</DISTRACTOR>
+      <DISTRACTOR>g(x)</DISTRACTOR>
+      <DISTRACTOR>f(g(x))</DISTRACTOR>
+    </GAP>
+  </PROBLEM>
+</SKELETON_PROBLEMS>
+
+RULES:
+- Generate 1-3 problems based on the plan
+- Each gap should have 2-4 distractors (plausible wrong answers)
+- Gaps are marked with {{gap_id}} in the template
+- Use LaTeX (\\\\(...\\\\)) for any math content
+- Distractors should be common misconceptions, not random`;
+
+  const userPrompt = `Generate Skeleton problems for "${title}".
+Plan/emphasis: ${plan}
+
+Return XML as specified above.`;
+
+  try {
+    const { content } = await grokExecutor({
+      model: CONTENT_GEN_MODEL,
+      temperature: 0.3,
+      maxTokens: 100000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      requestTimeoutMs: 120000,
+      reasoning: CONTENT_REASONING,
+      userId,
+      source: 'skeleton_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const problemsMap = parseXmlSkeletonProblems(text);
+    const problems = problemsMap.get(title) || [];
+
+    return {
+      data: problems,
+      stats: { total: problems.length, immediate: problems.length, repaired_llm: 0, failed: 0 }
+    };
+  } catch (err) {
+    console.error('[generateSkeletonProblems] Error:', err.message);
+    return { data: [], stats: { total: 0, immediate: 0, repaired_llm: 0, failed: 1 } };
+  }
+}
+
+/**
+ * Generates Matching (many-to-many) problems for a lesson.
+ * Students must draw connections between items in two columns.
+ * @param {string} title - Lesson title
+ * @param {string} plan - Generation plan prompt
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{data: Array, stats: object}>}
+ */
+export async function generateMatchingProblems(title, plan, courseName, moduleName, userId, courseId) {
+  const systemPrompt = `You create Matching problems for "${title}" in "${moduleName}" of "${courseName}".
+
+A Matching problem has two columns. Students draw lines connecting related items.
+Use cases: term↔definition, function↔derivative, cause↔effect, concept↔example.
+
+OUTPUT FORMAT (XML):
+<MATCHING_PROBLEMS lesson_id="${title}">
+  <PROBLEM>
+    <PROMPT>Match each function to its derivative</PROMPT>
+    <LEFT>\\(x^2\\)</LEFT>
+    <LEFT>\\(e^x\\)</LEFT>
+    <LEFT>\\(\\sin(x)\\)</LEFT>
+    <RIGHT>\\(2x\\)</RIGHT>
+    <RIGHT>\\(e^x\\)</RIGHT>
+    <RIGHT>\\(\\cos(x)\\)</RIGHT>
+    <MATCH left="\\(x^2\\)" right="\\(2x\\)"/>
+    <MATCH left="\\(e^x\\)" right="\\(e^x\\)"/>
+    <MATCH left="\\(\\sin(x)\\)" right="\\(\\cos(x)\\)"/>
+  </PROBLEM>
+</MATCHING_PROBLEMS>
+
+RULES:
+- Generate 1-3 problems based on the plan
+- Each problem should have 3-6 items per column
+- LEFT and RIGHT items must exactly match the values in MATCH elements
+- Use LaTeX (\\\\(...\\\\)) for any math content
+- Matching should test understanding, not just memorization`;
+
+  const userPrompt = `Generate Matching problems for "${title}".
+Plan/emphasis: ${plan}
+
+Return XML as specified above.`;
+
+  try {
+    const { content } = await grokExecutor({
+      model: CONTENT_GEN_MODEL,
+      temperature: 0.3,
+      maxTokens: 100000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      requestTimeoutMs: 120000,
+      reasoning: CONTENT_REASONING,
+      userId,
+      source: 'matching_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const problemsMap = parseXmlMatchingProblems(text);
+    const problems = problemsMap.get(title) || [];
+
+    return {
+      data: problems,
+      stats: { total: problems.length, immediate: problems.length, repaired_llm: 0, failed: 0 }
+    };
+  } catch (err) {
+    console.error('[generateMatchingProblems] Error:', err.message);
+    return { data: [], stats: { total: 0, immediate: 0, repaired_llm: 0, failed: 1 } };
+  }
+}
+
+/**
+ * Generates Blackbox (input/output inference) problems for a lesson.
+ * Students must deduce the hidden rule/function from input/output pairs.
+ * @param {string} title - Lesson title
+ * @param {string} plan - Generation plan prompt
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID for tracking
+ * @param {string} courseId - Course ID for tracking
+ * @returns {Promise<{data: Array, stats: object}>}
+ */
+export async function generateBlackboxProblems(title, plan, courseName, moduleName, userId, courseId) {
+  const systemPrompt = `You create Blackbox problems for "${title}" in "${moduleName}" of "${courseName}".
+
+A Blackbox problem shows input/output pairs. Students must deduce the hidden rule/function.
+Use cases: mathematical functions, algorithms, transformations, pattern recognition.
+
+OUTPUT FORMAT (XML):
+<BLACKBOX_PROBLEMS lesson_id="${title}">
+  <PROBLEM>
+    <HIDDEN_RULE>The function computes the derivative: f'(x) = 2x</HIDDEN_RULE>
+    <IO input="1" output="2"/>
+    <IO input="3" output="6"/>
+    <IO input="5" output="10"/>
+    <IO input="0" output="0"/>
+    <QUESTION>What mathematical operation does this black box perform?</QUESTION>
+  </PROBLEM>
+</BLACKBOX_PROBLEMS>
+
+RULES:
+- Generate 1-3 problems based on the plan
+- Provide 3-5 I/O pairs per problem
+- HIDDEN_RULE is for answer validation (not shown to student)
+- I/O pairs should be sufficient to deduce the rule
+- Use LaTeX (\\\\(...\\\\)) for any math content in the question
+- The question should be open-ended, asking students to describe the rule`;
+
+  const userPrompt = `Generate Blackbox problems for "${title}".
+Plan/emphasis: ${plan}
+
+Return XML as specified above.`;
+
+  try {
+    const { content } = await grokExecutor({
+      model: CONTENT_GEN_MODEL,
+      temperature: 0.3,
+      maxTokens: 100000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      requestTimeoutMs: 120000,
+      reasoning: CONTENT_REASONING,
+      userId,
+      source: 'blackbox_generation',
+      courseId,
+    });
+
+    const text = coerceModelText(content);
+    const problemsMap = parseXmlBlackboxProblems(text);
+    const problems = problemsMap.get(title) || [];
+
+    return {
+      data: problems,
+      stats: { total: problems.length, immediate: problems.length, repaired_llm: 0, failed: 0 }
+    };
+  } catch (err) {
+    console.error('[generateBlackboxProblems] Error:', err.message);
+    return { data: [], stats: { total: 0, immediate: 0, repaired_llm: 0, failed: 1 } };
+  }
+}
+
 /**
  * Validates practice problems accuracy using a fresh worker model.
  * Independently solves each problem and verifies the rubric/sample answer are correct.
@@ -3259,6 +3563,62 @@ Output all questions as XML-delimited blocks.`
 }
 
 /**
+ * Generates interactive practice problems for all lessons in a module.
+ * Calls the type-specific generator (parsons, skeleton, matching, or blackbox) for each lesson.
+ * @param {Array} lessons - Array of lesson objects needing this problem type
+ * @param {string} problemType - Type of problem: 'parsons', 'skeleton', 'matching', or 'blackbox'
+ * @param {string} courseName - Course name
+ * @param {string} moduleName - Module name
+ * @param {string} userId - User ID
+ * @param {string} courseId - Course ID
+ * @returns {Promise<Map<string, Array>>} - Map of lesson_id -> array of problems
+ */
+async function generateModuleInteractiveProblems(lessons, problemType, courseName, moduleName, userId, courseId) {
+  if (!lessons?.length) return new Map();
+
+  const results = new Map();
+  
+  // Generate problems for each lesson in parallel
+  const promises = lessons.map(async (lesson) => {
+    const plans = lesson.content_payload?.generation_plans?.interactive_practice || {};
+    const plan = plans[problemType];
+    
+    if (!plan) {
+      results.set(lesson.id, []);
+      return;
+    }
+
+    try {
+      let result;
+      switch (problemType) {
+        case 'parsons':
+          result = await generateParsonsProblems(lesson.title, plan, courseName, moduleName, userId, courseId);
+          break;
+        case 'skeleton':
+          result = await generateSkeletonProblems(lesson.title, plan, courseName, moduleName, userId, courseId);
+          break;
+        case 'matching':
+          result = await generateMatchingProblems(lesson.title, plan, courseName, moduleName, userId, courseId);
+          break;
+        case 'blackbox':
+          result = await generateBlackboxProblems(lesson.title, plan, courseName, moduleName, userId, courseId);
+          break;
+        default:
+          console.warn(`[generateModuleInteractiveProblems] Unknown problem type: ${problemType}`);
+          result = { data: [] };
+      }
+      results.set(lesson.id, result.data || []);
+    } catch (err) {
+      console.error(`[generateModuleInteractiveProblems] Failed for ${lesson.id} (${problemType}):`, err.message);
+      results.set(lesson.id, []);
+    }
+  });
+
+  await Promise.all(promises);
+  return results;
+}
+
+/**
  * Selects videos for all lessons in a module with a single LLM call.
  * Performs YouTube searches and then asks LLM to select best videos for all lessons at once.
  * @param {Array} lessons - Array of lesson objects with id, title, content_payload.generation_plans.video
@@ -3465,6 +3825,24 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
     return isModuleQuiz && (plans.practice_problems || plans.practiceProblems);
   });
 
+  // Filter lessons that need interactive practice problems (NOT Module Quiz only)
+  const needsParsons = moduleLessons.filter(l => {
+    const plans = l.content_payload?.generation_plans?.interactive_practice || {};
+    return plans.parsons;
+  });
+  const needsSkeleton = moduleLessons.filter(l => {
+    const plans = l.content_payload?.generation_plans?.interactive_practice || {};
+    return plans.skeleton;
+  });
+  const needsMatching = moduleLessons.filter(l => {
+    const plans = l.content_payload?.generation_plans?.interactive_practice || {};
+    return plans.matching;
+  });
+  const needsBlackbox = moduleLessons.filter(l => {
+    const plans = l.content_payload?.generation_plans?.interactive_practice || {};
+    return plans.blackbox;
+  });
+
   // Generate content types in parallel
   // 1. Readings, Quizzes, Flashcards, Videos, PracticeProblems (Independent)
   // 2. InlineQuestions (Dependent on Readings)
@@ -3490,6 +3868,23 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
     ? generateModulePracticeProblems(needsPractice, courseName, moduleName, userId, courseId)
     : Promise.resolve(new Map());
 
+  // Generate interactive practice problems in parallel (one call per type per lesson)
+  const pParsons = needsParsons.length
+    ? generateModuleInteractiveProblems(needsParsons, 'parsons', courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+  
+  const pSkeleton = needsSkeleton.length
+    ? generateModuleInteractiveProblems(needsSkeleton, 'skeleton', courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+  
+  const pMatching = needsMatching.length
+    ? generateModuleInteractiveProblems(needsMatching, 'matching', courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+  
+  const pBlackbox = needsBlackbox.length
+    ? generateModuleInteractiveProblems(needsBlackbox, 'blackbox', courseName, moduleName, userId, courseId)
+    : Promise.resolve(new Map());
+
   // Wait for readings to start InlineQuestions (but don't block other tasks)
   const pInlineQuestions = pReadings.then(readingsMap => {
     return needsReading.length
@@ -3498,13 +3893,18 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
   });
 
   // Await all results together
-  const [readingsMap, quizzesMap, flashcardsMap, videoResults, practiceResults, inlineQuestionsMap] = await Promise.all([
+  const [readingsMap, quizzesMap, flashcardsMap, videoResults, practiceResults, inlineQuestionsMap,
+         parsonsResults, skeletonResults, matchingResults, blackboxResults] = await Promise.all([
     pReadings,
     pQuizzes,
     pFlashcards,
     pVideos,
     pPractice,
-    pInlineQuestions
+    pInlineQuestions,
+    pParsons,
+    pSkeleton,
+    pMatching,
+    pBlackbox
   ]);
 
   // Now update each lesson with its generated content
@@ -3517,6 +3917,7 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
     quiz: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
     flashcards: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
     practice_problems: { total: 0, immediate: 0, repaired_llm: 0, failed: 0 },
+    interactive_practice: { parsons: 0, skeleton: 0, matching: 0, blackbox: 0 },
     video: { total: 0, successful: 0, failed: 0 }
   };
 
@@ -3581,11 +3982,19 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       const videoUrls = Array.isArray(videos) ? videos.map(v => `https://www.youtube.com/watch?v=${v.videoId}`).join(', ') : '';
 
       // Build final payload
+      const interactivePractice = {
+        parsons: parsonsResults.get(lesson.id) || [],
+        skeleton: skeletonResults.get(lesson.id) || [],
+        matching: matchingResults.get(lesson.id) || [],
+        blackbox: blackboxResults.get(lesson.id) || []
+      };
+
       const finalPayload = {
         reading: finalReading,
         quiz: finalQuiz,
         flashcards: finalFlashcards,
         practice_problems: practiceRes?.data || null,
+        interactive_practice: interactivePractice,
         video: videos,
         video_urls: videoUrls,
         video_logs: videoRes.logs || [],
@@ -3608,6 +4017,11 @@ async function processModuleBatched(moduleLessons, supabase, courseName, moduleN
       if (quizRes?.stats) Object.keys(quizRes.stats).forEach(k => { if (aggregateStats.quiz[k] != null) aggregateStats.quiz[k] += quizRes.stats[k] || 0; });
       if (flashcardsRes?.stats) Object.keys(flashcardsRes.stats).forEach(k => { if (aggregateStats.flashcards[k] != null) aggregateStats.flashcards[k] += flashcardsRes.stats[k] || 0; });
       if (practiceRes?.stats) Object.keys(practiceRes.stats).forEach(k => { if (aggregateStats.practice_problems[k] != null) aggregateStats.practice_problems[k] += practiceRes.stats[k] || 0; });
+      // Track interactive practice counts
+      aggregateStats.interactive_practice.parsons += interactivePractice.parsons.length;
+      aggregateStats.interactive_practice.skeleton += interactivePractice.skeleton.length;
+      aggregateStats.interactive_practice.matching += interactivePractice.matching.length;
+      aggregateStats.interactive_practice.blackbox += interactivePractice.blackbox.length;
       aggregateStats.video.total++;
       if (videos.length) aggregateStats.video.successful++; else aggregateStats.video.failed++;
 

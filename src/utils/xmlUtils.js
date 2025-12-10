@@ -423,3 +423,324 @@ export function parseXmlPracticeProblems(responseText) {
   return result;
 }
 
+/**
+ * Parse Parsons (ranking/sorting) problems from XML-tagged content.
+ * Format:
+ * <PARSONS_PROBLEMS lesson_id="...">
+ *   <PROBLEM>
+ *     <PROMPT>Reorder these items correctly</PROMPT>
+ *     <ITEM id="a">First item</ITEM>
+ *     <ITEM id="b">Second item</ITEM>
+ *     <CORRECT_ORDER>b,a</CORRECT_ORDER>
+ *   </PROBLEM>
+ * </PARSONS_PROBLEMS>
+ * 
+ * @param {string} responseText - Raw XML text from LLM
+ * @returns {Map<string, Array>} - Map of lesson_id -> parsons problems array
+ */
+export function parseXmlParsonsProblems(responseText) {
+  const result = new Map();
+  if (!responseText) return result;
+
+  const blockRegex = /<PARSONS_PROBLEMS\s+lesson_id="([^"]+)">([\s\S]*?)<\/PARSONS_PROBLEMS>/g;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(responseText)) !== null) {
+    const lessonId = blockMatch[1].trim();
+    const blockContent = blockMatch[2];
+    
+    if (!lessonId) continue;
+
+    const problems = [];
+    const problemRegex = /<PROBLEM>([\s\S]*?)<\/PROBLEM>/g;
+    let pMatch;
+
+    while ((pMatch = problemRegex.exec(blockContent)) !== null) {
+      const problemContent = pMatch[1];
+
+      const getText = (tag) => {
+        const match = problemContent.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      // Extract items
+      const items = [];
+      const itemRegex = /<ITEM\s+id="([^"]+)">([\s\S]*?)<\/ITEM>/g;
+      let itemMatch;
+      while ((itemMatch = itemRegex.exec(problemContent)) !== null) {
+        items.push({
+          id: itemMatch[1].trim(),
+          content: itemMatch[2].trim()
+        });
+      }
+
+      // Extract correct order
+      const correctOrderStr = getText('CORRECT_ORDER');
+      const correctOrder = correctOrderStr ? correctOrderStr.split(',').map(s => s.trim()) : [];
+
+      const problem = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `parsons-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'parsons',
+        prompt: getText('PROMPT'),
+        items,
+        correct_order: correctOrder
+      };
+
+      if (problem.prompt && items.length > 0 && correctOrder.length > 0) {
+        problems.push(problem);
+      }
+    }
+
+    if (problems.length > 0) {
+      result.set(lessonId, problems);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Parse Skeleton (faded example/fill-in-gap) problems from XML-tagged content.
+ * Format:
+ * <SKELETON_PROBLEMS lesson_id="...">
+ *   <PROBLEM>
+ *     <CONTEXT>Complete this formula</CONTEXT>
+ *     <TEMPLATE>The answer is {{gap_1}} times {{gap_2}}</TEMPLATE>
+ *     <GAP id="gap_1" correct="value1">
+ *       <DISTRACTOR>wrong1</DISTRACTOR>
+ *       <DISTRACTOR>wrong2</DISTRACTOR>
+ *     </GAP>
+ *   </PROBLEM>
+ * </SKELETON_PROBLEMS>
+ * 
+ * @param {string} responseText - Raw XML text from LLM
+ * @returns {Map<string, Array>} - Map of lesson_id -> skeleton problems array
+ */
+export function parseXmlSkeletonProblems(responseText) {
+  const result = new Map();
+  if (!responseText) return result;
+
+  const blockRegex = /<SKELETON_PROBLEMS\s+lesson_id="([^"]+)">([\s\S]*?)<\/SKELETON_PROBLEMS>/g;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(responseText)) !== null) {
+    const lessonId = blockMatch[1].trim();
+    const blockContent = blockMatch[2];
+    
+    if (!lessonId) continue;
+
+    const problems = [];
+    const problemRegex = /<PROBLEM>([\s\S]*?)<\/PROBLEM>/g;
+    let pMatch;
+
+    while ((pMatch = problemRegex.exec(blockContent)) !== null) {
+      const problemContent = pMatch[1];
+
+      const getText = (tag) => {
+        const match = problemContent.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      // Extract gaps
+      const gaps = [];
+      const gapRegex = /<GAP\s+id="([^"]+)"\s+correct="([^"]*)">([\s\S]*?)<\/GAP>/g;
+      let gapMatch;
+      while ((gapMatch = gapRegex.exec(problemContent)) !== null) {
+        const gapContent = gapMatch[3];
+        const distractors = [];
+        const distractorRegex = /<DISTRACTOR>([\s\S]*?)<\/DISTRACTOR>/g;
+        let dMatch;
+        while ((dMatch = distractorRegex.exec(gapContent)) !== null) {
+          distractors.push(dMatch[1].trim());
+        }
+        gaps.push({
+          id: gapMatch[1].trim(),
+          correct_value: gapMatch[2].trim(),
+          distractors
+        });
+      }
+
+      const problem = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `skeleton-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'skeleton',
+        context: getText('CONTEXT'),
+        template: getText('TEMPLATE'),
+        gaps
+      };
+
+      if (problem.template && gaps.length > 0) {
+        problems.push(problem);
+      }
+    }
+
+    if (problems.length > 0) {
+      result.set(lessonId, problems);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Parse Matching (many-to-many) problems from XML-tagged content.
+ * Format:
+ * <MATCHING_PROBLEMS lesson_id="...">
+ *   <PROBLEM>
+ *     <PROMPT>Match terms to definitions</PROMPT>
+ *     <LEFT>Term 1</LEFT>
+ *     <LEFT>Term 2</LEFT>
+ *     <RIGHT>Definition A</RIGHT>
+ *     <RIGHT>Definition B</RIGHT>
+ *     <MATCH left="Term 1" right="Definition A"/>
+ *   </PROBLEM>
+ * </MATCHING_PROBLEMS>
+ * 
+ * @param {string} responseText - Raw XML text from LLM
+ * @returns {Map<string, Array>} - Map of lesson_id -> matching problems array
+ */
+export function parseXmlMatchingProblems(responseText) {
+  const result = new Map();
+  if (!responseText) return result;
+
+  const blockRegex = /<MATCHING_PROBLEMS\s+lesson_id="([^"]+)">([\s\S]*?)<\/MATCHING_PROBLEMS>/g;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(responseText)) !== null) {
+    const lessonId = blockMatch[1].trim();
+    const blockContent = blockMatch[2];
+    
+    if (!lessonId) continue;
+
+    const problems = [];
+    const problemRegex = /<PROBLEM>([\s\S]*?)<\/PROBLEM>/g;
+    let pMatch;
+
+    while ((pMatch = problemRegex.exec(blockContent)) !== null) {
+      const problemContent = pMatch[1];
+
+      const getText = (tag) => {
+        const match = problemContent.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      // Extract left items
+      const leftItems = [];
+      const leftRegex = /<LEFT>([\s\S]*?)<\/LEFT>/g;
+      let lMatch;
+      while ((lMatch = leftRegex.exec(problemContent)) !== null) {
+        leftItems.push(lMatch[1].trim());
+      }
+
+      // Extract right items
+      const rightItems = [];
+      const rightRegex = /<RIGHT>([\s\S]*?)<\/RIGHT>/g;
+      let rMatch;
+      while ((rMatch = rightRegex.exec(problemContent)) !== null) {
+        rightItems.push(rMatch[1].trim());
+      }
+
+      // Extract matches
+      const matches = [];
+      const matchRegex = /<MATCH\s+left="([^"]*)"\s+right="([^"]*)"\s*\/>/g;
+      let mMatch;
+      while ((mMatch = matchRegex.exec(problemContent)) !== null) {
+        matches.push({
+          left: mMatch[1].trim(),
+          right: mMatch[2].trim()
+        });
+      }
+
+      const problem = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `matching-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'matching',
+        prompt: getText('PROMPT'),
+        left_items: leftItems,
+        right_items: rightItems,
+        matches
+      };
+
+      if (leftItems.length > 0 && rightItems.length > 0 && matches.length > 0) {
+        problems.push(problem);
+      }
+    }
+
+    if (problems.length > 0) {
+      result.set(lessonId, problems);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Parse Blackbox (input/output inference) problems from XML-tagged content.
+ * Format:
+ * <BLACKBOX_PROBLEMS lesson_id="...">
+ *   <PROBLEM>
+ *     <HIDDEN_RULE>The function doubles the input</HIDDEN_RULE>
+ *     <IO input="2" output="4"/>
+ *     <IO input="5" output="10"/>
+ *     <QUESTION>What does this function do?</QUESTION>
+ *   </PROBLEM>
+ * </BLACKBOX_PROBLEMS>
+ * 
+ * @param {string} responseText - Raw XML text from LLM
+ * @returns {Map<string, Array>} - Map of lesson_id -> blackbox problems array
+ */
+export function parseXmlBlackboxProblems(responseText) {
+  const result = new Map();
+  if (!responseText) return result;
+
+  const blockRegex = /<BLACKBOX_PROBLEMS\s+lesson_id="([^"]+)">([\s\S]*?)<\/BLACKBOX_PROBLEMS>/g;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(responseText)) !== null) {
+    const lessonId = blockMatch[1].trim();
+    const blockContent = blockMatch[2];
+    
+    if (!lessonId) continue;
+
+    const problems = [];
+    const problemRegex = /<PROBLEM>([\s\S]*?)<\/PROBLEM>/g;
+    let pMatch;
+
+    while ((pMatch = problemRegex.exec(blockContent)) !== null) {
+      const problemContent = pMatch[1];
+
+      const getText = (tag) => {
+        const match = problemContent.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      // Extract I/O pairs
+      const ioPairs = [];
+      const ioRegex = /<IO\s+input="([^"]*)"\s+output="([^"]*)"\s*\/>/g;
+      let ioMatch;
+      while ((ioMatch = ioRegex.exec(problemContent)) !== null) {
+        ioPairs.push({
+          input: ioMatch[1].trim(),
+          output: ioMatch[2].trim()
+        });
+      }
+
+      const problem = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `blackbox-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'blackbox',
+        hidden_rule: getText('HIDDEN_RULE'),
+        io_pairs: ioPairs,
+        question: getText('QUESTION')
+      };
+
+      if (ioPairs.length > 0 && problem.question) {
+        problems.push(problem);
+      }
+    }
+
+    if (problems.length > 0) {
+      result.set(lessonId, problems);
+    }
+  }
+
+  return result;
+}
+

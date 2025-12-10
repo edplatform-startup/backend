@@ -357,6 +357,63 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
     - `sample_answer` (object) – Complete solution with `solution_steps` array, `final_answer`, `key_insights`, and `alternative_approaches`
     - `confidence_score` (number) – Model's confidence in problem quality (0-1)
   - `video` (array) – Selected YouTube videos
+  - `interactive_practice` (object) – Widget-based interactive problems for hands-on learning. These are generated for lessons (not Module Quizzes) that include an `interactive_practice` plan. Contains arrays of each problem type:
+    - `parsons` (array) – Ranking/sorting problems where students reorder scrambled items:
+      ```json
+      {
+        "id": "uuid",
+        "type": "parsons",
+        "prompt": "Reorder these complexity classes from fastest to slowest",
+        "items": [
+          {"id": "a", "content": "O(1)"},
+          {"id": "b", "content": "O(n)"},
+          {"id": "c", "content": "O(log n)"}
+        ],
+        "correct_order": ["a", "c", "b"]
+      }
+      ```
+    - `skeleton` (array) – Fill-in-the-gap problems with partial solutions:
+      ```json
+      {
+        "id": "uuid",
+        "type": "skeleton",
+        "context": "Complete the chain rule formula",
+        "template": "The derivative of f(g(x)) is {{gap_1}} × {{gap_2}}",
+        "gaps": [
+          {"id": "gap_1", "correct_value": "f'(g(x))", "distractors": ["f(g'(x))", "g'(x)"]},
+          {"id": "gap_2", "correct_value": "g'(x)", "distractors": ["f'(x)", "g(x)"]}
+        ]
+      }
+      ```
+    - `matching` (array) – Many-to-many matching problems:
+      ```json
+      {
+        "id": "uuid",
+        "type": "matching",
+        "prompt": "Match each sorting algorithm to its average time complexity",
+        "left_items": ["Bubble Sort", "Merge Sort", "Quick Sort"],
+        "right_items": ["O(n²)", "O(n log n)", "O(n log n)"],
+        "matches": [
+          {"left": "Bubble Sort", "right": "O(n²)"},
+          {"left": "Merge Sort", "right": "O(n log n)"},
+          {"left": "Quick Sort", "right": "O(n log n)"}
+        ]
+      }
+      ```
+    - `blackbox` (array) – Input/output inference problems:
+      ```json
+      {
+        "id": "uuid",
+        "type": "blackbox",
+        "hidden_rule": "f(x) = 2x + 1",
+        "io_pairs": [
+          {"input": "2", "output": "5"},
+          {"input": "0", "output": "1"},
+          {"input": "5", "output": "11"}
+        ],
+        "question": "What is the transformation rule?"
+      }
+      ```
 - Responses:
   - `201 Created` →
     ```json
@@ -980,6 +1037,10 @@ curl -X GET "https://api.kognolearn.com/courses?userId=your-user-id" \
   - `practice_problem_validation` – Practice problem accuracy validation (fresh model verification)
   - `practice_problem_correction` – Practice problem correction based on validation feedback
   - `inline_question` – Inline question generation
+  - `parsons_generation` – Parsons (ranking/sorting) interactive problem generation
+  - `skeleton_generation` – Skeleton (faded example/fill-in-gap) interactive problem generation
+  - `matching_generation` – Matching (many-to-many) interactive problem generation
+  - `blackbox_generation` – Blackbox (input/output inference) interactive problem generation
   - `video_selection` – Video selection
   - `content_repair` – Content array repair (broken JSON fix)
   - `rationale_fix` – Targeted fix for missing/incomplete quiz explanations
